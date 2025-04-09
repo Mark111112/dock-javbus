@@ -24,8 +24,11 @@ This is the Docker version of the JavBus application, enabling access to JavBus 
 ### Docker Compose Deployment
 
 1. Clone/download this repository
+
 2. Navigate to project directory
+
 3. Create `.env` file and set API_URL (optional)
+
 4. Start application with Docker Compose
    
    ```bash
@@ -87,7 +90,7 @@ Modify config.json via web interface or directly:
 # JavBus Web - Docker版
 
 这是JavBus应用程序的Docker版本，允许通过Web浏览器访问JavBus的功能。原应用程序不再更新。
-你还是需要一个https://github.com/ovnrain/javbus-api来获得API URL。感谢作者。
+你还是需要一个https://github.com/ovnrain/javbus-api 来获得API URL。感谢作者。
 
 ## 功能特性
 
