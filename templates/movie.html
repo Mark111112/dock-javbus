@@ -1,0 +1,595 @@
+{% extends "base.html" %}
+
+{% block title %}{{ movie.id }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12 mb-4">
+        <nav aria-label="breadcrumb" class="d-flex justify-content-between align-items-center">
+            <ol class="breadcrumb mb-0">
+                <li class="breadcrumb-item"><a href="/">Home</a></li>
+                <li class="breadcrumb-item active">Movie {{ movie.id }}</li>
+            </ol>
+            <a href="/refresh_movie/{{ movie.id }}" class="btn btn-sm btn-outline-secondary">
+                <i class="bi bi-arrow-clockwise"></i> Refresh Data
+            </a>
+        </nav>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card mb-4">
+            <img src="/images/covers/{{ movie.id }}.jpg" class="card-img-top" alt="{{ movie.id }}">
+            <div class="card-body">
+                <h5 class="card-title">{{ movie.id }}</h5>
+                <p class="card-text">
+                    <strong>Release Date:</strong> {{ movie.date }}
+                </p>
+                <div class="d-grid gap-2">
+                    {% if movie.is_favorite %}
+                    <button class="btn btn-danger" onclick="toggleFavorite('{{ movie.id }}', this)">
+                        <i class="bi bi-heart-fill"></i> Remove from Favorites
+                    </button>
+                    {% else %}
+                    <button class="btn btn-outline-danger" onclick="toggleFavorite('{{ movie.id }}', this)">
+                        <i class="bi bi-heart"></i> Add to Favorites
+                    </button>
+                    {% endif %}
+                    
+                    <a href="{{ watch_url_prefix }}/{{ movie.id }}" target="_blank" class="btn btn-primary">
+                        <i class="bi bi-play-fill"></i> Watch Online
+                    </a>
+                    
+                    <a href="/video_player/{{ movie.id }}" target="_blank" class="btn btn-outline-primary">
+                        <i class="bi bi-play-circle"></i> Ad-free Player
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-8">
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">{{ movie.title }}</h5>
+                {% if not movie.translated_title or not movie.translated_summary %}
+                <button class="btn btn-sm btn-outline-primary" id="translate-btn" 
+                        data-movie-id="{{ movie.id }}" 
+                        data-title="{{ movie.title }}"
+                        {% if movie.summary %}data-summary="{{ movie.summary }}"{% endif %}
+                        onclick="translateMovie(this)">
+                    <i class="bi bi-translate"></i> Translate
+                </button>
+                {% endif %}
+            </div>
+            <div class="card-body">
+                {% if movie.translated_title %}
+                <div class="mb-3 alert alert-info">
+                    <strong>译文标题:</strong> {{ movie.translated_title }}
+                </div>
+                {% else %}
+                <div id="translated-title-container" class="mb-3 alert alert-info" style="display: none;">
+                    <strong>译文标题:</strong> <span id="translated-title-text"></span>
+                </div>
+                {% endif %}
+                
+                <div class="row mb-3">
+                    <div class="col-md-4">
+                        <strong>ID:</strong> {{ movie.id }}
+                    </div>
+                    <div class="col-md-4">
+                        <strong>Release Date:</strong> {{ movie.date }}
+                    </div>
+                    <div class="col-md-4">
+                        <strong>Duration:</strong> {{ movie_data.videoLength|default('N/A') }} min
+                    </div>
+                </div>
+                
+                <hr>
+                
+                <div class="row mb-3">
+                    <div class="col-md-4">
+                        <strong>Producer:</strong><br>
+                        {% if movie_data.producer and movie_data.producer.id %}
+                        <a href="/search_keyword?filterType=studio&filterValue={{ movie_data.producer.id }}" class="text-decoration-none">
+                            {{ movie_data.producer.name|default(movie.producer) }}
+                        </a>
+                        {% else %}
+                        {{ movie.producer }}
+                        {% endif %}
+                    </div>
+                    <div class="col-md-4">
+                        <strong>Publisher:</strong><br>
+                        {% if movie_data.publisher and movie_data.publisher.id %}
+                        <a href="/search_keyword?filterType=label&filterValue={{ movie_data.publisher.id }}" class="text-decoration-none">
+                            {{ movie_data.publisher.name|default('N/A') }}
+                        </a>
+                        {% else %}
+                        {{ movie_data.publisher.name|default('N/A') }}
+                        {% endif %}
+                    </div>
+                    <div class="col-md-4">
+                        <strong>Director:</strong><br>
+                        {% if movie_data.director and movie_data.director.id %}
+                        <a href="/search_keyword?filterType=director&filterValue={{ movie_data.director.id }}" class="text-decoration-none">
+                            {{ movie_data.director.name|default('N/A') }}
+                        </a>
+                        {% else %}
+                        {{ movie_data.director.name|default('N/A') }}
+                        {% endif %}
+                    </div>
+                </div>
+                
+                <hr>
+                
+                {% if movie_data.series and movie_data.series.id %}
+                <div class="mb-3">
+                    <strong>Series:</strong><br>
+                    <a href="/search_keyword?filterType=series&filterValue={{ movie_data.series.id }}" class="text-decoration-none">
+                        {{ movie_data.series.name }}
+                    </a>
+                </div>
+                {% endif %}
+                
+                {% if movie.translated_title %}
+                <div class="mb-3">
+                    <strong>Translated Title:</strong> 
+                    <p>{{ movie.translated_title }}</p>
+                </div>
+                {% endif %}
+                
+                {% if movie_data.genres and movie_data.genres|length > 0 %}
+                <div class="mb-3">
+                    <strong>Genres:</strong>
+                    <div>
+                        {% for genre in movie_data.genres %}
+                        <a href="/search_keyword?filterType=genre&filterValue={{ genre.id }}" class="badge bg-secondary me-1 mb-1 text-decoration-none">
+                            {{ genre.name }}
+                        </a>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% elif movie.genres and movie.genres|length > 0 %}
+                <div class="mb-3">
+                    <strong>Genres:</strong>
+                    <div>
+                        {% for genre in movie.genres %}
+                        <span class="badge bg-secondary me-1 mb-1">{{ genre }}</span>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+                
+                {% if movie.summary %}
+                <div class="mb-3">
+                    <strong>Summary:</strong>
+                    <p>{{ movie.summary }}</p>
+                    {% if movie.translated_summary %}
+                    <div class="card bg-light">
+                        <div class="card-body">
+                            <strong>译文简介:</strong>
+                            <p>{{ movie.translated_summary }}</p>
+                        </div>
+                    </div>
+                    {% else %}
+                    <div id="translated-summary-container" class="card bg-light" style="display: none;">
+                        <div class="card-body">
+                            <strong>译文简介:</strong>
+                            <p id="translated-summary-text"></p>
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+                {% elif not has_summary %}
+                <!-- Summary loading placeholder -->
+                <div class="mb-3" id="summary-loading-container">
+                    <strong>Summary:</strong>
+                    <div class="d-flex align-items-center mt-2">
+                        <div class="spinner-border spinner-border-sm text-primary me-2" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <span>Loading summary from FANZA...</span>
+                    </div>
+                </div>
+                <!-- Summary will be loaded here -->
+                <div class="mb-3" id="summary-container" style="display: none;">
+                    <strong>Summary:</strong>
+                    <p id="summary-text"></p>
+                    <div id="async-translated-summary-container" class="card bg-light" style="display: none;">
+                        <div class="card-body">
+                            <strong>译文简介:</strong>
+                            <p id="async-translated-summary-text"></p>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        {% if movie.actors and movie.actors|length > 0 %}
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5>Actors</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    {% for actor in movie.actors %}
+                    <div class="col-md-3 col-sm-4 mb-4 text-center">
+                        <a href="/search_keyword?filterType=star&filterValue={{ actor.id }}" class="text-decoration-none">
+                            <img src="/images/actor/{{ actor.id }}.jpg" class="actor-img rounded-circle mb-2" alt="{{ actor.name }}" style="width: 100px; height: 100px; object-fit: cover;">
+                            <p>{{ actor.name }}</p>
+                        </a>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+        
+        {% if movie.magnet_links and movie.magnet_links|length > 0 %}
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5>Magnet Links</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-striped table-hover">
+                        <thead>
+                            <tr>
+                                <th>Title</th>
+                                <th>Size</th>
+                                <th>Date</th>
+                                <th>Quality</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for magnet in movie.magnet_links %}
+                            <tr>
+                                <td>
+                                    {{ magnet.name }}
+                                    {% if magnet.has_subtitle %}
+                                    <span class="badge bg-success">字幕</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ magnet.size }}</td>
+                                <td>{{ magnet.date }}</td>
+                                <td>
+                                    {% if magnet.is_hd %}
+                                    <span class="badge bg-primary">HD</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary">SD</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <button class="btn btn-sm btn-outline-primary copy-btn" 
+                                            data-magnet="{{ magnet.link }}" 
+                                            onclick="copyMagnet(this)">
+                                        <i class="bi bi-clipboard"></i> Copy
+                                    </button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{% if movie_data and movie_data.samples and movie_data.samples|length > 0 %}
+<div class="row">
+    <div class="col-md-12">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5>Sample Images</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    {% for sample in movie_data.samples %}
+                    <div class="col-md-3 col-sm-6 mb-4">
+                        <img src="/images/{{ movie.id }}/sample_{{ loop.index }}.jpg" 
+                             class="img-fluid rounded sample-image" 
+                             alt="{{ movie.id }} sample {{ loop.index }}"
+                             data-original-src="{{ sample.src }}"
+                             onclick="openImageInNewTab(this)">
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+    {% if not has_summary %}
+    // Fetch summary asynchronously on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        fetchMovieSummary("{{ movie_id }}");
+    });
+    
+    // Function to fetch movie summary
+    function fetchMovieSummary(movieId) {
+        fetch("/api/get_movie_summary/" + movieId)
+            .then(function(response) { return response.json(); })
+            .then(function(data) {
+                // Hide loading spinner
+                document.getElementById('summary-loading-container').style.display = 'none';
+                
+                if (data.status === 'success' && data.summary) {
+                    // Show summary container
+                    var summaryContainer = document.getElementById('summary-container');
+                    var summaryText = document.getElementById('summary-text');
+                    
+                    summaryText.textContent = data.summary;
+                    summaryContainer.style.display = 'block';
+                    
+                    // Add the summary as a data attribute to the translate button (if it exists)
+                    var translateBtn = document.getElementById('translate-btn');
+                    if (translateBtn) {
+                        translateBtn.setAttribute('data-summary', data.summary);
+                    }
+                    
+                    // If there's a translated summary, show it
+                    if (data.translated_summary) {
+                        var translatedContainer = document.getElementById('async-translated-summary-container');
+                        var translatedText = document.getElementById('async-translated-summary-text');
+                        
+                        translatedText.textContent = data.translated_summary;
+                        translatedContainer.style.display = 'block';
+                        
+                        // If we have a translated summary, we might want to hide the translate button
+                        if (translateBtn && document.getElementById('translated-title-container') && 
+                            document.getElementById('translated-title-container').style.display != 'none') {
+                            // Hide the button only if we have both title and summary translated
+                            translateBtn.style.display = 'none';
+                        }
+                    }
+                } else {
+                    // Show no summary available message
+                    var summaryContainer = document.getElementById('summary-container');
+                    var summaryText = document.getElementById('summary-text');
+                    
+                    summaryText.textContent = 'No summary available for this movie.';
+                    summaryContainer.style.display = 'block';
+                }
+            })
+            .catch(function(error) {
+                console.error('Error fetching summary:', error);
+                // Hide loading spinner
+                document.getElementById('summary-loading-container').style.display = 'none';
+                
+                // Show error message
+                var summaryContainer = document.getElementById('summary-container');
+                var summaryText = document.getElementById('summary-text');
+                
+                summaryText.textContent = 'Failed to load summary. Please try again later.';
+                summaryContainer.style.display = 'block';
+            });
+    }
+    {% endif %}
+    
+    function toggleFavorite(movieId, button) {
+        fetch(`/api/toggle_favorite/${movieId}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.is_favorite) {
+                button.classList.remove('btn-outline-danger');
+                button.classList.add('btn-danger');
+                button.innerHTML = '<i class="bi bi-heart-fill"></i> Remove from Favorites';
+            } else {
+                button.classList.remove('btn-danger');
+                button.classList.add('btn-outline-danger');
+                button.innerHTML = '<i class="bi bi-heart"></i> Add to Favorites';
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+        });
+    }
+    
+    function copyMagnet(button) {
+        const magnetLink = button.getAttribute('data-magnet');
+        
+        // Create a temporary textarea element
+        const textarea = document.createElement('textarea');
+        textarea.value = magnetLink;
+        document.body.appendChild(textarea);
+        
+        // Select and copy the text
+        textarea.select();
+        document.execCommand('copy');
+        
+        // Remove the textarea
+        document.body.removeChild(textarea);
+        
+        // Change button text temporarily to show feedback
+        const originalHTML = button.innerHTML;
+        button.innerHTML = '<i class="bi bi-check"></i> Copied!';
+        
+        // Restore original button text after 2 seconds
+        setTimeout(() => {
+            button.innerHTML = originalHTML;
+        }, 2000);
+    }
+    
+    function openImageInNewTab(img) {
+        // Try to use the original source if available
+        const originalSrc = img.getAttribute('data-original-src');
+        const src = originalSrc || img.src;
+        window.open(src, '_blank');
+    }
+    
+    function translateMovie(button) {
+        // Get data from button attributes
+        const movieId = button.getAttribute('data-movie-id');
+        const originalTitle = button.getAttribute('data-title');
+        let originalSummary = button.getAttribute('data-summary') || '';
+        
+        // If summary was loaded asynchronously, get it from the text element
+        if (!originalSummary && document.getElementById('summary-text')) {
+            originalSummary = document.getElementById('summary-text').textContent || '';
+            // Don't try to translate placeholder messages
+            if (originalSummary === 'No summary available for this movie.' || 
+                originalSummary === 'Failed to load summary. Please try again later.') {
+                originalSummary = '';
+            }
+        }
+        
+        // Disable the button to prevent multiple clicks
+        button.disabled = true;
+        button.innerHTML = '<i class="bi bi-hourglass-split"></i> Translating...';
+        
+        let translationPromises = [];
+        let results = {};
+        
+        // Translate title if not already translated
+        if (!document.getElementById('translated-title-container').style.display || 
+            document.getElementById('translated-title-container').style.display === 'none') {
+            const titlePromise = fetch('/api/translate', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    text: originalTitle,
+                    movie_id: movieId
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success' && data.translated_text) {
+                    results.translated_title = data.translated_text;
+                    // Show the translated title
+                    const container = document.getElementById('translated-title-container');
+                    const textSpan = document.getElementById('translated-title-text');
+                    
+                    textSpan.textContent = data.translated_text;
+                    container.style.display = 'block';
+                } else {
+                    throw new Error(data.message || 'Title translation failed');
+                }
+            });
+            
+            translationPromises.push(titlePromise);
+        }
+        
+        // Translate summary if available and not already translated
+        if (originalSummary && 
+            ((!document.getElementById('translated-summary-container') || 
+             document.getElementById('translated-summary-container').style.display === 'none') && 
+             (!document.getElementById('async-translated-summary-container') || 
+             document.getElementById('async-translated-summary-container').style.display === 'none'))) {
+            const summaryPromise = fetch('/api/translate', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    text: originalSummary,
+                    movie_id: movieId,
+                    translate_summary: true
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success' && data.translated_text) {
+                    results.translated_summary = data.translated_text;
+                    
+                    // Choose the appropriate container based on which one exists
+                    let container, textEl;
+                    
+                    if (document.getElementById('translated-summary-container')) {
+                        container = document.getElementById('translated-summary-container');
+                        textEl = document.getElementById('translated-summary-text');
+                    } else if (document.getElementById('async-translated-summary-container')) {
+                        container = document.getElementById('async-translated-summary-container');
+                        textEl = document.getElementById('async-translated-summary-text');
+                    } else {
+                        // Create a container if none exists (rare case)
+                        const summaryContainer = document.getElementById('summary-container') || 
+                                               document.querySelector('.mb-3');
+                        
+                        if (summaryContainer) {
+                            container = document.createElement('div');
+                            container.id = 'dynamic-translated-summary-container';
+                            container.className = 'card bg-light';
+                            
+                            const cardBody = document.createElement('div');
+                            cardBody.className = 'card-body';
+                            
+                            const strongEl = document.createElement('strong');
+                            strongEl.textContent = '译文简介:';
+                            
+                            textEl = document.createElement('p');
+                            textEl.id = 'dynamic-translated-summary-text';
+                            
+                            cardBody.appendChild(strongEl);
+                            cardBody.appendChild(textEl);
+                            container.appendChild(cardBody);
+                            
+                            summaryContainer.appendChild(container);
+                        } else {
+                            throw new Error('Could not find or create summary container');
+                        }
+                    }
+                    
+                    // Add the translated text and show the container
+                    textEl.textContent = data.translated_text;
+                    container.style.display = 'block';
+                } else {
+                    throw new Error(data.message || 'Summary translation failed');
+                }
+            });
+            
+            translationPromises.push(summaryPromise);
+        }
+        
+        // Wait for all translations to complete
+        Promise.all(translationPromises)
+            .then(() => {
+                // Save all translations to the server
+                return fetch(`/api/save_translation/${movieId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(results)
+                });
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    // Hide the button as translation is now saved
+                    button.style.display = 'none';
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                // Enable the button again
+                button.disabled = false;
+                button.innerHTML = '<i class="bi bi-translate"></i> Retry Translation';
+                
+                // Show error message
+                alert('Translation failed: ' + error.message);
+            });
+    }
+    
+    function translateTitle(movieId, originalTitle) {
+        // Legacy function - create a temporary button with the data and use it
+        const tempButton = document.createElement('button');
+        tempButton.setAttribute('data-movie-id', movieId);
+        tempButton.setAttribute('data-title', originalTitle);
+        translateMovie(tempButton);
+    }
+</script>
+{% endblock %} 

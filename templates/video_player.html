@@ -1,0 +1,451 @@
+{% extends "base.html" %}
+
+{% block title %}{{ movie.id }} - Video Player{% endblock %}
+
+{% block head %}
+<style>
+    .video-container {
+        width: 100%;
+        position: relative;
+        padding-bottom: 56.25%; /* 16:9 aspect ratio */
+        height: 0;
+        overflow: hidden;
+    }
+    .video-container video {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: #000;
+    }
+    .magnet-link-box {
+        background-color: #f8f9fa;
+        border: 1px solid #dee2e6;
+        padding: 15px;
+        border-radius: 5px;
+        margin-top: 20px;
+    }
+    .controls-container {
+        margin-top: 15px;
+    }
+    .no-video-message {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background-color: #000;
+        color: #fff;
+        height: 400px;
+        border-radius: 5px;
+    }
+    #debugInfo {
+        margin-top: 15px;
+        padding: 10px;
+        background-color: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 5px;
+        max-height: 200px;
+        overflow-y: auto;
+        font-family: monospace;
+        font-size: 0.8rem;
+    }
+</style>
+<!-- HLS.js 库用于支持HLS流媒体 -->
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12 mb-4">
+        <nav aria-label="breadcrumb" class="d-flex justify-content-between align-items-center">
+            <ol class="breadcrumb mb-0">
+                <li class="breadcrumb-item"><a href="/">Home</a></li>
+                <li class="breadcrumb-item"><a href="/movie/{{ movie.id }}">Movie {{ movie.id }}</a></li>
+                <li class="breadcrumb-item active">Video Player</li>
+            </ol>
+            <a href="/movie/{{ movie.id }}" class="btn btn-sm btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Back to Details
+            </a>
+        </nav>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-12">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">{{ movie.id }} - {{ movie.title }}</h5>
+                {% if hls_url %}
+                <small class="text-muted">Stream URL: <span id="streamUrlDisplay"></span></small>
+                {% endif %}
+            </div>
+            <div class="card-body">
+                {% if hls_url or video_url %}
+                <!-- Video player with HLS support -->
+                <div class="video-container">
+                    <video id="videoPlayer" controls autoplay crossorigin="anonymous">
+                        {% if video_url %}
+                        <source src="{{ video_url }}" type="video/mp4">
+                        {% endif %}
+                        Your browser does not support the video tag.
+                    </video>
+                </div>
+                
+                <div id="videoStatus" class="alert alert-info mt-3" style="display: none;"></div>
+                
+                <div id="debugInfo" style="display: none;">
+                    <div><strong>Debug Information:</strong></div>
+                    <div id="debugLogs"></div>
+                </div>
+                
+                <div class="controls-container">
+                    <div class="btn-group" role="group">
+                        <button class="btn btn-primary" onclick="document.getElementById('videoPlayer').play()">
+                            <i class="bi bi-play-fill"></i> Play
+                        </button>
+                        <button class="btn btn-primary" onclick="document.getElementById('videoPlayer').pause()">
+                            <i class="bi bi-pause-fill"></i> Pause
+                        </button>
+                        <button class="btn btn-primary" onclick="toggleFullScreen()">
+                            <i class="bi bi-fullscreen"></i> Fullscreen
+                        </button>
+                        <button class="btn btn-secondary" onclick="toggleDebugInfo()">
+                            <i class="bi bi-bug"></i> Debug Info
+                        </button>
+                    </div>
+                    
+                    <div class="mt-2 d-flex align-items-center">
+                        <label for="qualitySelector" class="me-2">分辨率:</label>
+                        <select id="qualitySelector" class="form-select" style="width: auto;" disabled>
+                            <option value="">加载中...</option>
+                        </select>
+                    </div>
+                </div>
+                {% else %}
+                <!-- No direct video URL available -->
+                <div class="no-video-message">
+                    <div class="text-center">
+                        <i class="bi bi-film" style="font-size: 3rem;"></i>
+                        <h4 class="mt-3">Direct streaming not available</h4>
+                        <p>Please use the magnet link below to watch in an external player</p>
+                    </div>
+                </div>
+                {% endif %}
+                
+                {% if magnet_link %}
+                <!-- Display magnet link info -->
+                <div class="magnet-link-box">
+                    <h5><i class="bi bi-magnet"></i> Magnet Link (External Player)</h5>
+                    <p>Open this magnet link in your favorite torrent client or media player to watch the video.</p>
+                    
+                    <div class="input-group mb-3">
+                        <input type="text" class="form-control" id="magnetInput" value="{{ magnet_link }}" readonly>
+                        <button class="btn btn-outline-primary" type="button" onclick="copyMagnetLink()">
+                            <i class="bi bi-clipboard"></i> Copy
+                        </button>
+                        <a href="{{ magnet_link }}" class="btn btn-primary">
+                            <i class="bi bi-play-fill"></i> Open Link
+                        </a>
+                    </div>
+                    
+                    <div class="alert alert-info mt-3">
+                        <i class="bi bi-info-circle"></i> If you have VLC or another compatible media player configured, 
+                        clicking "Open Link" may automatically start streaming the video.
+                    </div>
+                </div>
+                {% elif not hls_url and not video_url %}
+                <div class="alert alert-warning mt-3">
+                    <i class="bi bi-exclamation-triangle"></i> No video sources available for this movie.
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function copyMagnetLink() {
+        const magnetInput = document.getElementById('magnetInput');
+        magnetInput.select();
+        document.execCommand('copy');
+        
+        // Show feedback
+        const button = event.currentTarget;
+        const originalText = button.innerHTML;
+        button.innerHTML = '<i class="bi bi-check"></i> Copied!';
+        
+        setTimeout(() => {
+            button.innerHTML = originalText;
+        }, 2000);
+    }
+    
+    function toggleFullScreen() {
+        const video = document.getElementById('videoPlayer');
+        
+        if (!document.fullscreenElement) {
+            if (video.requestFullscreen) {
+                video.requestFullscreen();
+            } else if (video.webkitRequestFullscreen) {
+                video.webkitRequestFullscreen();
+            } else if (video.msRequestFullscreen) {
+                video.msRequestFullscreen();
+            }
+        } else {
+            if (document.exitFullscreen) {
+                document.exitFullscreen();
+            } else if (document.webkitExitFullscreen) {
+                document.webkitExitFullscreen();
+            } else if (document.msExitFullscreen) {
+                document.msExitFullscreen();
+            }
+        }
+    }
+    
+    function toggleDebugInfo() {
+        const debugInfo = document.getElementById('debugInfo');
+        if (debugInfo.style.display === 'none') {
+            debugInfo.style.display = 'block';
+        } else {
+            debugInfo.style.display = 'none';
+        }
+    }
+    
+    function addDebugLog(message) {
+        const debugLogs = document.getElementById('debugLogs');
+        const timestamp = new Date().toISOString().substr(11, 8);
+        debugLogs.innerHTML += `<div>[${timestamp}] ${message}</div>`;
+        debugLogs.scrollTop = debugLogs.scrollHeight;
+    }
+    
+    function updateVideoStatus(message, type = 'info') {
+        const videoStatus = document.getElementById('videoStatus');
+        videoStatus.className = `alert alert-${type} mt-3`;
+        videoStatus.innerHTML = message;
+        videoStatus.style.display = 'block';
+    }
+    
+    // 设置HLS播放
+    document.addEventListener('DOMContentLoaded', function() {
+        const video = document.getElementById('videoPlayer');
+        const statusEl = document.getElementById('videoStatus');
+        const streamUrlDisplay = document.getElementById('streamUrlDisplay');
+        
+        // HLS URL from server
+        const originalHlsUrl = "{{ hls_url }}";
+        
+        // 创建代理URL，解决CORS问题
+        const useProxy = true; // 设置为true启用代理
+        let hlsUrl = originalHlsUrl;
+        
+        if (useProxy && hlsUrl) {
+            const encodedUrl = encodeURIComponent(hlsUrl);
+            hlsUrl = `/api/proxy/stream?url=${encodedUrl}`;
+            addDebugLog(`使用代理: ${hlsUrl}`);
+        }
+        
+        // 显示流URL（但截断过长的部分）
+        if (hlsUrl && streamUrlDisplay) {
+            if (hlsUrl.length > 50) {
+                streamUrlDisplay.textContent = originalHlsUrl.substring(0, 50) + '...';
+                streamUrlDisplay.title = originalHlsUrl; // 完整URL在悬停时显示
+            } else {
+                streamUrlDisplay.textContent = originalHlsUrl;
+            }
+        }
+        
+        addDebugLog(`初始化播放器...`);
+        
+        if (hlsUrl) {
+            addDebugLog(`HLS URL: ${hlsUrl}`);
+            
+            // 添加通用的视频事件处理
+            video.addEventListener('error', function(e) {
+                console.error('Video error:', e);
+                addDebugLog(`视频错误: ${video.error?.code || 'unknown'} - ${video.error?.message || 'No details'}`);
+                updateVideoStatus(`<i class="bi bi-exclamation-triangle"></i> 视频播放错误: ${video.error?.message || '未知错误'}`, 'danger');
+            });
+            
+            video.addEventListener('loadstart', () => addDebugLog('视频开始加载'));
+            video.addEventListener('loadeddata', () => addDebugLog('视频数据已加载'));
+            video.addEventListener('loadedmetadata', () => addDebugLog('视频元数据已加载'));
+            video.addEventListener('canplay', () => addDebugLog('视频可以开始播放'));
+            video.addEventListener('play', () => addDebugLog('视频开始播放'));
+            video.addEventListener('pause', () => addDebugLog('视频已暂停'));
+            video.addEventListener('seeking', () => addDebugLog('视频跳转中'));
+            video.addEventListener('seeked', () => addDebugLog('视频已跳转'));
+            
+            // 进行CORS验证测试
+            addDebugLog('进行CORS预检...');
+            fetch(hlsUrl, {method: 'HEAD'})
+                .then(response => {
+                    addDebugLog(`CORS预检成功: ${response.status} ${response.statusText}`);
+                })
+                .catch(error => {
+                    addDebugLog(`CORS预检失败: ${error.message}`);
+                    updateVideoStatus(`<i class="bi bi-exclamation-triangle"></i> CORS错误: 无法访问视频源。这可能是由于浏览器的跨域安全限制。`, 'warning');
+                });
+            
+            // HLS流媒体播放
+            if (Hls.isSupported()) {
+                addDebugLog('HLS.js支持已检测到，正在初始化...');
+                
+                const hls = new Hls({
+                    debug: false,  // 将debug设为false，减少控制台日志输出
+                    xhrSetup: function(xhr, url) {
+                        // 设置CORS模式
+                        xhr.withCredentials = false;
+                        addDebugLog(`请求: ${url}`);
+                    }
+                });
+                
+                // 分辨率选择器
+                const qualitySelector = document.getElementById('qualitySelector');
+                let levels = [];
+                let currentLevelIndex = -1; // 自动选择
+                
+                // 注册更多事件监听
+                hls.on(Hls.Events.MEDIA_ATTACHED, function() {
+                    addDebugLog('HLS: 媒体已附加');
+                });
+                
+                hls.on(Hls.Events.MANIFEST_PARSED, function(event, data) {
+                    // 保存质量级别
+                    levels = data.levels;
+                    
+                    // 更新质量选择器
+                    updateQualitySelector(levels, qualitySelector);
+                    
+                    addDebugLog(`HLS: 清单已解析，发现 ${data.levels.length} 种质量级别`);
+                    updateVideoStatus(`<i class="bi bi-check-circle"></i> 视频流已加载，正在播放...`, 'success');
+                    video.play();
+                });
+                
+                hls.on(Hls.Events.LEVEL_LOADED, function(event, data) {
+                    addDebugLog(`HLS: 级别 ${data.level} 已加载，持续时间: ${data.details.totalduration}秒`);
+                });
+                
+                hls.on(Hls.Events.LEVEL_SWITCHING, function(event, data) {
+                    const level = levels[data.level];
+                    if (level) {
+                        const height = level.height || level.attrs.RESOLUTION?.split('x')[1] || 'auto';
+                        const width = level.width || level.attrs.RESOLUTION?.split('x')[0] || '';
+                        const bitrate = Math.round(level.bitrate / 1000);
+                        
+                        addDebugLog(`HLS: 切换到级别 ${data.level}: ${width}x${height}, ${bitrate}kbps`);
+                        currentLevelIndex = data.level;
+                        
+                        // 更新下拉框选中项
+                        if (qualitySelector.options[data.level + 1]) {
+                            qualitySelector.selectedIndex = data.level + 1;
+                        }
+                    }
+                });
+                
+                // 质量选择器事件
+                qualitySelector.addEventListener('change', function() {
+                    const levelIndex = parseInt(this.value);
+                    if (!isNaN(levelIndex)) {
+                        addDebugLog(`用户选择质量级别: ${levelIndex}`);
+                        hls.currentLevel = levelIndex;
+                    }
+                });
+                
+                hls.on(Hls.Events.ERROR, function(event, data) {
+                    console.error('HLS error:', data);
+                    addDebugLog(`HLS错误: 类型=${data.type}, 详情=${data.details}, 致命=${data.fatal}`);
+                    
+                    if (data.response) {
+                        addDebugLog(`错误响应: ${data.response.code} - ${data.response.text}`);
+                    }
+                    
+                    if (data.fatal) {
+                        switch(data.type) {
+                            case Hls.ErrorTypes.NETWORK_ERROR:
+                                addDebugLog('致命网络错误。尝试恢复...');
+                                updateVideoStatus(`<i class="bi bi-exclamation-triangle"></i> 网络错误: ${data.details}。尝试恢复中...`, 'warning');
+                                hls.startLoad();
+                                break;
+                            case Hls.ErrorTypes.MEDIA_ERROR:
+                                addDebugLog('致命媒体错误。尝试恢复...');
+                                updateVideoStatus(`<i class="bi bi-exclamation-triangle"></i> 媒体错误: ${data.details}。尝试恢复中...`, 'warning');
+                                hls.recoverMediaError();
+                                break;
+                            default:
+                                addDebugLog('致命错误。无法恢复。');
+                                updateVideoStatus(`<i class="bi bi-x-circle"></i> 致命错误: ${data.details}。无法继续播放。`, 'danger');
+                                hls.destroy();
+                                
+                                // 尝试通过iframe直接打开链接查看内容
+                                updateVideoStatus(`<i class="bi bi-info-circle"></i> 尝试直接打开流URL...
+                                    <div class="mt-2">
+                                        <a href="${originalHlsUrl}" target="_blank" class="btn btn-sm btn-outline-primary">在新窗口打开</a>
+                                        <a href="${originalHlsUrl.replace('playlist.m3u8', '720p/video.m3u8')}" target="_blank" class="btn btn-sm btn-outline-primary">尝试720p链接</a>
+                                        <a href="/api/proxy/stream?url=${encodeURIComponent(originalHlsUrl)}" target="_blank" class="btn btn-sm btn-outline-primary">通过代理打开</a>
+                                    </div>
+                                `, 'info');
+                                break;
+                        }
+                    }
+                });
+                
+                // 辅助函数 - 更新质量选择器下拉框
+                function updateQualitySelector(levels, selector) {
+                    // 清除现有选项
+                    selector.innerHTML = '';
+                    
+                    // 添加自动选项
+                    let autoOption = document.createElement('option');
+                    autoOption.value = "-1";
+                    autoOption.text = "自动";
+                    selector.add(autoOption);
+                    
+                    // 添加每个质量级别
+                    levels.forEach((level, index) => {
+                        const height = level.height || level.attrs.RESOLUTION?.split('x')[1] || 'unknown';
+                        const width = level.width || level.attrs.RESOLUTION?.split('x')[0] || '';
+                        const bitrate = Math.round(level.bitrate / 1000);
+                        
+                        let option = document.createElement('option');
+                        option.value = index;
+                        option.text = height + 'p' + (bitrate ? ` (${bitrate}kbps)` : '');
+                        option.dataset.width = width;
+                        option.dataset.height = height;
+                        option.dataset.bitrate = bitrate;
+                        selector.add(option);
+                    });
+                    
+                    // 启用选择器
+                    selector.disabled = false;
+                }
+                
+                addDebugLog('加载HLS源...');
+                hls.loadSource(hlsUrl);
+                addDebugLog('附加到视频元素...');
+                hls.attachMedia(video);
+            } 
+            // 浏览器原生支持HLS
+            else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                addDebugLog('检测到浏览器原生HLS支持');
+                video.src = hlsUrl;
+                video.addEventListener('loadedmetadata', function() {
+                    addDebugLog('使用原生HLS支持开始播放');
+                    video.play();
+                });
+            }
+            // 不支持HLS，显示错误信息
+            else {
+                addDebugLog('浏览器不支持HLS');
+                const fallbackMessage = document.createElement('div');
+                fallbackMessage.className = 'alert alert-warning';
+                fallbackMessage.innerHTML = '<i class="bi bi-exclamation-triangle"></i> 您的浏览器不支持HLS流媒体。请尝试使用不同的浏览器或使用下面的磁力链接。';
+                video.parentNode.appendChild(fallbackMessage);
+                updateVideoStatus('<i class="bi bi-exclamation-triangle"></i> 您的浏览器不支持HLS流媒体。请尝试使用不同的浏览器或使用磁力链接。', 'warning');
+            }
+        } else {
+            addDebugLog('没有提供HLS URL');
+        }
+    });
+</script>
+{% endblock %} 

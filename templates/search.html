@@ -1,0 +1,451 @@
+{% extends "base.html" %}
+
+{% block title %}Search Results{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12 mb-4">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="/">Home</a></li>
+                <li class="breadcrumb-item active">Search Results</li>
+            </ol>
+        </nav>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <h5>Search</h5>
+            </div>
+            <div class="card-body">
+                <form action="/search_keyword" method="get" id="searchForm">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="input-group mb-3">
+                                <input type="text" name="keyword" id="keywordInput" class="form-control" placeholder="输入关键词或留空显示全部影片" value="{{ keyword_query|default('') }}">
+                                <button type="submit" class="btn btn-primary">搜索</button>
+                            </div>
+                            <div class="d-flex justify-content-start mb-3">
+                                <div class="form-check me-3">
+                                    <input class="form-check-input" type="checkbox" id="magnetAll" name="magnet" value="all" {% if request.args.get('magnet') == 'all' %}checked{% endif %}>
+                                    <label class="form-check-label" for="magnetAll">包括无磁力影片</label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="uncensoredType" name="type" value="uncensored" {% if request.args.get('type') == 'uncensored' %}checked{% endif %}>
+                                    <label class="form-check-label" for="uncensoredType">无码影片</label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="row g-2">
+                                <div class="col-12">
+                                    <small class="text-muted mb-2 d-block">高级筛选 (点击切换):</small>
+                                </div>
+                                <div class="col-6">
+                                    <div class="input-group input-group-sm">
+                                        <span class="input-group-text">演员</span>
+                                        <input type="text" class="form-control form-control-sm filter-value" name="filterValue_star" placeholder="ID" value="{% if filter_type == 'star' %}{{ filter_value }}{% endif %}">
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="input-group input-group-sm">
+                                        <span class="input-group-text">类别</span>
+                                        <input type="text" class="form-control form-control-sm filter-value" name="filterValue_genre" placeholder="ID" value="{% if filter_type == 'genre' %}{{ filter_value }}{% endif %}">
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="input-group input-group-sm">
+                                        <span class="input-group-text">导演</span>
+                                        <input type="text" class="form-control form-control-sm filter-value" name="filterValue_director" placeholder="ID" value="{% if filter_type == 'director' %}{{ filter_value }}{% endif %}">
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="input-group input-group-sm">
+                                        <span class="input-group-text">制作商</span>
+                                        <input type="text" class="form-control form-control-sm filter-value" name="filterValue_studio" placeholder="ID" value="{% if filter_type == 'studio' %}{{ filter_value }}{% endif %}">
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="input-group input-group-sm">
+                                        <span class="input-group-text">发行商</span>
+                                        <input type="text" class="form-control form-control-sm filter-value" name="filterValue_label" placeholder="ID" value="{% if filter_type == 'label' %}{{ filter_value }}{% endif %}">
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="input-group input-group-sm">
+                                        <span class="input-group-text">系列</span>
+                                        <input type="text" class="form-control form-control-sm filter-value" name="filterValue_series" placeholder="ID" value="{% if filter_type == 'series' %}{{ filter_value }}{% endif %}">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if movie %}
+<div class="row">
+    <div class="col-md-12">
+        <h4>Movie Found</h4>
+        <div class="row">
+            <div class="col-md-4 mb-4">
+                <div class="card movie-card">
+                    <div class="movie-poster-container">
+                        <img src="/images/covers/{{ movie.id }}.jpg" class="card-img-top movie-poster" alt="{{ movie.id }}">
+                    </div>
+                    <div class="card-body">
+                        <h5 class="card-title">{{ movie.id }}</h5>
+                        <p class="card-text text-truncate">{{ movie.title }}</p>
+                        {% if movie.translated_title %}
+                        <p class="card-text text-truncate text-info"><small>{{ movie.translated_title }}</small></p>
+                        {% endif %}
+                        <a href="/movie/{{ movie.id }}" class="btn btn-primary stretched-link">View Details</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% elif keyword_results %}
+<div class="row">
+    <div class="col-md-12">
+        {% if keyword_query %}
+        <h4>关键字搜索结果: "{{ keyword_query }}"</h4>
+        {% elif filter_type and filter_value %}
+        <h4>
+            {% if filter_type == 'star' %}演员
+            {% elif filter_type == 'genre' %}类别
+            {% elif filter_type == 'director' %}导演
+            {% elif filter_type == 'studio' %}制作商
+            {% elif filter_type == 'label' %}发行商
+            {% elif filter_type == 'series' %}系列
+            {% else %}{{ filter_type }}
+            {% endif %}
+            筛选: "{{ filter_value }}"
+        </h4>
+        {% else %}
+        <h4>所有影片</h4>
+        {% endif %}
+        
+        {% if filter_type and filter_value %}
+        <div class="mb-3">
+            <a href="/search_keyword{% if request.args.get('magnet') %}?magnet={{ request.args.get('magnet') }}{% endif %}{% if request.args.get('type') %}{% if request.args.get('magnet') %}&{% else %}?{% endif %}type={{ request.args.get('type') }}{% endif %}" class="btn btn-sm btn-outline-secondary">
+                <i class="bi bi-x"></i> 清除筛选
+            </a>
+        </div>
+        {% endif %}
+        
+        <div class="row">
+            {% for movie in keyword_results %}
+            <div class="col-md-4 mb-4">
+                <div class="card movie-card">
+                    <div class="movie-poster-container">
+                        <img src="/images/covers/{{ movie.id }}.jpg" class="card-img-top movie-poster" alt="{{ movie.id }}">
+                    </div>
+                    <div class="card-body">
+                        <h5 class="card-title">{{ movie.id }}</h5>
+                        <p class="card-text text-truncate">{{ movie.title }}</p>
+                        {% if movie.translated_title %}
+                        <p class="card-text text-truncate text-info"><small>{{ movie.translated_title }}</small></p>
+                        {% endif %}
+                        {% if movie.tags %}
+                        <div class="mb-2">
+                            {% for tag in movie.tags %}
+                            <span class="badge bg-secondary me-1">{{ tag }}</span>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                        <p class="card-text"><small class="text-muted">{{ movie.date }}</small></p>
+                        <a href="/movie/{{ movie.id }}" class="btn btn-primary stretched-link">View Details</a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        
+        {% if pagination and pagination.pages|length > 1 %}
+        <nav aria-label="Page navigation">
+            <ul class="pagination justify-content-center mt-4">
+                {% if pagination.current_page > 1 %}
+                <li class="page-item">
+                    <a class="page-link" href="/search_keyword?page={{ pagination.current_page - 1 }}{% if keyword_query %}&keyword={{ keyword_query }}{% endif %}{% if request.args.get('magnet') %}&magnet={{ request.args.get('magnet') }}{% endif %}{% if request.args.get('type') %}&type={{ request.args.get('type') }}{% endif %}{% if filter_type and filter_value %}&filterType={{ filter_type }}&filterValue={{ filter_value }}{% endif %}">Previous</a>
+                </li>
+                {% else %}
+                <li class="page-item disabled">
+                    <span class="page-link">Previous</span>
+                </li>
+                {% endif %}
+                
+                {% for page in pagination.pages %}
+                <li class="page-item {% if page == pagination.current_page %}active{% endif %}">
+                    <a class="page-link" href="/search_keyword?page={{ page }}{% if keyword_query %}&keyword={{ keyword_query }}{% endif %}{% if request.args.get('magnet') %}&magnet={{ request.args.get('magnet') }}{% endif %}{% if request.args.get('type') %}&type={{ request.args.get('type') }}{% endif %}{% if filter_type and filter_value %}&filterType={{ filter_type }}&filterValue={{ filter_value }}{% endif %}">{{ page }}</a>
+                </li>
+                {% endfor %}
+                
+                {% if pagination.has_next %}
+                <li class="page-item">
+                    <a class="page-link" href="/search_keyword?page={{ pagination.next_page }}{% if keyword_query %}&keyword={{ keyword_query }}{% endif %}{% if request.args.get('magnet') %}&magnet={{ request.args.get('magnet') }}{% endif %}{% if request.args.get('type') %}&type={{ request.args.get('type') }}{% endif %}{% if filter_type and filter_value %}&filterType={{ filter_type }}&filterValue={{ filter_value }}{% endif %}">Next</a>
+                </li>
+                {% else %}
+                <li class="page-item disabled">
+                    <span class="page-link">Next</span>
+                </li>
+                {% endif %}
+            </ul>
+        </nav>
+        {% endif %}
+    </div>
+</div>
+{% elif movies %}
+<div class="row">
+    <div class="col-md-12">
+        <h4>Found {{ movies|length }} Movies</h4>
+        <div class="row">
+            {% for movie in movies %}
+            <div class="col-md-3 mb-4">
+                <div class="card movie-card">
+                    <img src="/images/covers/{{ movie.id }}.jpg" class="card-img-top movie-poster" alt="{{ movie.id }}">
+                    <div class="card-body">
+                        <h5 class="card-title">{{ movie.id }}</h5>
+                        <p class="card-text text-truncate">{{ movie.title }}</p>
+                        {% if movie.translated_title %}
+                        <p class="card-text text-truncate text-info"><small>{{ movie.translated_title }}</small></p>
+                        {% endif %}
+                        <a href="/movie/{{ movie.id }}" class="btn btn-primary stretched-link">View Details</a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% elif actor %}
+<div class="row">
+    <div class="col-md-12">
+        <h4>Actor Profile</h4>
+        <div class="card mb-4">
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-3 text-center">
+                        <img src="/images/actor/{{ actor.id }}.jpg" class="img-fluid rounded-circle mb-3" style="max-width: 200px;" alt="{{ actor.name }}">
+                        <h5>{{ actor.name }}</h5>
+                    </div>
+                    <div class="col-md-9">
+                        <h5>Actor Information</h5>
+                        <table class="table">
+                            <tbody>
+                                {% if actor.birthdate %}
+                                <tr>
+                                    <th scope="row">Birthdate</th>
+                                    <td>{{ actor.birthdate }}</td>
+                                </tr>
+                                {% endif %}
+                                {% if actor.age %}
+                                <tr>
+                                    <th scope="row">Age</th>
+                                    <td>{{ actor.age }}</td>
+                                </tr>
+                                {% endif %}
+                                {% if actor.height %}
+                                <tr>
+                                    <th scope="row">Height</th>
+                                    <td>{{ actor.height }}</td>
+                                </tr>
+                                {% endif %}
+                                {% if actor.measurements %}
+                                <tr>
+                                    <th scope="row">Measurements</th>
+                                    <td>{{ actor.measurements }}</td>
+                                </tr>
+                                {% endif %}
+                                {% if actor.birthplace %}
+                                <tr>
+                                    <th scope="row">Birthplace</th>
+                                    <td>{{ actor.birthplace }}</td>
+                                </tr>
+                                {% endif %}
+                                {% if actor.hobby %}
+                                <tr>
+                                    <th scope="row">Hobby</th>
+                                    <td>{{ actor.hobby }}</td>
+                                </tr>
+                                {% endif %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        {% if actor_movies %}
+        <h4>Movies featuring {{ actor.name }}</h4>
+        <div class="row">
+            {% for movie in actor_movies %}
+            <div class="col-md-3 mb-4">
+                <div class="card movie-card">
+                    <img src="/images/covers/{{ movie.id }}.jpg" class="card-img-top movie-poster" alt="{{ movie.id }}">
+                    <div class="card-body">
+                        <h5 class="card-title">{{ movie.id }}</h5>
+                        <p class="card-text text-truncate">{{ movie.title }}</p>
+                        {% if movie.translated_title %}
+                        <p class="card-text text-truncate text-info"><small>{{ movie.translated_title }}</small></p>
+                        {% endif %}
+                        <a href="/movie/{{ movie.id }}" class="btn btn-primary stretched-link">View Details</a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% else %}
+<div class="row">
+    <div class="col-md-12">
+        <div class="alert alert-info">
+            No results found for your search query.
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Get references to form elements
+        const searchForm = document.getElementById('searchForm');
+        if (searchForm) {
+            const keywordInput = document.getElementById('keywordInput');
+            const filterInputs = document.querySelectorAll('.filter-value');
+            
+            // Add event listeners to filter inputs
+            filterInputs.forEach(input => {
+                input.addEventListener('input', function() {
+                    // If any filter has a value, disable keyword input
+                    const hasFilterValue = Array.from(filterInputs).some(inp => inp.value.trim() !== '');
+                    if (hasFilterValue) {
+                        keywordInput.disabled = true;
+                        keywordInput.placeholder = "使用筛选条件时不能同时使用关键词搜索";
+                        keywordInput.value = '';
+                    } else {
+                        keywordInput.disabled = false;
+                        keywordInput.placeholder = "输入关键词或留空显示全部影片";
+                    }
+                });
+            });
+            
+            // Initialize the form state
+            const hasFilterValue = Array.from(filterInputs).some(inp => inp.value.trim() !== '');
+            if (hasFilterValue) {
+                keywordInput.disabled = true;
+                keywordInput.placeholder = "使用筛选条件时不能同时使用关键词搜索";
+            }
+            
+            // Handle form submission
+            searchForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                
+                const formData = new FormData(searchForm);
+                const params = new URLSearchParams();
+                
+                // Add keyword parameter if it has a value and no filters are active
+                const keyword = formData.get('keyword');
+                const hasFilter = Array.from(filterInputs).some(inp => inp.value.trim() !== '');
+                
+                if (keyword && !hasFilter) {
+                    params.append('keyword', keyword);
+                }
+                
+                // Add magnet parameter if checkbox is checked
+                if (document.getElementById('magnetAll') && document.getElementById('magnetAll').checked) {
+                    params.append('magnet', 'all');
+                }
+                
+                // Add type parameter if checkbox is checked
+                if (document.getElementById('uncensoredType') && document.getElementById('uncensoredType').checked) {
+                    params.append('type', 'uncensored');
+                }
+                
+                // Add filter parameters if any has a value
+                let activeFilterType = null;
+                let activeFilterValue = null;
+                
+                filterInputs.forEach(input => {
+                    if (input.value.trim() !== '') {
+                        // Extract filter type from input name (e.g., filterValue_star -> star)
+                        const filterType = input.name.split('_')[1];
+                        
+                        // Only use the first non-empty filter
+                        if (!activeFilterType) {
+                            activeFilterType = filterType;
+                            activeFilterValue = input.value.trim();
+                        }
+                    }
+                });
+                
+                if (activeFilterType && activeFilterValue) {
+                    params.append('filterType', activeFilterType);
+                    params.append('filterValue', activeFilterValue);
+                }
+                
+                // Redirect to search page with parameters
+                window.location.href = '/search_keyword?' + params.toString();
+            });
+        }
+    });
+</script>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.movie-poster-container {
+    position: relative;
+    width: 100%;
+    padding-top: 67.25%; /* 538/800 * 100% = 67.25% */
+    overflow: hidden;
+}
+
+.movie-poster {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.movie-card {
+    height: 100%;
+    transition: transform 0.2s;
+}
+
+.movie-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.card-body {
+    padding: 1rem;
+}
+
+.card-title {
+    font-size: 1.1rem;
+    margin-bottom: 0.5rem;
+}
+
+.card-text {
+    margin-bottom: 0.5rem;
+}
+
+.badge {
+    font-size: 0.8rem;
+}
+</style>
+{% endblock %} 

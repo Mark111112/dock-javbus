@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+
+{% block title %}My Favorites{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12 mb-4">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="/">Home</a></li>
+                <li class="breadcrumb-item active">My Favorites</li>
+            </ol>
+        </nav>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">My Favorite Movies</h5>
+                {% if favorites and favorites|length > 0 %}
+                <button class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#clearFavoritesModal">
+                    <i class="bi bi-trash"></i> Clear All
+                </button>
+                {% endif %}
+            </div>
+            <div class="card-body">
+                {% if favorites and favorites|length > 0 %}
+                <div class="row mt-4">
+                    <div class="col-12">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h2>Your Favorites</h2>
+                            <button class="btn btn-outline-danger" onclick="clearAllFavorites()">
+                                <i class="bi bi-trash"></i> Clear All Favorites
+                            </button>
+                        </div>
+                        <div class="row" id="favorites-container">
+                            {% for movie in favorites %}
+                            <div class="col-md-3 mb-4 favorite-item" data-id="{{ movie.id }}">
+                                <div class="card movie-card">
+                                    <img src="/images/covers/{{ movie.id }}.jpg" class="card-img-top movie-poster" alt="{{ movie.id }}">
+                                    <div class="card-body">
+                                        <h5 class="card-title">{{ movie.id }}</h5>
+                                        <p class="card-text text-truncate">{{ movie.title }}</p>
+                                        {% if movie.translated_title %}
+                                        <p class="card-text text-truncate text-info"><small>{{ movie.translated_title }}</small></p>
+                                        {% endif %}
+                                        <div class="d-grid gap-2">
+                                            <a href="/movie/{{ movie.id }}" class="btn btn-primary">View Details</a>
+                                            <button class="btn btn-danger" onclick="removeFromFavorites('{{ movie.id }}', this.closest('.favorite-item'))">
+                                                <i class="bi bi-heart-fill"></i> Remove from Favorites
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+                {% else %}
+                <div class="alert alert-info">
+                    You don't have any favorite movies yet. Browse movies and click the heart icon to add them to your favorites.
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Clear Favorites Confirmation Modal -->
+<div class="modal fade" id="clearFavoritesModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Clear All Favorites</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                Are you sure you want to clear all your favorite movies? This action cannot be undone.
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" onclick="clearAllFavorites()">Clear All</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function removeFromFavorites(movieId, element) {
+        fetch(`/api/toggle_favorite/${movieId}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (!data.is_favorite) {
+                // Add fade out effect
+                element.classList.add('fade-out');
+                
+                // Remove element after animation completes
+                setTimeout(() => {
+                    element.remove();
+                    
+                    // Check if there are any favorites left
+                    const favoritesCount = document.querySelectorAll('.favorite-item').length;
+                    if (favoritesCount === 0) {
+                        document.getElementById('favorites-container').innerHTML = 
+                            '<div class="alert alert-info">You have no favorites yet.</div>';
+                    }
+                }, 300);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+        });
+    }
+    
+    function clearAllFavorites() {
+        if (confirm('Are you sure you want to clear all favorites?')) {
+            fetch('/api/clear_favorites', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    document.getElementById('favorites-container').innerHTML = 
+                        '<div class="alert alert-info">You have no favorites yet.</div>';
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+            });
+        }
+    }
+</script>
+
+<style>
+    .fade-out {
+        opacity: 0;
+        transition: opacity 0.3s;
+    }
+</style>
+{% endblock %} 

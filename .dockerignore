@@ -1,0 +1,55 @@
+# Git相关
+.git
+.gitignore
+
+# 数据文件
+buspic/
+data/
+
+# Python缓存文件
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 开发文件
+.vscode/
+.idea/
+*.log
+
+# 不需要包含在镜像中的Python文件
+javbus_gui_improved.py
+video_player2.py
+video_player2_stub.py
+vlc_config.py
+generatedb.py
+create_directories.py
+
+# Docker相关
+docker-compose.yml
+.env
+
+# Readme和文档
+README.md
+*.md
+cmd.txt
+
+# 其他文件
+*.bak
+*.tmp 
