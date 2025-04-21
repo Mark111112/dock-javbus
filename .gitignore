@@ -26,9 +26,6 @@ cmd.txt
 # Environment variables
 .env
 
-# Configuration directory
-config/
-
 # Database files
 *.db
 *.sqlite
