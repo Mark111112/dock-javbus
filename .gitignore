@@ -21,7 +21,6 @@ var/
 *.egg
 115/
 nextbus/
-cmd.txt
 
 # Environment variables
 .env
@@ -40,6 +39,7 @@ data/
 # Logs
 logs/
 *.log
+cmd.txt
 
 # IDE files
 .idea/
