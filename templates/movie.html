@@ -18,7 +18,14 @@
 
     <div class="col-md-4">
         <div class="card mb-4">
-            <img src="/images/covers/{{ movie.id }}.jpg" class="card-img-top" alt="{{ movie.id }}">
+            <img src="/images/covers/{{ movie.id }}.jpg" 
+                 class="card-img-top" 
+                 alt="{{ movie.id }}" 
+                 style="max-width: 150%; height: auto; cursor: pointer;"
+                 data-bs-toggle="modal" 
+                 data-bs-target="#imageModal"
+                 data-src="/images/covers/{{ movie.id }}.jpg"
+                 title="Click to enlarge">
             <div class="card-body">
                 <h5 class="card-title">{{ movie.id }}</h5>
                 <p class="card-text">
@@ -42,6 +49,29 @@
                     <a href="/video_player/{{ movie.id }}" target="_blank" class="btn btn-outline-primary">
                         <i class="bi bi-play-circle"></i> Ad-free Player
                     </a>
+                    
+                    <!-- STRM Player button -->
+                    <a href="/strm/find_video/{{ movie.id }}" class="btn btn-outline-success">
+                        <i class="bi bi-collection-play"></i> STRM Player
+                    </a>
+                    
+                    <!-- 115 Cloud Player button -->
+                    <a href="/find_cloud115_by_video_id/{{ movie.id }}" class="btn btn-outline-secondary" style="background-color: #f8f0ff; border-color: #6f42c1; color: #6f42c1;">
+                        <i class="bi bi-cloud-arrow-down"></i> 115 Player
+                    </a>
+                    
+                    {% if movie.genres and movie.genres|length > 0 %}
+                    <div class="mt-3">
+                        <strong>Genres:</strong>
+                        <div>
+                            {% for genre in movie.genres %}
+                            <a href="/search_keyword?filterType=genre&filterValue={{ genre.id }}" class="badge bg-warning me-1 mb-1 text-decoration-none">
+                                {{ genre.name }}
+                            </a>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -74,13 +104,13 @@
                 
                 <div class="row mb-3">
                     <div class="col-md-4">
-                        <strong>ID:</strong> {{ movie.id }}
+                        <strong class="small">ID:</strong> <span class="small">{{ movie.id }}</span>
                     </div>
                     <div class="col-md-4">
-                        <strong>Release Date:</strong> {{ movie.date }}
+                        <strong class="small">Release Date:</strong> <span class="small">{{ movie.date }}</span>
                     </div>
                     <div class="col-md-4">
-                        <strong>Duration:</strong> {{ movie_data.videoLength|default('N/A') }} min
+                        <strong class="small">Duration:</strong> <span class="small">{{ movie.videoLength|default('N/A') }} min</span>
                     </div>
                 </div>
                 
@@ -88,44 +118,44 @@
                 
                 <div class="row mb-3">
                     <div class="col-md-4">
-                        <strong>Producer:</strong><br>
-                        {% if movie_data.producer and movie_data.producer.id %}
-                        <a href="/search_keyword?filterType=studio&filterValue={{ movie_data.producer.id }}" class="text-decoration-none">
-                            {{ movie_data.producer.name|default(movie.producer) }}
+                        <strong class="small">Producer:</strong><br>
+                        {% if movie.producer_obj and movie.producer_obj.id %}
+                        <a href="/search_keyword?filterType=studio&filterValue={{ movie.producer_obj.id }}" class="text-decoration-none small">
+                            {{ movie.producer_obj.name|default(movie.producer) }}
                         </a>
                         {% else %}
-                        {{ movie.producer }}
+                        <span class="small">{{ movie.producer }}</span>
                         {% endif %}
                     </div>
                     <div class="col-md-4">
-                        <strong>Publisher:</strong><br>
-                        {% if movie_data.publisher and movie_data.publisher.id %}
-                        <a href="/search_keyword?filterType=label&filterValue={{ movie_data.publisher.id }}" class="text-decoration-none">
-                            {{ movie_data.publisher.name|default('N/A') }}
+                        <strong class="small">Publisher:</strong><br>
+                        {% if movie.publisher and movie.publisher.id %}
+                        <a href="/search_keyword?filterType=label&filterValue={{ movie.publisher.id }}" class="text-decoration-none small">
+                            {{ movie.publisher.name|default('N/A') }}
                         </a>
                         {% else %}
-                        {{ movie_data.publisher.name|default('N/A') }}
+                        <span class="small">{{ movie.publisher.name|default('N/A') }}</span>
                         {% endif %}
                     </div>
                     <div class="col-md-4">
-                        <strong>Director:</strong><br>
-                        {% if movie_data.director and movie_data.director.id %}
-                        <a href="/search_keyword?filterType=director&filterValue={{ movie_data.director.id }}" class="text-decoration-none">
-                            {{ movie_data.director.name|default('N/A') }}
+                        <strong class="small">Director:</strong><br>
+                        {% if movie.director and movie.director.id %}
+                        <a href="/search_keyword?filterType=director&filterValue={{ movie.director.id }}" class="text-decoration-none small">
+                            {{ movie.director.name|default('N/A') }}
                         </a>
                         {% else %}
-                        {{ movie_data.director.name|default('N/A') }}
+                        <span class="small">{{ movie.director.name|default('N/A') }}</span>
                         {% endif %}
                     </div>
                 </div>
                 
                 <hr>
                 
-                {% if movie_data.series and movie_data.series.id %}
+                {% if movie.series and movie.series.id %}
                 <div class="mb-3">
-                    <strong>Series:</strong><br>
-                    <a href="/search_keyword?filterType=series&filterValue={{ movie_data.series.id }}" class="text-decoration-none">
-                        {{ movie_data.series.name }}
+                    <strong class="small">Series:</strong><br>
+                    <a href="/search_keyword?filterType=series&filterValue={{ movie.series.id }}" class="text-decoration-none small">
+                        {{ movie.series.name }}
                     </a>
                 </div>
                 {% endif %}
@@ -134,28 +164,6 @@
                 <div class="mb-3">
                     <strong>Translated Title:</strong> 
                     <p>{{ movie.translated_title }}</p>
-                </div>
-                {% endif %}
-                
-                {% if movie_data.genres and movie_data.genres|length > 0 %}
-                <div class="mb-3">
-                    <strong>Genres:</strong>
-                    <div>
-                        {% for genre in movie_data.genres %}
-                        <a href="/search_keyword?filterType=genre&filterValue={{ genre.id }}" class="badge bg-secondary me-1 mb-1 text-decoration-none">
-                            {{ genre.name }}
-                        </a>
-                        {% endfor %}
-                    </div>
-                </div>
-                {% elif movie.genres and movie.genres|length > 0 %}
-                <div class="mb-3">
-                    <strong>Genres:</strong>
-                    <div>
-                        {% for genre in movie.genres %}
-                        <span class="badge bg-secondary me-1 mb-1">{{ genre }}</span>
-                        {% endfor %}
-                    </div>
                 </div>
                 {% endif %}
                 
@@ -246,15 +254,19 @@
                             {% for magnet in movie.magnet_links %}
                             <tr>
                                 <td>
+                                    {% if magnet.title %}
+                                    {{ magnet.title }}
+                                    {% else %}
                                     {{ magnet.name }}
+                                    {% endif %}
                                     {% if magnet.has_subtitle %}
                                     <span class="badge bg-success">字幕</span>
                                     {% endif %}
                                 </td>
                                 <td>{{ magnet.size }}</td>
-                                <td>{{ magnet.date }}</td>
+                                <td>{{ magnet.date|default(magnet.shareDate) }}</td>
                                 <td>
-                                    {% if magnet.is_hd %}
+                                    {% if magnet.is_hd or magnet.isHD %}
                                     <span class="badge bg-primary">HD</span>
                                     {% else %}
                                     <span class="badge bg-secondary">SD</span>
@@ -265,6 +277,12 @@
                                             data-magnet="{{ magnet.link }}" 
                                             onclick="copyMagnet(this)">
                                         <i class="bi bi-clipboard"></i> Copy
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-info add-to-115-btn"
+                                            data-magnet="{{ magnet.link }}"
+                                            data-title="{% if magnet.title %}{{ magnet.title }}{% else %}{{ magnet.name }}{% endif %}"
+                                            onclick="showAddTo115Modal(this)">
+                                        <i class="bi bi-cloud-arrow-down"></i> 添加115离线
                                     </button>
                                 </td>
                             </tr>
@@ -278,7 +296,7 @@
     </div>
 </div>
 
-{% if movie_data and movie_data.samples and movie_data.samples|length > 0 %}
+{% if movie and movie.samples and movie.samples|length > 0 %}
 <div class="row">
     <div class="col-md-12">
         <div class="card mb-4">
@@ -287,13 +305,20 @@
             </div>
             <div class="card-body">
                 <div class="row">
-                    {% for sample in movie_data.samples %}
+                    {% for sample in movie.sample_images %}
                     <div class="col-md-3 col-sm-6 mb-4">
-                        <img src="/images/{{ movie.id }}/sample_{{ loop.index }}.jpg" 
-                             class="img-fluid rounded sample-image" 
-                             alt="{{ movie.id }} sample {{ loop.index }}"
-                             data-original-src="{{ sample.src }}"
-                             onclick="openImageInNewTab(this)">
+                        <img src="/images/{{ movie.id }}/sample_{{ sample.index }}.jpg" 
+                             class="img-fluid rounded shadow sample-img"
+                             {% if sample.can_enlarge %}
+                             data-bs-toggle="modal" 
+                             data-bs-target="#imageModal"
+                             data-src="/images/{{ movie.id }}/sample_{{ sample.index }}.jpg"
+                             style="cursor: pointer;"
+                             title="Click to enlarge"
+                             {% else %}
+                             title="No larger image available"
+                             {% endif %}
+                             alt="{{ movie.title }} - Sample {{ sample.index }}">
                     </div>
                     {% endfor %}
                 </div>
@@ -302,6 +327,94 @@
     </div>
 </div>
 {% endif %}
+
+<!-- Add to 115 Offline Download Modal -->
+<div class="modal fade" id="addTo115Modal" tabindex="-1" aria-labelledby="addTo115ModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="addTo115ModalLabel">添加115云下载任务</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-primary mb-3">
+                    <p id="magnetInfo" class="mb-0"></p>
+                </div>
+                
+                <!-- 面包屑导航 -->
+                <nav aria-label="breadcrumb" class="mb-3">
+                    <ol class="breadcrumb" id="cloud115DLBreadCrumb">
+                        <li class="breadcrumb-item active" data-folder-id="0">根目录</li>
+                    </ol>
+                </nav>
+                
+                <!-- 115目录浏览 -->
+                <div class="table-responsive">
+                    <table class="table table-hover" id="cloud115DLFileList">
+                        <thead>
+                            <tr>
+                                <th scope="col" style="width: 40px;">#</th>
+                                <th scope="col">名称</th>
+                                <th scope="col" style="width: 120px;">大小</th>
+                                <th scope="col" style="width: 160px;">修改时间</th>
+                                <th scope="col" style="width: 80px;">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr id="cloud115DLLoading">
+                                <td colspan="5" class="text-center py-3">
+                                    <div class="spinner-border spinner-border-sm text-primary" role="status">
+                                        <span class="visually-hidden">加载中...</span>
+                                    </div>
+                                    <span class="ms-2">加载中...</span>
+                                </td>
+                            </tr>
+                            <!-- 文件列表将通过JavaScript动态加载 -->
+                        </tbody>
+                    </table>
+                </div>
+                
+                <!-- 无文件时显示 -->
+                <div id="cloud115DLNoFiles" class="alert alert-info text-center d-none">
+                    <i class="fas fa-info-circle me-2"></i> 当前目录为空
+                </div>
+                
+                <!-- 未登录提示 -->
+                <div id="cloud115DLNotLoggedIn" class="alert alert-warning text-center d-none">
+                    <i class="fas fa-exclamation-circle me-2"></i> 请先登录115云盘
+                    <button type="button" class="btn btn-sm btn-outline-primary ms-3" data-bs-toggle="modal" data-bs-target="#login115Modal" data-bs-dismiss="modal">
+                        <i class="fas fa-sign-in-alt me-1"></i> 去登录
+                    </button>
+                </div>
+                
+                <!-- 显示当前选中的文件夹 -->
+                <div id="selectedDLFolderInfo" class="alert alert-success mt-3 d-none">
+                    <strong>保存位置：</strong> <span id="selectedDLFolderName"></span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" id="confirmAddTo115" disabled>确定添加</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Image Modal -->
+<div class="modal fade" id="imageModal" tabindex="-1" aria-labelledby="imageModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-xl">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="imageModalLabel">{{ movie.title }}</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body text-center">
+        <img id="modalImage" src="" class="img-fluid" alt="Full size image">
+      </div>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
@@ -591,5 +704,290 @@
         tempButton.setAttribute('data-title', originalTitle);
         translateMovie(tempButton);
     }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        // Set up image modal
+        const imageModal = document.getElementById('imageModal');
+        if (imageModal) {
+            imageModal.addEventListener('show.bs.modal', function (event) {
+                // Button that triggered the modal
+                const img = event.relatedTarget;
+                // Extract info from data-* attributes
+                const imgSrc = img.getAttribute('data-src');
+                const modalImage = document.getElementById('modalImage');
+                modalImage.src = imgSrc;
+            });
+        }
+    });
+    
+    // 115 Cloud Download functionality
+    document.addEventListener('DOMContentLoaded', function() {
+        // Variables for 115 cloud download directory browser
+        const breadcrumb = document.getElementById('cloud115DLBreadCrumb');
+        const fileList = document.getElementById('cloud115DLFileList').querySelector('tbody');
+        const loadingRow = document.getElementById('cloud115DLLoading');
+        const noFilesAlert = document.getElementById('cloud115DLNoFiles');
+        const notLoggedInAlert = document.getElementById('cloud115DLNotLoggedIn');
+        const confirmBtn = document.getElementById('confirmAddTo115');
+        const selectedFolderInfo = document.getElementById('selectedDLFolderInfo');
+        const selectedFolderName = document.getElementById('selectedDLFolderName');
+        
+        // Store current browsing path and selected info
+        let currentPath = [];
+        let selectedFolderId = null;
+        let currentMagnetLink = '';
+        let currentMagnetTitle = '';
+        
+        // Format file size
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+        
+        // Format timestamp
+        function formatTimestamp(timestamp) {
+            const date = new Date(timestamp * 1000);
+            return date.toLocaleString();
+        }
+        
+        // Load directory contents
+        function loadDirectory(folderId) {
+            // Show loading
+            loadingRow.classList.remove('d-none');
+            noFilesAlert.classList.add('d-none');
+            
+            // Clear file list (keep loading row)
+            const rows = fileList.querySelectorAll('tr:not(#cloud115DLLoading)');
+            rows.forEach(row => row.remove());
+            
+            // Request API to get file list
+            fetch(`/api/cloud115/files?cid=${folderId}`)
+                .then(response => response.json())
+                .then(data => {
+                    loadingRow.classList.add('d-none');
+                    
+                    if (data.state && data.data && Array.isArray(data.data)) {
+                        if (data.data.length === 0) {
+                            // No files
+                            noFilesAlert.classList.remove('d-none');
+                        } else {
+                            // Render file list
+                            data.data.forEach((file, index) => {
+                                const isFolder = file.fc === '0';
+                                
+                                const row = document.createElement('tr');
+                                row.className = isFolder ? 'folder-row' : '';
+                                row.innerHTML = `
+                                    <td>${index + 1}</td>
+                                    <td>
+                                        <i class="${isFolder ? 'fas fa-folder text-warning' : 'fas fa-file text-primary'} me-2"></i>
+                                        <span class="file-name">${file.fn}</span>
+                                    </td>
+                                    <td>${formatFileSize(parseInt(file.fs || 0))}</td>
+                                    <td>${formatTimestamp(file.upt)}</td>
+                                    <td>
+                                        ${isFolder ? 
+                                        `<div class="form-check">
+                                            <input class="form-check-input folder-select" type="radio" name="dlFolderSelect" 
+                                                id="dlFolder${file.fid}" value="${file.fid}" data-folder-name="${file.fn}">
+                                            <label class="form-check-label" for="dlFolder${file.fid}">
+                                                选择
+                                            </label>
+                                        </div>` : ''}
+                                    </td>
+                                `;
+                                
+                                // Add click event (only folders can be clicked)
+                                if (isFolder) {
+                                    const nameCell = row.querySelector('.file-name');
+                                    nameCell.style.cursor = 'pointer';
+                                    nameCell.title = '点击进入文件夹';
+                                    nameCell.addEventListener('click', () => navigateToFolder(file.fid, file.fn));
+                                }
+                                
+                                fileList.appendChild(row);
+                            });
+                            
+                            // Add folder selection events
+                            document.querySelectorAll('.folder-select').forEach(radio => {
+                                radio.addEventListener('change', function() {
+                                    selectedFolderId = this.value;
+                                    selectedFolderName.textContent = this.getAttribute('data-folder-name');
+                                    selectedFolderInfo.classList.remove('d-none');
+                                    confirmBtn.disabled = false;
+                                });
+                            });
+                        }
+                    } else {
+                        // Loading failed
+                        noFilesAlert.textContent = '加载文件列表失败';
+                        noFilesAlert.classList.remove('d-none');
+                    }
+                })
+                .catch(error => {
+                    console.error('加载目录错误:', error);
+                    loadingRow.classList.add('d-none');
+                    noFilesAlert.textContent = '加载文件列表失败，请重试';
+                    noFilesAlert.classList.remove('d-none');
+                });
+        }
+        
+        // Navigate to specific folder
+        function navigateToFolder(folderId, folderName) {
+            // Update breadcrumb
+            updateBreadcrumb(folderId, folderName);
+            
+            // Load folder contents
+            loadDirectory(folderId);
+        }
+        
+        // Update breadcrumb navigation
+        function updateBreadcrumb(folderId, folderName) {
+            // Check if path already exists (when clicking breadcrumb)
+            const existingIndex = currentPath.findIndex(p => p.id === folderId);
+            
+            if (existingIndex !== -1) {
+                // If clicking existing path, truncate to that path
+                currentPath = currentPath.slice(0, existingIndex + 1);
+            } else {
+                // Add new path
+                currentPath.push({ id: folderId, name: folderName });
+            }
+            
+            // Re-render breadcrumb
+            breadcrumb.innerHTML = `<li class="breadcrumb-item" data-folder-id="0"><a href="#" class="breadcrumb-link">根目录</a></li>`;
+            
+            currentPath.forEach((path, index) => {
+                const isLast = index === currentPath.length - 1;
+                const item = document.createElement('li');
+                item.className = isLast ? 'breadcrumb-item active' : 'breadcrumb-item';
+                item.setAttribute('data-folder-id', path.id);
+                
+                if (isLast) {
+                    item.textContent = path.name;
+                } else {
+                    item.innerHTML = `<a href="#" class="breadcrumb-link">${path.name}</a>`;
+                }
+                
+                breadcrumb.appendChild(item);
+            });
+            
+            // Add click events for breadcrumb items
+            breadcrumb.querySelectorAll('.breadcrumb-link').forEach(link => {
+                link.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const li = this.closest('li');
+                    const folderId = li.getAttribute('data-folder-id');
+                    
+                    // If clicking "root directory", clear current path
+                    if (folderId === '0') {
+                        currentPath = [];
+                        navigateToFolder(0, '根目录');
+                    } else {
+                        // Find clicked path in current path
+                        const pathIndex = currentPath.findIndex(p => p.id === folderId);
+                        if (pathIndex !== -1) {
+                            // Navigate to that path
+                            navigateToFolder(folderId, currentPath[pathIndex].name);
+                        }
+                    }
+                });
+            });
+        }
+        
+        // Show the Add to 115 modal
+        window.showAddTo115Modal = function(button) {
+            // Get magnet link and title
+            currentMagnetLink = button.getAttribute('data-magnet');
+            currentMagnetTitle = button.getAttribute('data-title');
+            
+            // Display magnet info
+            document.getElementById('magnetInfo').textContent = currentMagnetTitle || currentMagnetLink;
+            
+            // Reset state
+            breadcrumb.innerHTML = '<li class="breadcrumb-item active" data-folder-id="0">根目录</li>';
+            currentPath = [];
+            selectedFolderId = null;
+            confirmBtn.disabled = true;
+            selectedFolderInfo.classList.add('d-none');
+            
+            // Check login status
+            fetch('/api/cloud115/check_auth_status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.state === 1 && data.data && data.data.logged_in) {
+                        // Logged in, load root directory
+                        loadDirectory(0);
+                        notLoggedInAlert.classList.add('d-none');
+                    } else {
+                        // Not logged in, show alert
+                        loadingRow.classList.add('d-none');
+                        notLoggedInAlert.classList.remove('d-none');
+                    }
+                })
+                .catch(error => {
+                    console.error('检查登录状态错误:', error);
+                    notLoggedInAlert.classList.remove('d-none');
+                    loadingRow.classList.add('d-none');
+                });
+            
+            // Show modal
+            const modal = new bootstrap.Modal(document.getElementById('addTo115Modal'));
+            modal.show();
+        };
+        
+        // Confirm add to 115 button click event
+        if (confirmBtn) {
+            confirmBtn.addEventListener('click', function() {
+                if (!currentMagnetLink) {
+                    alert('磁力链接无效');
+                    return;
+                }
+                
+                // Show loading state
+                this.disabled = true;
+                this.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 添加中...';
+                
+                // Send request to add offline download task
+                fetch('/api/cloud115/add_offline_download', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        urls: currentMagnetLink,
+                        wp_path_id: selectedFolderId || '0'
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    // Restore button state
+                    this.disabled = false;
+                    this.innerHTML = '确定添加';
+                    
+                    if (data.success) {
+                        // Add successful, close modal
+                        const modal = bootstrap.Modal.getInstance(document.getElementById('addTo115Modal'));
+                        modal.hide();
+                        
+                        // Show success message
+                        alert('添加离线下载任务成功！');
+                    } else {
+                        // Add failed
+                        alert('添加离线下载任务失败：' + (data.message || '未知错误'));
+                    }
+                })
+                .catch(error => {
+                    console.error('添加离线下载错误:', error);
+                    this.disabled = false;
+                    this.innerHTML = '确定添加';
+                    alert('添加离线下载任务请求失败，请重试');
+                });
+            });
+        }
+    });
 </script>
 {% endblock %} 

@@ -60,6 +60,7 @@
                     <ul>
                         <li><strong>api_url</strong>: The base URL for the JavBus API (e.g., "http://192.168.1.246:8922/api")</li>
                         <li><strong>watch_url_prefix</strong>: URL prefix for online watching links (e.g., "https://missav.ai")</li>
+                        <li><strong>base_url</strong>: URL for the main site (default: "https://www.javbus.com") - can be changed to an alternative domain (e.g., "https://www.busfan.ink")</li>
                         <li><strong>fanza_mappings</strong>: Custom mappings for FANZA IDs to movie IDs (applied immediately after saving)</li>
                         <li><strong>fanza_suffixes</strong>: Custom suffixes for FANZA IDs (applied immediately after saving)</li>
                         <li><strong>translation</strong>: Settings for title/summary translation
@@ -91,6 +92,34 @@
                             <li>Use the Restart button only if you experience issues or for major architecture changes.</li>
                         </ul>
                     </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-md-12">
+        <div class="card border-danger">
+            <div class="card-header bg-danger text-white">
+                <h5 class="mb-0">系统维护选项</h5>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-warning">
+                    <i class="bi bi-exclamation-triangle"></i> <strong>警告：</strong> 
+                    以下操作将永久删除数据，无法恢复。请谨慎操作。
+                </div>
+                
+                <div class="d-flex gap-2">
+                    <button type="button" class="btn btn-danger" id="clear-all-data-btn">
+                        <i class="bi bi-trash"></i> 清除所有数据
+                    </button>
+                    <button type="button" class="btn btn-danger" id="clear-cached-images-btn">
+                        <i class="bi bi-images"></i> 清除本地缓存图片
+                    </button>
+                    <button type="button" class="btn btn-danger" id="clear-logs-btn">
+                        <i class="bi bi-file-earmark-text"></i> 清除日志
+                    </button>
                 </div>
             </div>
         </div>
@@ -171,6 +200,75 @@
             })
             .catch(error => {
                 alert('Error: ' + error.message);
+            });
+        }
+    });
+    
+    // Clear All Data button
+    document.getElementById('clear-all-data-btn').addEventListener('click', function() {
+        if (confirm('确定要清除所有数据库中的数据吗？此操作无法撤销。')) {
+            fetch('/api/clear_all_data', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    alert('所有数据已成功清除！');
+                } else {
+                    alert('错误: ' + data.message);
+                }
+            })
+            .catch(error => {
+                alert('错误: ' + error.message);
+            });
+        }
+    });
+    
+    // Clear Cached Images button
+    document.getElementById('clear-cached-images-btn').addEventListener('click', function() {
+        if (confirm('确定要清除所有本地缓存的图片吗？此操作无法撤销。')) {
+            fetch('/api/clear_cached_images', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    alert('所有缓存图片已成功清除！');
+                } else {
+                    alert('错误: ' + data.message);
+                }
+            })
+            .catch(error => {
+                alert('错误: ' + error.message);
+            });
+        }
+    });
+    
+    // Clear Logs button
+    document.getElementById('clear-logs-btn').addEventListener('click', function() {
+        if (confirm('确定要清除所有日志文件吗？此操作无法撤销。')) {
+            fetch('/api/clear_logs', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    alert('所有日志已成功清除！');
+                } else {
+                    alert('错误: ' + data.message);
+                }
+            })
+            .catch(error => {
+                alert('错误: ' + error.message);
             });
         }
     });

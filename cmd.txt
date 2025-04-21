@@ -8,16 +8,13 @@ docker-compose up -d
 根据现有的img创建一个容器
 
 docker tag dock-2_javbus:latest furey79/dock-2_javbus:latest
+docker tag excelmerger_excel-uploader:latest furey79/excelm
 命名有用户名的img
 
 sk-qesnisavvpzvfzakwvfzbtvvgfuyvnqokowdwrtvfrjthjyq
 
-API 1 (obsolete)
-https://painful-aurelie-geetee-254a3e98.koyeb.app/api
 
 API 2
 https://javbus-api-from-ovnrain-taupe.vercel.app/api
 
-
-DOCKER 1
-https://sexual-fannie-geetee-b94aaa13.koyeb.app/
+https://www.buscdn.ink

@@ -19,6 +19,9 @@ var/
 *.egg-info/
 .installed.cfg
 *.egg
+115/
+nextbus/
+cmd.txt
 
 # Environment variables
 .env

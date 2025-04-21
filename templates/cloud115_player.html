@@ -1,0 +1,763 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ title }} - 115云盘播放器{% endblock %}
+
+{% block head %}
+<style>
+    .video-container {
+        position: relative;
+        width: 100%;
+        height: calc(100vh - 150px);
+        min-height: 500px;
+        background-color: #000;
+    }
+    
+    .video-js {
+        width: 100%;
+        height: 100%;
+    }
+    
+    #player115 {
+        width: 100%;
+        height: 100%;
+        background-color: #000;
+    }
+    
+    .video-info {
+        padding: 1rem;
+        background-color: #f8f9fa;
+        border-radius: 0 0 5px 5px;
+        margin-bottom: 1rem;
+    }
+    
+    .definition-selector {
+        margin: 1rem 0;
+    }
+    
+    .quality-btn {
+        min-width: 100px;
+        margin-right: 5px;
+    }
+    
+    .back-btn {
+        margin-bottom: 1rem;
+    }
+    
+    #loading-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0,0,0,0.8);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 100;
+        color: white;
+        flex-direction: column;
+    }
+    
+    #videoStatus {
+        margin-top: 1rem;
+        display: none;
+    }
+    
+    #debugInfo {
+        margin-top: 15px;
+        padding: 10px;
+        background-color: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 5px;
+        max-height: 200px;
+        overflow-y: auto;
+        font-family: monospace;
+        font-size: 0.8rem;
+        display: none;
+    }
+    
+    .controls-container {
+        margin-top: 15px;
+    }
+</style>
+<!-- HLS.js 库用于支持HLS流媒体 -->
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row">
+        <div class="col-12">
+            <div class="back-btn">
+                <a href="{{ url_for('cloud115_library') }}" class="btn btn-outline-secondary">
+                    <i class="fas fa-arrow-left"></i> 返回115 Library
+                </a>
+            </div>
+            
+            <div hidden id="videoStatus" class="alert alert-info">
+                <!-- 状态信息将在这里动态更新 -->
+            </div>
+            
+            <div class="video-container">
+                <video id="player115" controls crossorigin="anonymous">
+                    <p class="vjs-no-js">
+                        要查看此视频，请启用JavaScript并使用支持HTML5视频的浏览器
+                    </p>
+                </video>
+                
+                <div id="loading-overlay">
+                    <div class="spinner-border text-light mb-3" role="status">
+                        <span class="visually-hidden">加载中...</span>
+                    </div>
+                    <p>正在获取视频播放地址...</p>
+                </div>
+            </div>
+            
+            <div id="debugInfo">
+                <div><strong>调试信息:</strong></div>
+                <div id="debugLogs"></div>
+            </div>
+            
+            <div class="controls-container">
+                <h2 class="mb-3">{{ title }}</h2>
+                <div hidden class="btn-group" role="group">
+                    <button class="btn btn-primary" onclick="document.getElementById('player115').play()">
+                        <i class="fas fa-play"></i> 播放
+                    </button>
+                    <button class="btn btn-primary" onclick="document.getElementById('player115').pause()">
+                        <i class="fas fa-pause"></i> 暂停
+                    </button>
+                    <button class="btn btn-primary" onclick="toggleFullScreen()">
+                        <i class="fas fa-expand"></i> 全屏
+                    </button>
+                    <button class="btn btn-secondary" onclick="toggleDebugInfo()">
+                        <i class="fas fa-bug"></i> 调试信息
+                    </button>
+                    <button id="retry-button" class="btn btn-warning">
+                        <i class="fas fa-sync"></i> 重试
+                    </button>
+                </div>
+            </div>
+            
+            <div class="video-info">
+                <div class="definition-selector mb-3">
+                    <h5 class="mb-2">清晰度选择</h5>
+                    <div id="definitionSelector" class="btn-group" role="group"></div>
+                </div>
+                
+                <div class="mt-3">
+                    <strong>文件信息</strong>
+                    <div class="row mt-2">
+                        <div class="col-md-6">
+                            <p><strong>时长：</strong> <span id="videoDuration">--:--</span></p>
+                        </div>
+                        <div class="col-md-6">
+                            <p><strong>分辨率：</strong> <span id="videoResolution">-- x --</span></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const fileId = '{{ file_id }}';
+        const videoElement = document.getElementById('player115');
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const retryButton = document.getElementById('retry-button');
+        const definitionSelector = document.getElementById('definitionSelector');
+        const videoDuration = document.getElementById('videoDuration');
+        const videoResolution = document.getElementById('videoResolution');
+        
+        let videoData = null;
+        let currentDefinition = null;
+        let lastPlayedPosition = 0;
+        let hls = null;
+        
+        // 格式化时间
+        function formatTime(seconds) {
+            if (!seconds || isNaN(seconds)) return '--:--';
+            
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = Math.floor(seconds % 60);
+            
+            if (hours > 0) {
+                return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+            } else {
+                return `${minutes}:${secs.toString().padStart(2, '0')}`;
+            }
+        }
+        
+        // 切换全屏
+        function toggleFullScreen() {
+            const video = document.getElementById('player115');
+            
+            if (!document.fullscreenElement) {
+                if (video.requestFullscreen) {
+                    video.requestFullscreen();
+                } else if (video.webkitRequestFullscreen) {
+                    video.webkitRequestFullscreen();
+                } else if (video.msRequestFullscreen) {
+                    video.msRequestFullscreen();
+                }
+            } else {
+                if (document.exitFullscreen) {
+                    document.exitFullscreen();
+                } else if (document.webkitExitFullscreen) {
+                    document.webkitExitFullscreen();
+                } else if (document.msExitFullscreen) {
+                    document.msExitFullscreen();
+                }
+            }
+        }
+        
+        // 切换调试信息显示
+        function toggleDebugInfo() {
+            const debugInfo = document.getElementById('debugInfo');
+            if (debugInfo.style.display === 'none' || !debugInfo.style.display) {
+                debugInfo.style.display = 'block';
+            } else {
+                debugInfo.style.display = 'none';
+            }
+        }
+        
+        // 添加调试日志
+        function addDebugLog(message) {
+            const debugLogs = document.getElementById('debugLogs');
+            const timestamp = new Date().toISOString().substr(11, 8);
+            debugLogs.innerHTML += `<div>[${timestamp}] ${message}</div>`;
+            debugLogs.scrollTop = debugLogs.scrollHeight;
+            console.log(`[DEBUG] ${message}`);
+        }
+        
+        // 更新视频状态信息
+        function updateVideoStatus(message, type = 'info') {
+            const videoStatus = document.getElementById('videoStatus');
+            videoStatus.className = `alert alert-${type} mt-3`;
+            videoStatus.innerHTML = message;
+            videoStatus.style.display = 'block';
+        }
+        
+        // 通过代理获取视频地址
+        function getProxyUrl(originalUrl) {
+            if (!originalUrl) return null;
+            // 确保URL已编码
+            const encodedUrl = encodeURIComponent(originalUrl);
+            return `/api/cloud115/proxy?url=${encodedUrl}`;  // 使用专用的cloud115代理接口
+        }
+        
+        // 销毁现有HLS实例
+        function destroyHls() {
+            if (hls) {
+                try {
+                    hls.destroy();
+                    hls = null;
+                    addDebugLog('已销毁现有HLS实例');
+                } catch (e) {
+                    addDebugLog(`销毁HLS实例错误: ${e.message}`);
+                }
+            }
+        }
+        
+        // 播放视频
+        function playVideo(videoUrl, startTime = 0) {
+            if (!videoUrl) {
+                updateVideoStatus('<i class="fas fa-exclamation-triangle"></i> 无效的视频URL', 'danger');
+                loadingOverlay.style.display = 'none';
+                return;
+            }
+            
+            addDebugLog(`准备播放视频: ${videoUrl}`);
+            
+            // 显示加载遮罩
+            loadingOverlay.style.display = 'flex';
+            updateVideoStatus('<i class="fas fa-spinner fa-spin"></i> 正在加载视频...', 'info');
+            
+            // 保存当前播放位置
+            if (videoElement.currentTime && !isNaN(videoElement.currentTime)) {
+                lastPlayedPosition = videoElement.currentTime;
+            }
+            
+            // 销毁现有HLS实例
+            destroyHls();
+            
+            // 使用代理URL
+            const proxyUrl = getProxyUrl(videoUrl);
+            addDebugLog(`使用代理URL: ${proxyUrl}`);
+            
+            // 进行CORS预检
+            addDebugLog('进行CORS预检...');
+            fetch(proxyUrl, {method: 'HEAD'})
+                .then(response => {
+                    addDebugLog(`CORS预检成功: ${response.status} ${response.statusText}`);
+                })
+                .catch(error => {
+                    addDebugLog(`CORS预检失败: ${error.message}`);
+                    updateVideoStatus(`<i class="fas fa-exclamation-triangle"></i> CORS错误: 无法访问视频源。这可能是由于浏览器的跨域安全限制。`, 'warning');
+                });
+            
+            // 设置视频事件监听
+            videoElement.addEventListener('error', function(e) {
+                console.error('Video error:', e);
+                addDebugLog(`视频错误: ${videoElement.error?.code || 'unknown'} - ${videoElement.error?.message || 'No details'}`);
+                updateVideoStatus(`<i class="fas fa-exclamation-triangle"></i> 视频播放错误: ${videoElement.error?.message || '未知错误'}`, 'danger');
+                loadingOverlay.style.display = 'none';
+            });
+            
+            videoElement.addEventListener('loadstart', () => addDebugLog('视频开始加载'));
+            videoElement.addEventListener('loadeddata', () => addDebugLog('视频数据已加载'));
+            videoElement.addEventListener('loadedmetadata', function() {
+                addDebugLog('视频元数据已加载');
+                
+                // 设置播放位置
+                if (startTime > 0) {
+                    videoElement.currentTime = startTime;
+                }
+                
+                // 更新视频信息
+                updateVideoInfo();
+                
+                // 隐藏加载遮罩
+                loadingOverlay.style.display = 'none';
+            });
+            
+            videoElement.addEventListener('canplay', () => {
+                addDebugLog('视频可以开始播放');
+                updateVideoStatus(`<i class="fas fa-check-circle"></i> 视频已准备就绪，可以播放`, 'success');
+            });
+            
+            videoElement.addEventListener('play', () => addDebugLog('视频开始播放'));
+            videoElement.addEventListener('pause', () => addDebugLog('视频已暂停'));
+            videoElement.addEventListener('seeking', () => addDebugLog('视频跳转中'));
+            videoElement.addEventListener('seeked', () => addDebugLog('视频已跳转'));
+            
+            // 使用HLS.js播放视频
+            if (Hls.isSupported()) {
+                addDebugLog('HLS.js支持已检测到，正在初始化...');
+                
+                hls = new Hls({
+                    debug: false,
+                    enableWorker: true,
+                    lowLatencyMode: false,
+                    startLevel: -1, // 自动选择
+                    maxBufferLength: 30,
+                    maxMaxBufferLength: 60,
+                    maxBufferSize: 60 * 1000 * 1000, // 60MB
+                    maxBufferHole: 0.5,
+                    highBufferWatchdogPeriod: 2,
+                    nudgeOffset: 0.1,
+                    nudgeMaxRetry: 5,
+                    maxFragLookUpTolerance: 0.25,
+                    liveSyncDurationCount: 3,
+                    liveMaxLatencyDurationCount: 10,
+                    liveDurationInfinity: false,
+                    manifestLoadPolicy: {
+                        default: {
+                            maxTimeToFirstByteMs: 10000,
+                            maxLoadTimeMs: 20000,
+                            timeoutRetry: {
+                                maxNumRetry: 4,
+                                retryDelayMs: 0,
+                                maxRetryDelayMs: 1000
+                            },
+                            errorRetry: {
+                                maxNumRetry: 8,
+                                retryDelayMs: 1000,
+                                maxRetryDelayMs: 8000
+                            }
+                        }
+                    },
+                    fragLoadPolicy: {
+                        default: {
+                            maxTimeToFirstByteMs: 10000,
+                            maxLoadTimeMs: 120000,
+                            timeoutRetry: {
+                                maxNumRetry: 4,
+                                retryDelayMs: 1000,
+                                maxRetryDelayMs: 8000
+                            },
+                            errorRetry: {
+                                maxNumRetry: 6,
+                                retryDelayMs: 1000,
+                                maxRetryDelayMs: 8000
+                            }
+                        }
+                    },
+                    xhrSetup: function(xhr, url) {
+                        // 关键修改: 拦截所有HLS请求并通过代理
+                        if ((url.includes("115.com") || url.includes(".m3u8") || url.includes(".ts")) && 
+                            !url.includes("/api/cloud115/proxy")) {
+                            // 直接创建干净的代理URL, 避免嵌套
+                            const proxyUrl = getProxyUrl(url);
+                            const shortUrl = url.length > 60 ? url.substring(0, 60) + '...' : url;
+                            addDebugLog(`拦截并代理HLS请求: ${shortUrl}`);
+                            xhr.open('GET', proxyUrl, true);
+                        }
+                        // 设置CORS模式
+                        xhr.withCredentials = false;
+                    }
+                });
+                
+                // 注册HLS事件
+                hls.on(Hls.Events.MEDIA_ATTACHED, function() {
+                    addDebugLog('HLS: 媒体已附加');
+                });
+                
+                hls.on(Hls.Events.MANIFEST_PARSED, function(event, data) {
+                    addDebugLog(`HLS: 清单已解析，发现 ${data.levels?.length || 0} 种质量级别`);
+                    updateVideoStatus(`<i class="fas fa-check-circle"></i> 视频流已加载，正在播放...`, 'success');
+                    videoElement.play().catch(e => {
+                        addDebugLog(`自动播放被阻止: ${e.message}`);
+                    });
+                });
+                
+                hls.on(Hls.Events.LEVEL_LOADING, function(event, data) {
+                    addDebugLog(`HLS: 正在加载级别 ${data.level}: ${data.url.substring(0, 100)}...`);
+                });
+                
+                hls.on(Hls.Events.FRAG_LOADING, function(event, data) {
+                    if (data.frag && data.frag.url) {
+                        const urlParts = data.frag.url.split('/');
+                        const fileName = urlParts[urlParts.length - 1];
+                        addDebugLog(`HLS: 加载片段: ${fileName.substring(0, 30)}...`);
+                    }
+                });
+                
+                addDebugLog('加载HLS源...');
+                // 直接使用代理URL加载HLS源 - 这样可以确保主播放列表通过代理加载
+                hls.loadSource(proxyUrl);
+                addDebugLog('附加到视频元素...');
+                hls.attachMedia(videoElement);
+                
+                // 添加额外的错误处理
+                hls.on(Hls.Events.ERROR, function(event, data) {
+                    console.error('HLS error:', data);
+                    const errorType = data.type || 'unknown';
+                    const errorDetails = data.details || 'unknown';
+                    const isFatal = !!data.fatal;
+                    
+                    addDebugLog(`HLS错误: 类型=${errorType}, 详情=${errorDetails}, 致命=${isFatal}`);
+                    
+                    if (data.response) {
+                        const responseCode = data.response.code || 'unknown';
+                        const responseText = data.response.text || '';
+                        addDebugLog(`错误响应: ${responseCode} - ${responseText}`);
+                    }
+                    
+                    // 针对不同类型的错误进行处理
+                    if (data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR) {
+                        addDebugLog('清单加载错误，尝试直接使用原始URL...');
+                        // 尝试重新加载，但直接使用原始URL
+                        setTimeout(() => {
+                            const directProxyUrl = getProxyUrl(videoUrl);
+                            addDebugLog(`尝试使用直接代理URL加载: ${directProxyUrl}`);
+                            hls.loadSource(directProxyUrl);
+                        }, 1000);
+                    }
+                    else if (data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT) {
+                        addDebugLog('清单加载超时，尝试重新加载...');
+                        setTimeout(() => hls.loadSource(proxyUrl), 2000);
+                    }
+                    else if (data.details === Hls.ErrorDetails.FRAG_LOAD_ERROR) {
+                        addDebugLog('片段加载错误，尝试修复URL问题...');
+                        
+                        if (data.frag && data.frag.url) {
+                            // 处理嵌套代理URL问题
+                            if (data.frag.url.includes('/api/cloud115/proxy?url=')) {
+                                try {
+                                    // 提取原始URL从代理URL
+                                    const parsedUrl = new URL(data.frag.url);
+                                    const encodedOriginalUrl = parsedUrl.searchParams.get('url');
+                                    if (encodedOriginalUrl) {
+                                        let originalUrl = decodeURIComponent(encodedOriginalUrl);
+                                        
+                                        // 如果仍然是代理URL，继续提取
+                                        while (originalUrl.includes('/api/cloud115/proxy?url=')) {
+                                            const nestedUrl = new URL(originalUrl);
+                                            const nestedEncodedUrl = nestedUrl.searchParams.get('url');
+                                            if (!nestedEncodedUrl) break;
+                                            originalUrl = decodeURIComponent(nestedEncodedUrl);
+                                        }
+                                        
+                                        // 创建正确的代理URL
+                                        const cleanProxyUrl = getProxyUrl(originalUrl);
+                                        addDebugLog(`尝试修复片段URL: ${originalUrl.substring(0, 50)}...`);
+                                        
+                                        // 替换片段URL
+                                        data.frag.url = cleanProxyUrl;
+                                        
+                                        // 重试加载
+                                        hls.trigger(Hls.Events.FRAG_LOAD);
+                                        return;
+                                    }
+                                } catch (e) {
+                                    addDebugLog(`修复URL失败: ${e.message}`);
+                                }
+                            }
+                        }
+                    }
+                    
+                    // 处理致命错误
+                    if (data.fatal) {
+                        switch(data.type) {
+                            case Hls.ErrorTypes.NETWORK_ERROR:
+                                addDebugLog('致命网络错误。尝试恢复...');
+                                updateVideoStatus(`<i class="fas fa-exclamation-triangle"></i> 网络错误: ${data.details}。尝试恢复中...`, 'warning');
+                                hls.startLoad();
+                                break;
+                            case Hls.ErrorTypes.MEDIA_ERROR:
+                                addDebugLog('致命媒体错误。尝试恢复...');
+                                updateVideoStatus(`<i class="fas fa-exclamation-triangle"></i> 媒体错误: ${data.details}。尝试恢复中...`, 'warning');
+                                hls.recoverMediaError();
+                                break;
+                            default:
+                                addDebugLog('致命错误。无法恢复。');
+                                updateVideoStatus(`<i class="fas fa-times-circle"></i> 致命错误: ${data.details}。无法继续播放。`, 'danger');
+                                hls.destroy();
+                                
+                                // 尝试直接打开
+                                updateVideoStatus(`<i class="fas fa-info-circle"></i> 尝试直接打开流URL...
+                                    <div class="mt-2">
+                                        <a href="${videoUrl}" target="_blank" class="btn btn-sm btn-outline-primary">在新窗口打开</a>
+                                        <a href="${proxyUrl}" target="_blank" class="btn btn-sm btn-outline-primary">通过代理打开</a>
+                                    </div>
+                                `, 'info');
+                                break;
+                        }
+                    }
+                });
+            }
+            // 浏览器原生支持HLS
+            else if (videoElement.canPlayType('application/vnd.apple.mpegurl')) {
+                addDebugLog('检测到浏览器原生HLS支持');
+                videoElement.src = proxyUrl;
+                videoElement.addEventListener('loadedmetadata', function() {
+                    addDebugLog('使用原生HLS支持开始播放');
+                    videoElement.play().catch(e => {
+                        addDebugLog(`自动播放被阻止: ${e.message}`);
+                    });
+                });
+            }
+            // 不支持HLS
+            else {
+                addDebugLog('浏览器不支持HLS');
+                loadingOverlay.style.display = 'none';
+                updateVideoStatus('<i class="fas fa-exclamation-triangle"></i> 您的浏览器不支持HLS流媒体。请尝试使用不同的浏览器。', 'warning');
+            }
+        }
+        
+        // 更新视频信息
+        function updateVideoInfo() {
+            try {
+                // 更新时长信息
+                const duration = videoElement.duration;
+                if (duration && !isNaN(duration)) {
+                    videoDuration.textContent = formatTime(duration);
+                }
+                
+                // 更新分辨率信息
+                const width = videoElement.videoWidth;
+                const height = videoElement.videoHeight;
+                if (width && height) {
+                    videoResolution.textContent = `${width} x ${height}`;
+                }
+            } catch (e) {
+                addDebugLog(`更新视频信息错误: ${e.message}`);
+            }
+        }
+        
+        // 切换视频清晰度
+        function switchDefinition(definition) {
+            if (!videoData || !videoData.video_url) {
+                addDebugLog('没有可用的视频数据');
+                return;
+            }
+            
+            addDebugLog(`切换到清晰度: ${definition}`);
+            
+            // 保存当前播放位置
+            if (videoElement.currentTime && !isNaN(videoElement.currentTime)) {
+                lastPlayedPosition = videoElement.currentTime;
+            }
+            
+            // 查找匹配的清晰度
+            const videoUrl = videoData.video_url.find(item => parseInt(item.definition) === parseInt(definition));
+            if (videoUrl && videoUrl.url) {
+                currentDefinition = definition;
+                
+                // 更新清晰度按钮状态
+                const buttons = definitionSelector.querySelectorAll('button');
+                buttons.forEach(btn => {
+                    if (parseInt(btn.getAttribute('data-definition')) === parseInt(definition)) {
+                        btn.classList.remove('btn-outline-primary');
+                        btn.classList.add('btn-primary');
+                    } else {
+                        btn.classList.remove('btn-primary');
+                        btn.classList.add('btn-outline-primary');
+                    }
+                });
+                
+                // 播放新的清晰度
+                playVideo(videoUrl.url, lastPlayedPosition);
+            } else {
+                addDebugLog(`未找到清晰度 ${definition} 的视频URL`);
+                updateVideoStatus(`<i class="fas fa-exclamation-triangle"></i> 未找到清晰度 ${definition} 的视频URL`, 'warning');
+            }
+        }
+        
+        // 创建清晰度选择器
+        function createDefinitionSelector(videoData) {
+            if (!videoData || !videoData.video_url || !videoData.video_url.length) {
+                addDebugLog('没有可用的视频URL列表');
+                updateVideoStatus('<i class="fas fa-exclamation-triangle"></i> 未找到可用的视频清晰度', 'warning');
+                return;
+            }
+            
+            // 清空选择器
+            definitionSelector.innerHTML = '';
+            
+            // 清晰度名称映射
+            const definitionNames = {
+                1: '标清',
+                2: '高清',
+                3: '超清',
+                4: '1080P',
+                5: '4K',
+                100: '原画'
+            };
+            
+            // 排序清晰度（从高到低）
+            addDebugLog(`发现 ${videoData.video_url.length} 种清晰度选项`);
+            
+            const definitions = videoData.video_url
+                .map(item => ({
+                    definition: parseInt(item.definition), 
+                    name: item.title || definitionNames[item.definition] || `清晰度 ${item.definition}`
+                }))
+                .sort((a, b) => b.definition - a.definition);
+            
+            // 创建按钮
+            definitions.forEach(def => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'btn quality-btn btn-outline-primary';
+                button.setAttribute('data-definition', def.definition);
+                button.textContent = def.name;
+                button.addEventListener('click', () => switchDefinition(def.definition));
+                definitionSelector.appendChild(button);
+                
+                addDebugLog(`添加清晰度选项: ${def.name} (${def.definition})`);
+            });
+            
+            // 默认选择最高清晰度
+            if (definitions.length > 0) {
+                const highestDef = definitions[0].definition;
+                addDebugLog(`默认选择最高清晰度: ${highestDef}`);
+                switchDefinition(highestDef);
+            }
+        }
+        
+        // 获取视频播放地址
+        function fetchVideoUrls() {
+            // 显示加载遮罩
+            loadingOverlay.style.display = 'flex';
+            updateVideoStatus('<i class="fas fa-spinner fa-spin"></i> 正在获取视频信息...', 'info');
+            
+            // 发起API请求
+            addDebugLog(`请求视频播放地址: 文件ID=${fileId}`);
+            
+            fetch(`/api/cloud115/video_play_url?file_id=${fileId}`)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('获取视频播放地址失败');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    addDebugLog(`API响应: ${JSON.stringify(data).substring(0, 200)}...`);
+                    
+                    // 检查响应状态
+                    if (!data.success && !data.state) {
+                        throw new Error(data.message || '获取视频播放地址失败');
+                    }
+                    
+                    // 获取视频数据
+                    videoData = data.data || {};
+                    
+                    // 验证视频URL
+                    if (!videoData || !videoData.video_url || !videoData.video_url.length) {
+                        throw new Error('未找到可用的播放地址');
+                    }
+                    
+                    addDebugLog(`成功获取视频数据，共 ${videoData.video_url.length} 个清晰度`);
+                    
+                    // 创建清晰度选择器并开始播放
+                    createDefinitionSelector(videoData);
+                })
+                .catch(error => {
+                    console.error('获取视频URL错误:', error);
+                    addDebugLog(`获取视频URL错误: ${error.message}`);
+                    loadingOverlay.style.display = 'none';
+                    updateVideoStatus(`<i class="fas fa-exclamation-circle"></i> ${error.message}`, 'danger');
+                });
+        }
+        
+        // 注册重试按钮事件
+        retryButton.addEventListener('click', function() {
+            addDebugLog('用户点击重试按钮');
+            
+            // 重新获取视频URL并播放
+            if (currentDefinition && videoData) {
+                // 如果已经有数据，直接切换到当前清晰度重试
+                addDebugLog('使用现有数据重试，清晰度: ' + currentDefinition);
+                switchDefinition(currentDefinition);
+            } else {
+                // 重新获取数据
+                addDebugLog('重新获取视频数据');
+                fetchVideoUrls();
+            }
+        });
+        
+        // 初始化
+        addDebugLog('初始化115云盘播放器');
+        fetchVideoUrls();
+    });
+    
+    // 全局函数，用于HTML调用
+    function toggleFullScreen() {
+        const video = document.getElementById('player115');
+        
+        if (!document.fullscreenElement) {
+            if (video.requestFullscreen) {
+                video.requestFullscreen();
+            } else if (video.webkitRequestFullscreen) {
+                video.webkitRequestFullscreen();
+            } else if (video.msRequestFullscreen) {
+                video.msRequestFullscreen();
+            }
+        } else {
+            if (document.exitFullscreen) {
+                document.exitFullscreen();
+            } else if (document.webkitExitFullscreen) {
+                document.webkitExitFullscreen();
+            } else if (document.msExitFullscreen) {
+                document.msExitFullscreen();
+            }
+        }
+    }
+    
+    function toggleDebugInfo() {
+        const debugInfo = document.getElementById('debugInfo');
+        if (debugInfo.style.display === 'none' || !debugInfo.style.display) {
+            debugInfo.style.display = 'block';
+        } else {
+            debugInfo.style.display = 'none';
+        }
+    }
+</script>
+{% endblock %} 

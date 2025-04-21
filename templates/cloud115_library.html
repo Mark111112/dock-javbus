@@ -1,0 +1,1677 @@
+{% extends 'base.html' %}
+
+{% block title %}115 Library{% endblock %}
+
+{% block head %}
+<style>
+    .movie-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+        gap: 20px;
+    }
+    .cloud115-card {
+        border-radius: 8px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+        overflow: hidden;
+        position: relative;
+    }
+    .cloud115-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+    }
+    .cloud115-thumbnail {
+        width: 100%;
+        height: 220px;
+        object-fit: cover;
+        background-color: #f5f5f5;
+    }
+    .play-icon {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        background-color: rgba(0, 0, 0, 0.6);
+        color: white;
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 10;
+        transition: all 0.2s ease;
+    }
+    .play-icon:hover {
+        background-color: rgba(0, 123, 255, 0.8);
+        transform: scale(1.1);
+    }
+    .cloud115-info {
+        padding: 15px;
+        position: relative;
+    }
+    .cloud115-title {
+        font-weight: bold;
+        margin-bottom: 8px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        line-height: 1.2;
+        font-size: 0.9rem;
+        height: 2.4em;
+    }
+    .cloud115-category {
+        color: #6c757d;
+        font-size: 0.9rem;
+    }
+    .no-cloud115-files {
+        padding: 40px;
+        text-align: center;
+        background-color: #f8f9fa;
+        border-radius: 8px;
+        margin-top: 20px;
+    }
+    
+    /* Custom tooltip styles */
+    .cloud115-card {
+        position: relative;
+    }
+    .cloud115-tooltip {
+        visibility: hidden;
+        position: absolute;
+        z-index: 100;
+        width: 300px;
+        background-color: rgba(0, 0, 0, 0.9);
+        color: #fff;
+        border-radius: 6px;
+        padding: 10px;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+        opacity: 0;
+        transition: opacity 0.3s, visibility 0.3s;
+        pointer-events: none;
+        left: 50%;
+        bottom: 100%;
+        transform: translateX(-50%);
+        margin-bottom: 10px;
+    }
+    .cloud115-card:hover .cloud115-tooltip {
+        visibility: visible;
+        opacity: 1;
+    }
+    .cloud115-tooltip:after {
+        content: "";
+        position: absolute;
+        top: 100%;
+        left: 50%;
+        margin-left: -5px;
+        border-width: 5px;
+        border-style: solid;
+        border-color: rgba(0, 0, 0, 0.9) transparent transparent transparent;
+    }
+    .cloud115-tooltip h6 {
+        margin-bottom: 5px;
+        border-bottom: 1px solid rgba(255,255,255,0.2);
+        padding-bottom: 5px;
+    }
+    .cloud115-tooltip p {
+        margin-bottom: 5px;
+        font-size: 0.9rem;
+        max-height: 100px;
+        overflow-y: auto;
+    }
+    .cloud115-card .play-icon {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        background-color: rgba(0, 0, 0, 0.6);
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 1.5rem;
+        text-decoration: none;
+        transition: all 0.2s;
+    }
+    
+    .cloud115-card .update-icon-form {
+        position: absolute;
+        top: 10px;
+        right: 60px; /* Position to the left of play icon */
+        margin: 0;
+        padding: 0;
+    }
+    
+    .cloud115-card .update-icon {
+        background-color: rgba(0, 0, 0, 0.6);
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 1.2rem;
+        border: none;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    
+    .cloud115-card .play-icon:hover, .cloud115-card .update-icon:hover {
+        background-color: rgba(220, 53, 69, 0.8);
+        transform: scale(1.1);
+    }
+
+    .cloud115-card .edit-id-btn {
+        position: absolute;
+        bottom: 5px;
+        right: 5px;
+        background-color: rgba(13, 110, 253, 0.8);
+        color: white;
+        border: none;
+        border-radius: 4px;
+        padding: 2px 6px;
+        font-size: 0.8rem;
+        cursor: pointer;
+        transition: all 0.2s;
+        z-index: 10;
+    }
+
+    .cloud115-card .delete-btn {
+        position: absolute;
+        bottom: 5px;
+        right: 35px;
+        background-color: rgba(220, 53, 69, 0.8);
+        color: white;
+        border: none;
+        border-radius: 4px;
+        padding: 2px 6px;
+        font-size: 0.8rem;
+        cursor: pointer;
+        transition: all 0.2s;
+        z-index: 10;
+    }
+
+    .cloud115-card .edit-id-btn:hover {
+        background-color: rgba(11, 94, 215, 1);
+        transform: scale(1.05);
+    }
+
+    .cloud115-card .delete-btn:hover {
+        background-color: rgba(200, 35, 51, 1);
+        transform: scale(1.05);
+    }
+    
+    /* Filter buttons */
+    .filter-btn {
+        margin-right: 5px;
+    }
+    
+    /* Sort dropdown */
+    .sort-dropdown .dropdown-item.active {
+        background-color: #f8f9fa;
+        color: #000;
+    }
+    
+    /* Search box */
+    .search-box {
+        max-width: 400px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h1 class="mb-4">115 Cloud Library</h1>
+    
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <!-- Category and Controls Row -->
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <!-- Category Tabs - Left side -->
+                <div class="btn-group filter-btn" role="group">
+                    <a href="{{ url_for('cloud115_library') }}" class="btn {% if not current_category %}btn-primary{% else %}btn-outline-primary{% endif %}">全部</a>
+                    {% for category in categories %}
+                    <a href="{{ url_for('cloud115_library', category=category) }}" class="btn {% if current_category == category %}btn-primary{% else %}btn-outline-primary{% endif %}">{{ category }}</a>
+                    {% endfor %}
+                </div>
+                
+                <!-- Controls - Right side -->
+                <div class="d-flex align-items-center">
+                    <!-- Sort Dropdown -->
+                    <div class="dropdown sort-dropdown me-2">
+                        <button class="btn btn-outline-secondary dropdown-toggle" type="button" id="sortDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                            <i class="fas fa-sort-amount-down me-1"></i> {{ sort_display }}
+                        </button>
+                        <ul class="dropdown-menu" aria-labelledby="sortDropdown">
+                            <li><h6 class="dropdown-header">Sort By</h6></li>
+                            <li><a class="dropdown-item {% if sort_by == 'added_time' %}active{% endif %}" href="{{ url_for('cloud115_library', category=current_category, sort_by='added_time', sort_order=sort_order, query=search_query) }}">
+                                <i class="fas fa-clock me-1"></i> 添加时间
+                            </a></li>
+                            <li><a class="dropdown-item {% if sort_by == 'video_id' %}active{% endif %}" href="{{ url_for('cloud115_library', category=current_category, sort_by='video_id', sort_order=sort_order, query=search_query) }}">
+                                <i class="fas fa-tag me-1"></i> 视频ID
+                            </a></li>
+                            <li><a class="dropdown-item {% if sort_by == 'title' %}active{% endif %}" href="{{ url_for('cloud115_library', category=current_category, sort_by='title', sort_order=sort_order, query=search_query) }}">
+                                <i class="fas fa-font me-1"></i> 标题
+                            </a></li>
+                            <li><a class="dropdown-item {% if sort_by == 'date' %}active{% endif %}" href="{{ url_for('cloud115_library', category=current_category, sort_by='date', sort_order=sort_order, query=search_query) }}">
+                                <i class="fas fa-calendar me-1"></i> 发布日期
+                            </a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><h6 class="dropdown-header">Order</h6></li>
+                            <li><a class="dropdown-item {% if sort_order == 'asc' %}active{% endif %}" href="{{ url_for('cloud115_library', category=current_category, sort_by=sort_by, sort_order='asc', query=search_query) }}">
+                                <i class="fas fa-sort-up me-1"></i> 升序
+                            </a></li>
+                            <li><a class="dropdown-item {% if sort_order == 'desc' %}active{% endif %}" href="{{ url_for('cloud115_library', category=current_category, sort_by=sort_by, sort_order='desc', query=search_query) }}">
+                                <i class="fas fa-sort-down me-1"></i> 降序
+                            </a></li>
+                            <li><a class="dropdown-item {% if sort_order == 'random' %}active{% endif %}" href="{{ url_for('cloud115_library', category=current_category, sort_by=sort_by, sort_order='random', query=search_query) }}">
+                                <i class="fas fa-random me-1"></i> 随机
+                            </a></li>
+                        </ul>
+                    </div>
+                    
+                    <!-- Search Form -->
+                    <form class="d-flex search-box me-2" action="{{ url_for('cloud115_library_search') }}" method="get">
+                        <input type="hidden" name="category" value="{{ current_category }}">
+                        <input class="form-control me-2" type="search" name="query" placeholder="Search Library..." aria-label="Search" value="{{ search_query if search_query }}">
+                        <button class="btn btn-outline-primary" type="submit"><i class="fas fa-search"></i></button>
+                    </form>
+                    
+                    <!-- Manage Button -->
+                    <div class="dropdown">
+                        <button class="btn btn-outline-secondary dropdown-toggle" type="button" id="manageDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                            <i class="fas fa-cog"></i> Manage
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="manageDropdown">
+                            <li><a class="dropdown-item" href="{{ url_for('cloud115_id_extractor') }}">
+                                <i class="fas fa-barcode me-2"></i>视频ID提取器
+                            </a></li>
+                            <li><a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#import115DirModal">
+                                <i class="fas fa-folder-open me-2"></i>导入115目录
+                            </a></li>
+                            <li><a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#login115Modal">
+                                <i class="fas fa-sign-in-alt me-2"></i>115登录
+                            </a></li>
+                            <li><a class="dropdown-item d-none" id="logout115Button" href="#" onclick="logout115()">
+                                <i class="fas fa-sign-out-alt me-2"></i>115退出登录
+                            </a></li>
+                            <li>
+                                <form action="{{ url_for('sync_cloud115_movie_info') }}" method="post" class="d-inline w-100">
+                                    <button type="submit" class="dropdown-item">
+                                        <i class="fas fa-sync-alt me-2"></i>同步电影信息
+                                    </button>
+                                </form>
+                            </li>
+                            <li>
+                                <a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#syncMovieInfoModal">
+                                    <i class="fas fa-film me-2"></i>获取电影详情
+                                </a>
+                            </li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li>
+                                <button type="button" class="dropdown-item text-danger" data-bs-toggle="modal" data-bs-target="#deleteAllModal">
+                                    <i class="fas fa-trash-alt me-2"></i>删除所有记录
+                                </button>
+                            </li>
+                            {% if current_category %}
+                            <li>
+                                <button type="button" class="dropdown-item text-danger" data-bs-toggle="modal" data-bs-target="#deleteCategoryModal">
+                                    <i class="fas fa-trash-alt me-2"></i>删除所有「{{ current_category }}」记录
+                                </button>
+                            </li>
+                            {% endif %}
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Files Grid -->
+    {% if cloud115_files %}
+    <div class="movie-grid">
+        {% for file in cloud115_files %}
+        <div class="cloud115-card" data-id="{{ file.id }}">
+            <!-- Tooltip -->
+            <div class="cloud115-tooltip">
+                <h6>{{ file.title }}</h6>
+                {% if file.date %}
+                <p><small>Release Date: {{ file.date }}</small></p>
+                {% endif %}
+                {% if file.description %}
+                <p>{{ file.description }}</p>
+                {% endif %}
+                {% if file.video_id %}
+                <p><small>ID: {{ file.video_id }}</small></p>
+                {% endif %}
+                <p>
+                    <small>Added: {{ file.date_added|timestamp_to_date }}</small><br>
+                    {% if file.last_played > 0 %}
+                    <small>Last played: {{ file.last_played|timestamp_to_date }}</small><br>
+                    {% endif %}
+                    <small>Play count: {{ file.play_count }}</small>
+                </p>
+            </div>
+            
+            <!-- Card content with link -->
+            <a href="{% if file.video_id %}{{ url_for('movie_detail', movie_id=file.video_id) }}{% else %}{{ url_for('cloud115_player', file_id=file.id) }}{% endif %}" class="text-decoration-none text-dark">
+                <!-- Thumbnail with priority order -->
+                {% if file.video_id %}
+                <img src="{{ url_for('serve_image', filename='covers/' + file.video_id + '.jpg') }}" class="cloud115-thumbnail" alt="{{ file.title }}">
+                {% elif file.cover_image %}
+                <img src="{{ url_for('proxy_image', url=file.cover_image) }}" class="cloud115-thumbnail" alt="{{ file.title }}">
+                {% elif file.thumbnail %}
+                <img src="{{ url_for('proxy_image', url=file.thumbnail) }}" class="cloud115-thumbnail" alt="{{ file.title }}">
+                {% else %}
+                <div class="cloud115-thumbnail d-flex align-items-center justify-content-center bg-light">
+                    <i class="fas fa-file-video fa-3x text-secondary"></i>
+                </div>
+                {% endif %}
+                
+                <!-- Info -->
+                <div class="cloud115-info">
+                    <h5 class="cloud115-title">{{ file.title }}</h5>
+                    {% if file.actors %}
+                    <div class="cloud115-actors mb-1">
+                        {% for actor in file.actors|fromjson %}
+                        <span class="badge bg-info me-1">{{ actor.name }}</span>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                    <div class="cloud115-category">
+                        <span class="badge bg-secondary">{{ file.category }}</span>
+                        {% if file.play_count > 0 %}
+                        <span class="badge bg-info">Played {{ file.play_count }} times</span>
+                        {% endif %}
+                        {% if file.date %}
+                        <span class="badge bg-primary">{{ file.date }}</span>
+                        {% endif %}
+                    </div>
+                </div>
+            </a>
+            
+            <!-- Play button (stays on top) -->
+            <a href="{{ url_for('cloud115_player', file_id=file.id) }}" class="play-icon" title="Play now">
+                <i class="fas fa-play"></i>
+            </a>
+            
+            <!-- Edit ID button -->
+            <button type="button" class="edit-id-btn" title="Edit Video ID" 
+                    data-file-id="{{ file.id }}"
+                    data-file-name="{{ file.title }}"
+                    data-video-id="{{ file.video_id or '' }}"
+                    onclick="showEditVideoIdModal(this)">
+                ID
+            </button>
+
+            <!-- Delete button -->
+            <button type="button" class="delete-btn" title="Delete this file"
+                    onclick="if(confirm('确定要删除这个文件吗?')) { document.getElementById('delete-form-{{ file.id }}').submit(); }">
+                <i class="fas fa-trash"></i>
+            </button>
+            <form id="delete-form-{{ file.id }}" action="{{ url_for('delete_cloud115_file', file_id=file.id) }}" method="post" style="display: none;"></form>
+        </div>
+        {% endfor %}
+    </div>
+    
+    <!-- Pagination -->
+    {% if pagination %}
+    <nav aria-label="Page navigation" class="my-4">
+        <ul class="pagination justify-content-center">
+            <!-- First Page -->
+            {% if pagination.current_page > 1 %}
+            <li class="page-item">
+                <a class="page-link" href="{{ url_for('cloud115_library_search' if search_query else 'cloud115_library', category=current_category, page=1, query=search_query, sort_by=sort_by, sort_order=sort_order) }}" aria-label="First Page">
+                    <i class="bi bi-chevron-double-left"></i>
+                </a>
+            </li>
+            {% else %}
+            <li class="page-item disabled">
+                <span class="page-link">
+                    <i class="bi bi-chevron-double-left"></i>
+                </span>
+            </li>
+            {% endif %}
+                
+            {% if pagination.current_page > 1 %}
+            <li class="page-item">
+                <a class="page-link" href="{{ url_for('cloud115_library' if not search_query else 'cloud115_library_search', category=current_category, page=pagination.current_page-1, query=search_query, sort_by=sort_by, sort_order=sort_order) }}" aria-label="Previous">
+                    <span aria-hidden="true">&laquo;</span>
+                </a>
+            </li>
+            {% endif %}
+            
+            {% for page_num in pagination.pages %}
+            <li class="page-item {% if page_num == pagination.current_page %}active{% endif %}">
+                <a class="page-link" href="{{ url_for('cloud115_library' if not search_query else 'cloud115_library_search', category=current_category, page=page_num, query=search_query, sort_by=sort_by, sort_order=sort_order) }}">
+                    {{ page_num }}
+                </a>
+            </li>
+            {% endfor %}
+            
+            {% if pagination.has_next %}
+            <li class="page-item">
+                <a class="page-link" href="{{ url_for('cloud115_library' if not search_query else 'cloud115_library_search', category=current_category, page=pagination.next_page, query=search_query, sort_by=sort_by, sort_order=sort_order) }}" aria-label="Next">
+                    <span aria-hidden="true">&raquo;</span>
+                </a>
+            </li>
+            {% endif %}
+
+            <!-- Last Page -->
+            {% if pagination.current_page < pagination.total_pages %}
+            <li class="page-item">
+                <a class="page-link" href="{{ url_for('cloud115_library_search' if search_query else 'cloud115_library', category=current_category, page=pagination.total_pages, query=search_query, sort_by=sort_by, sort_order=sort_order) }}" aria-label="Last Page">
+                    <i class="bi bi-chevron-double-right"></i>
+                </a>
+            </li>
+            {% else %}
+            <li class="page-item disabled">
+                <span class="page-link">
+                    <i class="bi bi-chevron-double-right"></i>
+                </span>
+            </li>
+            {% endif %}            
+        </ul>
+    </nav>
+    {% endif %}
+    
+    {% else %}
+    <div class="no-cloud115-files">
+        <h3 class="text-muted">没有找到115云盘文件</h3>
+        <p class="text-muted">请使用管理菜单导入115云盘目录</p>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Import 115 Directory Modal -->
+<div class="modal fade" id="import115DirModal" tabindex="-1" aria-labelledby="import115DirModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="import115DirModalLabel">导入115云盘目录</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <!-- 面包屑导航 -->
+                <nav aria-label="breadcrumb" class="mb-3">
+                    <ol class="breadcrumb" id="cloud115BreadCrumb">
+                        <li class="breadcrumb-item active" data-folder-id="0">根目录</li>
+                    </ol>
+                </nav>
+                
+                <!-- 115目录浏览 -->
+                <div class="table-responsive">
+                    <table class="table table-hover" id="cloud115FileList">
+                        <thead>
+                            <tr>
+                                <th scope="col" style="width: 40px;">#</th>
+                                <th scope="col">名称</th>
+                                <th scope="col" style="width: 120px;">大小</th>
+                                <th scope="col" style="width: 160px;">修改时间</th>
+                                <th scope="col" style="width: 80px;">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr id="cloud115Loading">
+                                <td colspan="5" class="text-center py-3">
+                                    <div class="spinner-border spinner-border-sm text-primary" role="status">
+                                        <span class="visually-hidden">加载中...</span>
+                                    </div>
+                                    <span class="ms-2">加载中...</span>
+                                </td>
+                            </tr>
+                            <!-- 文件列表将通过JavaScript动态加载 -->
+                        </tbody>
+                    </table>
+                </div>
+                
+                <!-- 无文件时显示 -->
+                <div id="cloud115NoFiles" class="alert alert-info text-center d-none">
+                    <i class="fas fa-info-circle me-2"></i> 当前目录为空
+                </div>
+                
+                <!-- 未登录提示 -->
+                <div id="cloud115NotLoggedIn" class="alert alert-warning text-center d-none">
+                    <i class="fas fa-exclamation-circle me-2"></i> 请先登录115云盘
+                    <button type="button" class="btn btn-sm btn-outline-primary ms-3" data-bs-toggle="modal" data-bs-target="#login115Modal" data-bs-dismiss="modal">
+                        <i class="fas fa-sign-in-alt me-1"></i> 去登录
+                    </button>
+                </div>
+                
+                <!-- 显示当前选中的文件夹 -->
+                <div id="selectedFolderInfo" class="alert alert-success mt-3 d-none">
+                    <strong>已选择：</strong> <span id="selectedFolderName"></span>
+                </div>
+                
+                <!-- 最小文件大小筛选 -->
+                <div class="form-group mt-3">
+                    <label for="minFileSizeInput" class="form-label">文件大于 <span id="minFileSizeValue">50</span> MB</label>
+                    <input type="range" class="form-range" id="minFileSizeInput" min="0" max="500" step="10" value="50">
+                    <div class="form-text">小于该大小的视频文件将被忽略（设为0关闭筛选）</div>
+                </div>
+                
+                <!-- 分类选择 -->
+                <div class="form-group mt-3">
+                    <label class="form-label">导入分类</label>
+                    <div class="btn-group w-100" role="group">
+                        <input type="radio" class="btn-check" name="categorySelect" id="category-movies" value="movies" autocomplete="off" checked>
+                        <label class="btn btn-outline-primary" for="category-movies">电影</label>
+                        
+                        <input type="radio" class="btn-check" name="categorySelect" id="category-tv" value="tv" autocomplete="off">
+                        <label class="btn btn-outline-primary" for="category-tv">电视剧</label>
+                        
+                        <input type="radio" class="btn-check" name="categorySelect" id="category-other" value="other" autocomplete="off">
+                        <label class="btn btn-outline-primary" for="category-other">其他</label>
+                        
+                        <input type="radio" class="btn-check" name="categorySelect" id="category-folder" value="folder" autocomplete="off">
+                        <label class="btn btn-outline-primary" for="category-folder">使用文件夹名称</label>
+                    </div>
+                    <div class="form-text">选择要导入的文件类型分类，或使用文件夹名称作为分类</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" id="confirm115Import" disabled>确定导入</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Video ID Extractor Modal -->
+<div class="modal fade" id="videoIdExtractorModal" tabindex="-1" aria-labelledby="videoIdExtractorModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="videoIdExtractorModalLabel">视频ID提取器</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">分类</label>
+                    <select class="form-select" id="categorySelect">
+                        <option value="">所有分类</option>
+                        {% for category in categories %}
+                        <option value="{{ category }}">{{ category }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label">自定义ID匹配词典</label>
+                    <textarea class="form-control" id="dictionaryInput" rows="4" placeholder='{
+    "ABP": "ABP",
+    "SSNI": "SSNI",
+    "BF": "BF"
+}'></textarea>
+                    <div class="form-text">输入JSON格式的匹配词典（可选）</div>
+                </div>
+                
+                <div class="d-grid">
+                    <button type="button" class="btn btn-primary" id="extractButton">
+                        开始提取视频ID
+                    </button>
+                </div>
+                
+                <div class="mt-4" id="extractResults" style="display: none;">
+                    <h6>提取结果:</h6>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="card bg-success bg-opacity-10">
+                                <div class="card-header">成功</div>
+                                <div class="card-body">
+                                    <ul id="successList" class="list-group">
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card bg-danger bg-opacity-10">
+                                <div class="card-header">失败</div>
+                                <div class="card-body">
+                                    <ul id="failedList" class="list-group">
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Video ID Modal -->
+<div class="modal fade" id="editVideoIdModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">编辑视频ID</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="updateVideoIdForm" action="{{ url_for('update_cloud115_video_id') }}" method="post">
+                <div class="modal-body">
+                    <input type="hidden" id="fileIdInput" name="file_id">
+                    
+                    <div class="mb-3">
+                        <label class="form-label">文件名</label>
+                        <p id="fileNameText" class="form-control-plaintext"></p>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="videoIdInput" class="form-label">视频ID</label>
+                        <input type="text" class="form-control" id="videoIdInput" name="video_id" placeholder="输入影片ID，例如: ABP-123">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="submit" class="btn btn-primary">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- 115 Login Modal -->
+<div class="modal fade" id="login115Modal" tabindex="-1" aria-labelledby="login115ModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="login115ModalLabel">115网盘登录</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body text-center">
+                <div id="loginStatusAlert" class="alert d-none mb-3" role="alert"></div>
+                <div id="login115Status" class="alert alert-info mb-3">
+                    请使用115手机客户端扫描下方二维码进行登录
+                </div>
+                <div id="login115QRContainer" class="d-flex justify-content-center mb-3">
+                    <div id="login115QRCode" style="width: 200px; height: 200px;"></div>
+                </div>
+                <div id="loginSuccess115Container" class="d-none">
+                    <div class="alert alert-success">
+                        <i class="fas fa-check-circle me-2"></i> 已成功登录115云盘
+                    </div>
+                </div>
+                <div class="d-flex justify-content-center">
+                    <button type="button" id="login115RefreshBtn" class="btn btn-outline-primary me-2" style="display: none;">
+                        <i class="fas fa-sync-alt me-1"></i> 刷新二维码
+                    </button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Category Modal -->
+{% if current_category %}
+<div class="modal fade" id="deleteCategoryModal" tabindex="-1" aria-labelledby="deleteCategoryModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="deleteCategoryModalLabel">删除所有「{{ current_category }}」记录</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-danger">
+                    <i class="fas fa-exclamation-triangle"></i> 警告
+                </div>
+                <p>确定要删除分类「{{ current_category }}」中的所有记录吗？</p>
+                <p class="text-danger"><strong>此操作将删除该分类下的所有文件记录！</strong></p>
+                <p>此操作无法撤销。</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <form action="{{ url_for('delete_cloud115_category', category=current_category) }}" method="post">
+                    <button type="submit" class="btn btn-danger">删除所有「{{ current_category }}」记录</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Delete All Modal -->
+<div class="modal fade" id="deleteAllModal" tabindex="-1" aria-labelledby="deleteAllModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="deleteAllModalLabel">删除所有115云盘记录</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-danger">
+                    <i class="fas fa-exclamation-triangle"></i> 警告
+                </div>
+                <p>确定要删除<strong>所有</strong>115云盘记录吗？</p>
+                <p class="text-danger"><strong>此操作将删除所有分类下的所有文件记录！</strong></p>
+                <p>此操作无法撤销。</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <form action="{{ url_for('clear_cloud115_files') }}" method="post">
+                    <button type="submit" class="btn btn-danger">删除所有记录</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 在底部添加各种模态框：获取电影详情 -->
+<div class="modal fade" id="syncMovieInfoModal" tabindex="-1" aria-labelledby="syncMovieInfoModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="syncMovieInfoModalLabel">获取电影详情</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-warning">
+                    <i class="fas fa-exclamation-triangle me-2"></i> <strong>提示：</strong>
+                    该功能会从API获取完整的影片详情（包括标题、演员、封面和摘要等），并更新数据库中的电影信息。此过程可能会耗费较长时间，尤其是当影片库中影片较多时。
+                </div>
+                
+                <p>请选择要获取详情的范围：</p>
+                
+                <div class="d-grid gap-2 mt-3">
+                    {% if current_category %}
+                    <button type="button" class="btn btn-primary" id="syncCategoryMovieInfoBtn">
+                        <i class="fas fa-film me-2"></i> 获取「{{ current_category }}」分类影片详情
+                    </button>
+                    {% endif %}
+                    
+                    <button type="button" class="btn btn-primary" id="syncAllMovieInfoBtn">
+                        <i class="fas fa-film me-2"></i> 获取所有分类影片详情
+                    </button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<script>
+    // Video ID Extractor
+    document.addEventListener('DOMContentLoaded', function() {
+        const extractButton = document.getElementById('extractButton');
+        const successList = document.getElementById('successList');
+        const failedList = document.getElementById('failedList');
+        const extractResults = document.getElementById('extractResults');
+        
+        extractButton.addEventListener('click', function() {
+            // 显示加载状态
+            extractButton.disabled = true;
+            extractButton.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 处理中...';
+            
+            // 准备参数
+            const category = document.getElementById('categorySelect').value;
+            let dictionary = null;
+            
+            try {
+                const dictionaryText = document.getElementById('dictionaryInput').value.trim();
+                if (dictionaryText) {
+                    dictionary = JSON.parse(dictionaryText);
+                }
+            } catch (e) {
+                alert('词典格式错误，请检查JSON格式是否正确');
+                extractButton.disabled = false;
+                extractButton.innerHTML = '开始提取视频ID';
+                return;
+            }
+            
+            // 发送请求
+            fetch('{{ url_for("extract_cloud115_video_ids") }}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    category: category,
+                    dictionary: dictionary
+                }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                // 清空之前的结果
+                successList.innerHTML = '';
+                failedList.innerHTML = '';
+                
+                // 显示成功
+                if (data.success && Object.keys(data.success).length > 0) {
+                    Object.entries(data.success).forEach(([fileId, videoId]) => {
+                        const li = document.createElement('li');
+                        li.className = 'list-group-item';
+                        li.textContent = `${videoId}`;
+                        successList.appendChild(li);
+                    });
+                } else {
+                    const li = document.createElement('li');
+                    li.className = 'list-group-item';
+                    li.textContent = '没有成功匹配的文件';
+                    successList.appendChild(li);
+                }
+                
+                // 显示失败
+                if (data.failed && data.failed.length > 0) {
+                    data.failed.forEach(file => {
+                        const li = document.createElement('li');
+                        li.className = 'list-group-item';
+                        li.textContent = file;
+                        failedList.appendChild(li);
+                    });
+                } else {
+                    const li = document.createElement('li');
+                    li.className = 'list-group-item';
+                    li.textContent = '没有匹配失败的文件';
+                    failedList.appendChild(li);
+                }
+                
+                // 显示结果区域
+                extractResults.style.display = 'block';
+                
+                // 重置按钮状态
+                extractButton.disabled = false;
+                extractButton.innerHTML = '开始提取视频ID';
+                
+                // 如果有成功匹配，刷新页面显示新ID
+                if (data.success && Object.keys(data.success).length > 0) {
+                    setTimeout(function() {
+                        location.reload();
+                    }, 3000);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('处理请求时出错，请重试');
+                extractButton.disabled = false;
+                extractButton.innerHTML = '开始提取视频ID';
+            });
+        });
+    });
+    
+    // Edit Video ID Modal
+    function showEditVideoIdModal(button) {
+        const fileId = button.getAttribute('data-file-id');
+        const fileName = button.getAttribute('data-file-name');
+        const videoId = button.getAttribute('data-video-id');
+        
+        document.getElementById('fileIdInput').value = fileId;
+        document.getElementById('fileNameText').textContent = fileName;
+        document.getElementById('videoIdInput').value = videoId;
+        
+        const modal = new bootstrap.Modal(document.getElementById('editVideoIdModal'));
+        modal.show();
+    }
+
+    // 115 Login Implementation
+    document.addEventListener('DOMContentLoaded', function() {
+        const qrcodeContainer = document.getElementById('login115QRCode');
+        const statusElement = document.getElementById('login115Status');
+        const refreshButton = document.getElementById('login115RefreshBtn');
+        const logoutButton = document.getElementById('logout115Button');
+        const successContainer = document.getElementById('loginSuccess115Container');
+        let loginModal = null;
+        let deviceUid = null;
+        let deviceTime = null;
+        let deviceSign = null;
+        let pollingTimer = null;
+        let codeVerifier = null;
+        
+        // Check login status on page load
+        checkLoginStatus();
+        
+        // Generate a random string for code_verifier
+        function generateRandomString(length) {
+            const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+            let result = '';
+            const values = new Uint8Array(length);
+            window.crypto.getRandomValues(values);
+            for (let i = 0; i < length; i++) {
+                result += charset[values[i] % charset.length];
+            }
+            return result;
+        }
+        
+        // Calculate SHA-256 hash of a string
+        async function sha256(text) {
+            const encoder = new TextEncoder();
+            const data = encoder.encode(text);
+            const hash = await window.crypto.subtle.digest('SHA-256', data);
+            return hash;
+        }
+        
+        // Convert array buffer to base64 URL-safe string
+        function base64URLEncode(buffer) {
+            return btoa(String.fromCharCode.apply(null, new Uint8Array(buffer)))
+                .replace(/\+/g, '-')
+                .replace(/\//g, '_')
+                .replace(/=+$/, '');
+        }
+        
+        // Generate PKCE parameters
+        async function generatePKCEParams() {
+            codeVerifier = generateRandomString(64);
+            const codeChallenge = base64URLEncode(await sha256(codeVerifier));
+            return {
+                codeVerifier: codeVerifier,
+                codeChallenge: codeChallenge,
+                codeChallengeMethod: 'sha256'
+            };
+        }
+        
+        // Check the login status
+        async function checkLoginStatus() {
+            try {
+                const response = await fetch('/api/cloud115/check_auth_status');
+                const data = await response.json();
+                
+                if (data.state === 1 && data.data && data.data.logged_in) {
+                    // User is logged in
+                    if (logoutButton) {
+                        logoutButton.classList.remove('d-none');
+                    }
+                    
+                    // If modal is open, show success state
+                    if (successContainer) {
+                        statusElement.classList.add('d-none');
+                        qrcodeContainer.style.display = 'none';
+                        refreshButton.style.display = 'none';
+                        successContainer.classList.remove('d-none');
+                    }
+                } else {
+                    // User is not logged in
+                    if (logoutButton) {
+                        logoutButton.classList.add('d-none');
+                    }
+                    
+                    // Reset login modal to default state if it's open
+                    if (successContainer && successContainer.classList.contains('d-none') === false) {
+                        statusElement.classList.remove('d-none');
+                        qrcodeContainer.style.display = 'block';
+                        successContainer.classList.add('d-none');
+                    }
+                }
+            } catch (error) {
+                console.error('检查登录状态失败:', error);
+            }
+        }
+        
+        // Request device code and QR code
+        async function requestDeviceCode() {
+            try {
+                statusElement.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>正在获取二维码...';
+                statusElement.className = 'alert alert-info mb-3';
+                successContainer.classList.add('d-none');
+                
+                // Generate PKCE parameters
+                const pkceParams = await generatePKCEParams();
+                console.log('PKCE params:', pkceParams); // Debug log
+                
+                // Make API request to get device code and QR code
+                const response = await fetch('/api/cloud115/auth_device_code', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        code_challenge: pkceParams.codeChallenge,
+                        code_challenge_method: pkceParams.codeChallengeMethod
+                    })
+                });
+                
+                const data = await response.json();
+                console.log('Device code response:', data); // Debug log
+                
+                if (data.state === 1 && data.data) {
+                    // Store the device code and params for later use
+                    deviceUid = data.data.uid;
+                    deviceTime = data.data.time;
+                    deviceSign = data.data.sign;
+                    
+                    console.log('QR code URL:', data.data.qrcode); // Debug log
+                    
+                    // Clear previous QR code
+                    qrcodeContainer.innerHTML = '';
+                    
+                    // Check if QRCode library is available
+                    if (typeof QRCode === 'undefined') {
+                        console.error('QRCode library is not loaded properly');
+                        statusElement.innerHTML = '<i class="fas fa-exclamation-circle me-2"></i>QR码生成库加载失败，请刷新页面重试';
+                        statusElement.className = 'alert alert-danger mb-3';
+                        refreshButton.style.display = 'block';
+                        return;
+                    }
+                    
+                    try {
+                        // Generate and display QR code
+                        new QRCode(qrcodeContainer, {
+                            text: data.data.qrcode,
+                            width: 200,
+                            height: 200
+                        });
+                        
+                        statusElement.innerHTML = '请使用115手机客户端扫描二维码进行登录';
+                        qrcodeContainer.style.display = 'block';
+                        
+                        // Start polling for auth status
+                        startPolling();
+                        
+                        // Show refresh button after 2 minutes
+                        setTimeout(() => {
+                            refreshButton.style.display = 'block';
+                        }, 120000);
+                    } catch (qrError) {
+                        console.error('QR code generation error:', qrError);
+                        // Fallback to showing QR code URL
+                        statusElement.innerHTML = `<i class="fas fa-exclamation-circle me-2"></i>QR码生成失败，请使用以下链接在115手机APP中扫描登录:<br><a href="${data.data.qrcode}" target="_blank">${data.data.qrcode}</a>`;
+                        statusElement.className = 'alert alert-warning mb-3';
+                    }
+                    
+                } else {
+                    throw new Error(data.message || '获取二维码失败');
+                }
+            } catch (error) {
+                console.error('获取设备码错误:', error);
+                statusElement.innerHTML = `<i class="fas fa-exclamation-circle me-2"></i>${error.message || '获取二维码失败，请重试'}`;
+                statusElement.className = 'alert alert-danger mb-3';
+                refreshButton.style.display = 'block';
+            }
+        }
+        
+        // Poll for authorization status
+        async function pollAuthStatus() {
+            try {
+                if (!deviceUid || !deviceTime || !deviceSign) {
+                    console.error('Missing device parameters for polling');
+                    return;
+                }
+                
+                console.log('Polling auth status with params:', { uid: deviceUid, time: deviceTime, sign: deviceSign });
+                
+                const response = await fetch(`/api/cloud115/poll_auth_status?uid=${deviceUid}&time=${deviceTime}&sign=${deviceSign}`);
+                const data = await response.json();
+                
+                console.log('Poll auth status response:', data);
+                
+                if (data.state === 1) {
+                    // 处理空数据情况
+                    if (!data.data || Object.keys(data.data).length === 0) {
+                        console.log('Empty data in response, possible timeout or session expired');
+                        clearInterval(pollingTimer);
+                        statusElement.innerHTML = '<i class="fas fa-exclamation-circle me-2"></i>会话过期，请重新扫描二维码';
+                        statusElement.className = 'alert alert-warning mb-3';
+                        refreshButton.style.display = 'block';
+                        return;
+                    }
+                    
+                    // 注意: 115 API 返回的状态码为数字
+                    // status: 0/undefined - 等待扫描
+                    // status: 1 - 已扫描，等待确认
+                    // status: 2 - 已确认授权
+                    const status = data.data.status;
+                    console.log('Current auth status:', status);
+                    
+                    if (status === 2) {
+                        // 用户已授权
+                        console.log('User has authorized (status=2), exchanging for token...');
+                        clearInterval(pollingTimer);
+                        exchangeForToken();
+                    } else if (status === 1) {
+                        // 已扫描，等待确认
+                        console.log('QR code scanned, waiting for confirmation (status=1)');
+                        // 显示状态信息给用户
+                        if (data.data.msg) {
+                            statusElement.innerHTML = `<i class="fas fa-info-circle me-2"></i>${data.data.msg || '二维码已扫描，请在APP中确认授权'}`;
+                        } else {
+                            statusElement.innerHTML = '<i class="fas fa-info-circle me-2"></i>二维码已扫描，请在APP中确认授权';
+                        }
+                        statusElement.className = 'alert alert-info mb-3';
+                    } else {
+                        // 等待扫描或状态未知
+                        console.log('Waiting for QR code scan (status=0 or undefined)');
+                    }
+                } else {
+                    throw new Error(data.message || '获取认证状态失败');
+                }
+            } catch (error) {
+                console.error('轮询状态错误:', error);
+                clearInterval(pollingTimer);
+                statusElement.innerHTML = `<i class="fas fa-exclamation-circle me-2"></i>${error.message || '获取认证状态失败，请重试'}`;
+                statusElement.className = 'alert alert-danger mb-3';
+                refreshButton.style.display = 'block';
+            }
+        }
+        
+        // Start polling for authorization status
+        function startPolling() {
+            // Clear any existing polling
+            if (pollingTimer) {
+                clearInterval(pollingTimer);
+            }
+            
+            // Poll every 3 seconds
+            pollingTimer = setInterval(pollAuthStatus, 3000);
+            
+            // Stop polling after 5 minutes if no response
+            setTimeout(() => {
+                if (pollingTimer) {
+                    clearInterval(pollingTimer);
+                    pollingTimer = null;
+                    
+                    // Only update if we're still in polling state
+                    if (statusElement.innerHTML.indexOf('扫描二维码') !== -1) {
+                        statusElement.innerHTML = '<i class="fas fa-exclamation-circle me-2"></i>登录超时，请重新尝试';
+                        statusElement.className = 'alert alert-warning mb-3';
+                        refreshButton.style.display = 'block';
+                    }
+                }
+            }, 300000); // 5 minutes
+        }
+        
+        // Exchange device code for access token
+        async function exchangeForToken() {
+            try {
+                console.log('Exchanging device code for token with uid:', deviceUid);
+                
+                const exchangeData = {
+                    uid: deviceUid,
+                    code_verifier: codeVerifier
+                };
+                
+                console.log('Exchange data:', exchangeData);
+                
+                const response = await fetch('/api/cloud115/device_code_to_token', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(exchangeData)
+                });
+                
+                const data = await response.json();
+                console.log('Token exchange response:', data);
+                
+                if (data.state === 1 && data.data && data.data.access_token) {
+                    console.log('Successfully obtained access token');
+                    statusElement.innerHTML = '<i class="fas fa-check-circle me-2"></i>登录成功！已获取访问令牌';
+                    statusElement.className = 'alert alert-success mb-3';
+                    refreshButton.style.display = 'none';
+                    
+                    // Update logout button state
+                    logoutButton.classList.remove('d-none');
+                    
+                    // Reload the page after 1.5 seconds to reflect logged in state
+                    setTimeout(() => {
+                        console.log('Reloading page to update UI');
+                        window.location.reload();
+                    }, 1500);
+                } else {
+                    throw new Error(data.message || '获取访问令牌失败');
+                }
+            } catch (error) {
+                console.error('获取令牌错误:', error);
+                statusElement.innerHTML = `<i class="fas fa-exclamation-circle me-2"></i>${error.message || '获取访问令牌失败，请重试'}`;
+                statusElement.className = 'alert alert-danger mb-3';
+                refreshButton.style.display = 'block';
+            }
+        }
+        
+        // Reset the login state
+        function resetLoginState() {
+            // Clear any polling in progress
+            if (pollingTimer) {
+                clearInterval(pollingTimer);
+                pollingTimer = null;
+            }
+            
+            // Reset variables
+            deviceUid = null;
+            deviceTime = null;
+            deviceSign = null;
+            
+            // Reset UI
+            statusElement.innerHTML = '';
+            statusElement.className = 'alert alert-info mb-3';
+            qrcodeContainer.innerHTML = '';
+            refreshButton.style.display = 'none';
+        }
+        
+        // Initialize login modal
+        document.getElementById('login115Modal').addEventListener('show.bs.modal', function (event) {
+            loginModal = this;
+            checkLoginStatus();
+            if (!successContainer.classList.contains('d-none')) {
+                statusElement.classList.add('d-none');
+                qrcodeContainer.style.display = 'none';
+            } else {
+                requestDeviceCode();
+            }
+        });
+        
+        // Handle modal close
+        document.getElementById('login115Modal').addEventListener('hidden.bs.modal', function (event) {
+            if (!successContainer.classList.contains('d-none')) {
+                // Don't reset if logged in
+                return;
+            }
+            resetLoginState();
+        });
+        
+        // Handle refresh button click
+        refreshButton.addEventListener('click', function() {
+            resetLoginState();
+            requestDeviceCode();
+            refreshButton.style.display = 'none';
+        });
+        
+        // Handle logout button click
+        window.logout115 = async function() {
+            try {
+                const response = await fetch('/api/cloud115/logout', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (data.state === 1) {
+                    // Logout successful
+                    logoutButton.classList.add('d-none');
+                    
+                    // Reset login modal state
+                    successContainer.classList.add('d-none');
+                    statusElement.classList.remove('d-none');
+                    
+                    // Show success message
+                    const alertElement = document.getElementById('loginStatusAlert');
+                    if (alertElement) {
+                        alertElement.classList.remove('d-none', 'alert-danger', 'alert-info');
+                        alertElement.classList.add('alert-success');
+                        alertElement.innerHTML = '<i class="fas fa-check-circle me-2"></i>已成功退出登录';
+                        
+                        // Hide message after 3 seconds
+                        setTimeout(() => {
+                            alertElement.classList.add('d-none');
+                        }, 3000);
+                    }
+                    
+                    // Reload the page to reflect logged out state
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 1500);
+                } else {
+                    throw new Error(data.message || '退出登录失败');
+                }
+            } catch (error) {
+                console.error('退出登录失败:', error);
+                const alertElement = document.getElementById('loginStatusAlert');
+                if (alertElement) {
+                    alertElement.classList.remove('d-none', 'alert-success', 'alert-info');
+                    alertElement.classList.add('alert-danger');
+                    alertElement.innerHTML = `<i class="fas fa-exclamation-circle me-2"></i>${error.message || '退出登录失败，请重试'}`;
+                }
+            }
+        };
+    });
+
+    // 115 Directory Browser
+    document.addEventListener('DOMContentLoaded', function() {
+        const breadcrumb = document.getElementById('cloud115BreadCrumb');
+        const fileList = document.getElementById('cloud115FileList').querySelector('tbody');
+        const loadingRow = document.getElementById('cloud115Loading');
+        const noFilesAlert = document.getElementById('cloud115NoFiles');
+        const notLoggedInAlert = document.getElementById('cloud115NotLoggedIn');
+        const confirmImportBtn = document.getElementById('confirm115Import');
+        const selectedFolderInfo = document.getElementById('selectedFolderInfo');
+        const selectedFolderName = document.getElementById('selectedFolderName');
+        const minFileSizeInput = document.getElementById('minFileSizeInput');
+        const minFileSizeValue = document.getElementById('minFileSizeValue');
+        
+        // 存储当前浏览路径
+        let currentPath = [];
+        let selectedFolderId = null;
+        
+        // 文件大小筛选处理
+        if (minFileSizeInput) {
+            minFileSizeInput.addEventListener('input', function() {
+                minFileSizeValue.textContent = this.value;
+            });
+        }
+        
+        // 格式化文件大小
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+        
+        // 格式化时间戳
+        function formatTimestamp(timestamp) {
+            const date = new Date(timestamp * 1000);
+            return date.toLocaleString();
+        }
+        
+        // 打开115目录模态框时，加载根目录
+        document.getElementById('import115DirModal').addEventListener('show.bs.modal', function() {
+            // 重置状态
+            breadcrumb.innerHTML = '<li class="breadcrumb-item active" data-folder-id="0">根目录</li>';
+            currentPath = [];
+            selectedFolderId = null;
+            confirmImportBtn.disabled = true;
+            selectedFolderInfo.classList.add('d-none');
+            
+            // 检查登录状态
+            fetch('/api/cloud115/check_auth_status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.state === 1 && data.data && data.data.logged_in) {
+                        // 已登录，加载根目录
+                        loadDirectory(0);
+                        notLoggedInAlert.classList.add('d-none');
+                    } else {
+                        // 未登录，显示提示
+                        loadingRow.classList.add('d-none');
+                        notLoggedInAlert.classList.remove('d-none');
+                    }
+                })
+                .catch(error => {
+                    console.error('检查登录状态错误:', error);
+                    notLoggedInAlert.classList.remove('d-none');
+                    loadingRow.classList.add('d-none');
+                });
+        });
+        
+        // 加载指定目录的文件列表
+        function loadDirectory(folderId) {
+            // 显示加载中
+            loadingRow.classList.remove('d-none');
+            noFilesAlert.classList.add('d-none');
+            
+            // 清空文件列表（保留加载行）
+            const rows = fileList.querySelectorAll('tr:not(#cloud115Loading)');
+            rows.forEach(row => row.remove());
+            
+            // 请求API获取文件列表
+            fetch(`/api/cloud115/files?cid=${folderId}`)
+                .then(response => response.json())
+                .then(data => {
+                    loadingRow.classList.add('d-none');
+                    
+                    if (data.state && data.data && Array.isArray(data.data)) {
+                        if (data.data.length === 0) {
+                            // 没有文件
+                            noFilesAlert.classList.remove('d-none');
+                        } else {
+                            // 渲染文件列表
+                            data.data.forEach((file, index) => {
+                                const isFolder = file.fc === '0';
+                                
+                                const row = document.createElement('tr');
+                                row.className = isFolder ? 'folder-row' : '';
+                                row.innerHTML = `
+                                    <td>${index + 1}</td>
+                                    <td>
+                                        <i class="${isFolder ? 'fas fa-folder text-warning' : 'fas fa-file text-primary'} me-2"></i>
+                                        <span class="file-name">${file.fn}</span>
+                                    </td>
+                                    <td>${formatFileSize(parseInt(file.fs || 0))}</td>
+                                    <td>${formatTimestamp(file.upt)}</td>
+                                    <td>
+                                        ${isFolder ? 
+                                        `<div class="form-check">
+                                            <input class="form-check-input folder-select" type="radio" name="folderSelect" 
+                                                id="folder${file.fid}" value="${file.fid}" data-folder-name="${file.fn}">
+                                        </div>` : ''}
+                                    </td>
+                                `;
+                                
+                                // 添加点击事件（仅文件夹可点击）
+                                if (isFolder) {
+                                    const nameCell = row.querySelector('.file-name');
+                                    nameCell.style.cursor = 'pointer';
+                                    nameCell.title = '点击进入文件夹';
+                                    nameCell.addEventListener('click', () => navigateToFolder(file.fid, file.fn));
+                                }
+                                
+                                fileList.appendChild(row);
+                            });
+                            
+                            // 添加选择文件夹事件
+                            document.querySelectorAll('.folder-select').forEach(radio => {
+                                radio.addEventListener('change', function() {
+                                    selectedFolderId = this.value;
+                                    selectedFolderName.textContent = this.getAttribute('data-folder-name');
+                                    selectedFolderInfo.classList.remove('d-none');
+                                    confirmImportBtn.disabled = false;
+                                });
+                            });
+                        }
+                    } else {
+                        // 加载失败
+                        noFilesAlert.textContent = '加载文件列表失败';
+                        noFilesAlert.classList.remove('d-none');
+                    }
+                })
+                .catch(error => {
+                    console.error('加载目录错误:', error);
+                    loadingRow.classList.add('d-none');
+                    noFilesAlert.textContent = '加载文件列表失败，请重试';
+                    noFilesAlert.classList.remove('d-none');
+                });
+        }
+        
+        // 导航到指定文件夹
+        function navigateToFolder(folderId, folderName) {
+            // 更新面包屑
+            updateBreadcrumb(folderId, folderName);
+            
+            // 加载文件夹内容
+            loadDirectory(folderId);
+        }
+        
+        // 更新面包屑导航
+        function updateBreadcrumb(folderId, folderName) {
+            // 检查是否已存在该路径（点击面包屑导航时）
+            const existingIndex = currentPath.findIndex(p => p.id === folderId);
+            
+            if (existingIndex !== -1) {
+                // 如果点击已有路径，截断到该路径
+                currentPath = currentPath.slice(0, existingIndex + 1);
+            } else {
+                // 添加新路径
+                currentPath.push({ id: folderId, name: folderName });
+            }
+            
+            // 重新渲染面包屑
+            breadcrumb.innerHTML = `<li class="breadcrumb-item" data-folder-id="0"><a href="#" class="breadcrumb-link">根目录</a></li>`;
+            
+            currentPath.forEach((path, index) => {
+                const isLast = index === currentPath.length - 1;
+                const item = document.createElement('li');
+                item.className = isLast ? 'breadcrumb-item active' : 'breadcrumb-item';
+                item.setAttribute('data-folder-id', path.id);
+                
+                if (isLast) {
+                    item.textContent = path.name;
+                } else {
+                    item.innerHTML = `<a href="#" class="breadcrumb-link">${path.name}</a>`;
+                }
+                
+                breadcrumb.appendChild(item);
+            });
+            
+            // 为面包屑项添加点击事件
+            breadcrumb.querySelectorAll('.breadcrumb-link').forEach(link => {
+                link.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const li = this.closest('li');
+                    const folderId = li.getAttribute('data-folder-id');
+                    
+                    // 如果点击"根目录"，清空当前路径
+                    if (folderId === '0') {
+                        currentPath = [];
+                        navigateToFolder(0, '根目录');
+                    } else {
+                        // 查找点击的路径在当前路径中的位置
+                        const pathIndex = currentPath.findIndex(p => p.id === folderId);
+                        if (pathIndex !== -1) {
+                            // 导航到该路径
+                            navigateToFolder(folderId, currentPath[pathIndex].name);
+                        }
+                    }
+                });
+            });
+        }
+        
+        // 确定导入按钮点击事件
+        confirmImportBtn.addEventListener('click', function() {
+            if (!selectedFolderId) {
+                alert('请选择要导入的文件夹');
+                return;
+            }
+            
+            // 获取最小文件大小设置（MB）
+            const minFileSizeMB = parseInt(minFileSizeInput.value) || 0;
+            
+            // 显示加载状态
+            this.disabled = true;
+            this.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 导入中...';
+            
+            // 发送请求导入文件夹
+            fetch('/api/cloud115/import_directory', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    folder_id: selectedFolderId,
+                    min_size_mb: minFileSizeMB,
+                    category_type: document.querySelector('input[name="categorySelect"]:checked').value
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                // 恢复按钮状态
+                confirmImportBtn.disabled = false;
+                confirmImportBtn.innerHTML = '确定导入';
+                
+                if (data.success) {
+                    // 导入成功，关闭模态框并刷新页面
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('import115DirModal'));
+                    modal.hide();
+                    
+                    // 构建成功消息，包含文件大小筛选信息
+                    let successMessage = `导入成功！共导入 ${data.imported} 个视频文件`;
+                    if (data.skipped && data.skipped > 0) {
+                        successMessage += `，跳过 ${data.skipped} 个小于 ${minFileSizeMB} MB 的文件`;
+                    }
+                    
+                    // 显示成功消息
+                    alert(successMessage);
+                    
+                    // 刷新页面
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 1000);
+                } else {
+                    // 导入失败
+                    alert('导入失败：' + (data.message || '未知错误'));
+                }
+            })
+            .catch(error => {
+                console.error('导入错误:', error);
+                confirmImportBtn.disabled = false;
+                confirmImportBtn.innerHTML = '确定导入';
+                alert('导入请求失败，请重试');
+            });
+        });
+    });
+
+    // 同步特定分类影片详情
+    document.getElementById('syncCategoryMovieInfoBtn')?.addEventListener('click', function() {
+        if (confirm('确定要获取「{{ current_category }}」分类下所有影片的详细信息吗？此操作可能需要较长时间。')) {
+            // 显示加载中提示
+            this.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 处理中...';
+            this.disabled = true;
+            
+            // 发送请求
+            fetch('/api/cloud115/sync_category_movie_info', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    category: '{{ current_category }}'
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    alert(data.message);
+                    // 刷新页面
+                    window.location.reload();
+                } else {
+                    alert('错误: ' + data.message);
+                    this.innerHTML = '<i class="fas fa-film me-2"></i> 获取「{{ current_category }}」分类影片详情';
+                    this.disabled = false;
+                }
+            })
+            .catch(error => {
+                alert('错误: ' + error.message);
+                this.innerHTML = '<i class="fas fa-film me-2"></i> 获取「{{ current_category }}」分类影片详情';
+                this.disabled = false;
+            });
+        }
+    });
+    
+    // 同步所有影片详情
+    document.getElementById('syncAllMovieInfoBtn')?.addEventListener('click', function() {
+        if (confirm('确定要获取所有分类下的影片详细信息吗？此操作可能需要较长时间。')) {
+            // 显示加载中提示
+            this.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 处理中...';
+            this.disabled = true;
+            
+            // 发送请求
+            fetch('/api/cloud115/sync_all_movie_info', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    alert(data.message);
+                    // 刷新页面
+                    window.location.reload();
+                } else {
+                    alert('错误: ' + data.message);
+                    this.innerHTML = '<i class="fas fa-film me-2"></i> 获取所有分类影片详情';
+                    this.disabled = false;
+                }
+            })
+            .catch(error => {
+                alert('错误: ' + error.message);
+                this.innerHTML = '<i class="fas fa-film me-2"></i> 获取所有分类影片详情';
+                this.disabled = false;
+            });
+        }
+    });
+</script>
+{% endblock %} 

@@ -19,9 +19,6 @@ class FanzaScraper:
             "https://www.dmm.co.jp/mono/dvd/-/detail/=/cid={}/",
             "https://www.dmm.co.jp/digital/videoa/-/detail/=/cid={}/",
             "https://www.dmm.co.jp/digital/videoc/-/detail/=/cid={}/",
-            "https://www.dmm.co.jp/digital/anime/-/detail/=/cid={}/",
-            "https://www.dmm.co.jp/mono/anime/-/detail/=/cid={}/",
-            "https://www.dmm.co.jp/digital/nikkatsu/-/detail/=/cid={}/"
         ]
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
@@ -441,28 +438,36 @@ class FanzaScraper:
         original_id = re.sub(r'[^a-z0-9]', '', movie_id.lower())
         if original_id != normalized_id:
             logging.info(f"标准化ID搜索失败，尝试使用原始ID格式: {original_id}")
-            # 只尝试 DVD 版本的 URL
-            url = f"https://www.dmm.co.jp/mono/dvd/-/detail/=/cid={original_id}/"
-            logging.info(f"尝试原始ID URL: {url}")
             
-            try:
-                session = requests.Session()
-                session.headers.update({
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                    'Accept-Language': 'ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7'
-                })
+            # 尝试使用原始ID (无连字符) 访问数字版本
+            urls_to_try = [
+                f"https://www.dmm.co.jp/digital/videoa/-/detail/=/cid={original_id}/",
+                f"https://www.dmm.co.jp/digital/videoc/-/detail/=/cid={original_id}/",
+                f"https://www.dmm.co.jp/mono/dvd/-/detail/=/cid={original_id}/"
+            ]
+            
+            for url in urls_to_try:
+                logging.info(f"尝试原始ID URL: {url}")
                 
-                # FANZA需要的cookie
-                session.cookies.set('age_check_done', '1')
-                
-                response = session.get(url, timeout=10)
-                
-                # 检查响应状态
-                if response.status_code == 200:
-                    # 检查是否地区限制
-                    if "not-available-in-your-region" in response.url:
-                        logging.warning("该地区不可用")
-                    else:
+                try:
+                    session = requests.Session()
+                    session.headers.update({
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                        'Accept-Language': 'ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7'
+                    })
+                    
+                    # FANZA需要的cookie
+                    session.cookies.set('age_check_done', '1')
+                    
+                    response = session.get(url, timeout=10)
+                    
+                    # 检查响应状态
+                    if response.status_code == 200:
+                        # 检查是否地区限制
+                        if "not-available-in-your-region" in response.url:
+                            logging.warning("该地区不可用")
+                            continue
+                            
                         # 解析HTML
                         soup = BeautifulSoup(response.text, 'html.parser')
                         
@@ -501,8 +506,91 @@ class FanzaScraper:
                             }
                         
                         logging.warning("在页面中找不到摘要信息")
+                except Exception as e:
+                    logging.error(f"使用原始ID获取电影 {movie_id} 的简介失败: {str(e)}")
+                    continue
+        
+        # 尝试使用 "1+" 前缀格式（两种情况）
+        # 1. 使用 "1" + 标准化ID 的格式
+        standardized_id = self.normalize_movie_id(movie_id)
+        one_prefixed_standardized_id = f"1{standardized_id}"
+        logging.info(f"尝试使用 1+标准化ID 格式: {one_prefixed_standardized_id}")
+        
+        # 2. 使用 "1" + 原始ID（无连字符）的格式
+        original_id = re.sub(r'[^a-z0-9]', '', movie_id.lower())
+        one_prefixed_original_id = f"1{original_id}"
+        logging.info(f"尝试使用 1+原始ID 格式: {one_prefixed_original_id}")
+        
+        # 将两种格式放入列表中，循环尝试
+        one_prefixed_ids = []
+        if one_prefixed_standardized_id != one_prefixed_original_id:
+            one_prefixed_ids = [one_prefixed_standardized_id, one_prefixed_original_id]
+        else:
+            one_prefixed_ids = [one_prefixed_standardized_id]
+        
+        for one_prefixed_id in one_prefixed_ids:
+            url = f"https://www.dmm.co.jp/mono/dvd/-/detail/=/cid={one_prefixed_id}/"
+            logging.info(f"尝试 1+ID URL: {url}")
+            
+            try:
+                session = requests.Session()
+                session.headers.update({
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                    'Accept-Language': 'ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7'
+                })
+                
+                # FANZA需要的cookie
+                session.cookies.set('age_check_done', '1')
+                
+                response = session.get(url, timeout=10)
+                
+                # 检查响应状态
+                if response.status_code == 200:
+                    # 检查是否地区限制
+                    if "not-available-in-your-region" in response.url:
+                        logging.warning("该地区不可用")
+                        continue
+                        
+                    # 解析HTML
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    
+                    # 按优先级尝试不同的摘要获取方法
+                    summary = self.get_summary_from_json_ld(soup)
+                    if summary:
+                        logging.info("从JSON-LD获取摘要")
+                        return {
+                            'movie_id': movie_id,
+                            'fanza_id': one_prefixed_id,
+                            'url': url,
+                            'summary': summary,
+                            'source': 'json-ld'
+                        }
+                    
+                    summary = self.get_summary_from_html(soup)
+                    if summary:
+                        logging.info("从HTML内容获取摘要")
+                        return {
+                            'movie_id': movie_id,
+                            'fanza_id': one_prefixed_id,
+                            'url': url,
+                            'summary': summary,
+                            'source': 'html'
+                        }
+                    
+                    summary = self.get_summary_from_meta(soup)
+                    if summary:
+                        logging.info("从Meta标签获取摘要")
+                        return {
+                            'movie_id': movie_id,
+                            'fanza_id': one_prefixed_id,
+                            'url': url,
+                            'summary': summary,
+                            'source': 'meta'
+                        }
+                    
+                    logging.warning("在页面中找不到摘要信息")
             except Exception as e:
-                logging.error(f"使用原始ID获取电影 {movie_id} 的简介失败: {str(e)}")
+                logging.error(f"使用 1+ID({one_prefixed_id}) 获取电影 {movie_id} 的简介失败: {str(e)}")
         
         logging.warning(f"未能获取到电影 {movie_id} 的简介")
         return None

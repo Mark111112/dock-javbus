@@ -1,0 +1,940 @@
+{% extends 'base.html' %}
+
+{% block title %}STRM Library{% endblock %}
+
+{% block head %}
+<style>
+    .movie-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+        gap: 20px;
+    }
+    .category-selector {
+        margin-bottom: 20px;
+    }
+    .strm-card {
+        border-radius: 8px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+        overflow: hidden;
+        position: relative;
+    }
+    .strm-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+    }
+    .strm-thumbnail {
+        width: 100%;
+        height: 220px;
+        object-fit: cover;
+        background-color: #f5f5f5;
+    }
+    .play-icon {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        background-color: rgba(0, 0, 0, 0.6);
+        color: white;
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 10;
+        transition: all 0.2s ease;
+    }
+    .play-icon:hover {
+        background-color: rgba(0, 123, 255, 0.8);
+        transform: scale(1.1);
+    }
+    .strm-info {
+        padding: 15px;
+        position: relative;
+    }
+    .strm-title {
+        font-weight: bold;
+        margin-bottom: 8px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        line-height: 1.2;
+        font-size: 0.9rem;
+        height: 2.4em;
+    }
+    .strm-category {
+        color: #6c757d;
+        font-size: 0.9rem;
+    }
+    .add-btn-container {
+        position: fixed;
+        bottom: 30px;
+        right: 30px;
+        z-index: 100;
+    }
+    .add-btn {
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        background-color: #007bff;
+        color: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+        font-size: 24px;
+        text-decoration: none;
+        cursor: pointer;
+    }
+    .add-btn:hover {
+        background-color: #0069d9;
+        color: white;
+    }
+    .btn-group.dropup {
+        display: inline-block;
+    }
+    .add-btn-container .dropdown-menu {
+        margin-bottom: 10px;
+        min-width: 200px;
+    }
+    .no-strm-files {
+        padding: 40px;
+        text-align: center;
+        background-color: #f8f9fa;
+        border-radius: 8px;
+        margin-top: 20px;
+    }
+    
+    /* Custom tooltip styles */
+    .strm-card {
+        position: relative;
+    }
+    .strm-tooltip {
+        visibility: hidden;
+        position: absolute;
+        z-index: 100;
+        width: 300px;
+        background-color: rgba(0, 0, 0, 0.9);
+        color: #fff;
+        border-radius: 6px;
+        padding: 10px;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+        opacity: 0;
+        transition: opacity 0.3s, visibility 0.3s;
+        pointer-events: none;
+        left: 50%;
+        bottom: 100%;
+        transform: translateX(-50%);
+        margin-bottom: 10px;
+    }
+    .strm-card:hover .strm-tooltip {
+        visibility: visible;
+        opacity: 1;
+    }
+    .strm-tooltip:after {
+        content: "";
+        position: absolute;
+        top: 100%;
+        left: 50%;
+        margin-left: -5px;
+        border-width: 5px;
+        border-style: solid;
+        border-color: rgba(0, 0, 0, 0.9) transparent transparent transparent;
+    }
+    .strm-tooltip h6 {
+        margin-bottom: 5px;
+        border-bottom: 1px solid rgba(255,255,255,0.2);
+        padding-bottom: 5px;
+    }
+    .strm-tooltip p {
+        margin-bottom: 5px;
+        font-size: 0.9rem;
+        max-height: 100px;
+        overflow-y: auto;
+    }
+    .strm-card .play-icon {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        background-color: rgba(0, 0, 0, 0.6);
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 1.5rem;
+        text-decoration: none;
+        transition: all 0.2s;
+    }
+    
+    .strm-card .update-icon-form {
+        position: absolute;
+        top: 10px;
+        right: 60px; /* Position to the left of play icon */
+        margin: 0;
+        padding: 0;
+    }
+    
+    .strm-card .update-icon {
+        background-color: rgba(0, 0, 0, 0.6);
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 1.2rem;
+        border: none;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    
+    .strm-card .play-icon:hover, .strm-card .update-icon:hover {
+        background-color: rgba(220, 53, 69, 0.8);
+        transform: scale(1.1);
+    }
+
+    .strm-card .edit-id-btn {
+        position: absolute;
+        bottom: 5px;
+        right: 5px;
+        background-color: rgba(13, 110, 253, 0.8);
+        color: white;
+        border: none;
+        border-radius: 4px;
+        padding: 2px 6px;
+        font-size: 0.8rem;
+        cursor: pointer;
+        transition: all 0.2s;
+        z-index: 10;
+    }
+
+    .strm-card .delete-btn {
+        position: absolute;
+        bottom: 5px;
+        right: 35px;
+        background-color: rgba(220, 53, 69, 0.8);
+        color: white;
+        border: none;
+        border-radius: 4px;
+        padding: 2px 6px;
+        font-size: 0.8rem;
+        cursor: pointer;
+        transition: all 0.2s;
+        z-index: 10;
+    }
+
+    .strm-card .edit-id-btn:hover {
+        background-color: rgba(11, 94, 215, 1);
+        transform: scale(1.05);
+    }
+
+    .strm-card .delete-btn:hover {
+        background-color: rgba(200, 35, 51, 1);
+        transform: scale(1.05);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h1 class="mb-4">STRM Library</h1>
+    
+    <div class="row">
+        <div class="col-md-12">
+            <!-- Category Selector -->
+            <div class="category-selector">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <div class="btn-group">
+                        <a href="{{ url_for('strm_library', sort_by=sort_by, sort_order=sort_order) }}" class="btn btn-{% if not current_category %}primary{% else %}outline-primary{% endif %}">All</a>
+                        {% for category in categories %}
+                        <a href="{{ url_for('strm_library', category=category, sort_by=sort_by, sort_order=sort_order) }}" class="btn btn-{% if current_category == category %}primary{% else %}outline-primary{% endif %}">
+                            {{ category|capitalize }}
+                        </a>
+                        {% endfor %}
+                    </div>
+                    
+                    <div class="d-flex">
+                        <!-- Sort Dropdown -->
+                        <div class="dropdown me-2">
+                            <button class="btn btn-outline-secondary dropdown-toggle" type="button" id="sortDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                                <i class="bi bi-sort-alpha-down"></i> {{ sort_display|default('Sort') }}
+                            </button>
+                            <ul class="dropdown-menu" aria-labelledby="sortDropdown">
+                                <li><h6 class="dropdown-header">Sort By</h6></li>
+                                <li><a class="dropdown-item {% if sort_by == 'added_time' %}active{% endif %}" href="{{ url_for('strm_library', category=current_category, sort_by='added_time', sort_order=sort_order, query=search_query) }}">
+                                    <i class="bi bi-clock"></i> Added Time
+                                </a></li>
+                                <li><a class="dropdown-item {% if sort_by == 'video_id' %}active{% endif %}" href="{{ url_for('strm_library', category=current_category, sort_by='video_id', sort_order=sort_order, query=search_query) }}">
+                                    <i class="bi bi-tag"></i> Video ID
+                                </a></li>
+                                <li><a class="dropdown-item {% if sort_by == 'title' %}active{% endif %}" href="{{ url_for('strm_library', category=current_category, sort_by='title', sort_order=sort_order, query=search_query) }}">
+                                    <i class="bi bi-text-left"></i> Title
+                                </a></li>
+                                <li><a class="dropdown-item {% if sort_by == 'date' %}active{% endif %}" href="{{ url_for('strm_library', category=current_category, sort_by='date', sort_order=sort_order, query=search_query) }}">
+                                    <i class="bi bi-calendar"></i> Release Date
+                                </a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><h6 class="dropdown-header">Order</h6></li>
+                                <li><a class="dropdown-item {% if sort_order == 'asc' %}active{% endif %}" href="{{ url_for('strm_library', category=current_category, sort_by=sort_by, sort_order='asc', query=search_query) }}">
+                                    <i class="bi bi-sort-up"></i> Ascending
+                                </a></li>
+                                <li><a class="dropdown-item {% if sort_order == 'desc' %}active{% endif %}" href="{{ url_for('strm_library', category=current_category, sort_by=sort_by, sort_order='desc', query=search_query) }}">
+                                    <i class="bi bi-sort-down"></i> Descending
+                                </a></li>
+                                <li><a class="dropdown-item {% if sort_order == 'random' %}active{% endif %}" href="{{ url_for('strm_library', category=current_category, sort_by=sort_by, sort_order='random', query=search_query) }}">
+                                    <i class="bi bi-shuffle"></i> Random
+                                </a></li>
+                            </ul>
+                        </div>
+                        
+                        <!-- Search Form -->
+                        <form action="{{ url_for('strm_library_search') }}" method="get" class="me-2">
+                            <div class="input-group">
+                                <input type="text" class="form-control" name="query" placeholder="Search library..." value="{{ search_query or '' }}">
+                                {% if current_category %}
+                                <input type="hidden" name="category" value="{{ current_category }}">
+                                {% endif %}
+                                {% if sort_by %}
+                                <input type="hidden" name="sort_by" value="{{ sort_by }}">
+                                {% endif %}
+                                {% if sort_order %}
+                                <input type="hidden" name="sort_order" value="{{ sort_order }}">
+                                {% endif %}
+                                <button class="btn btn-outline-primary" type="submit">
+                                    <i class="bi bi-search"></i>
+                                </button>
+                            </div>
+                        </form>
+                        
+                        <!-- Manage Dropdown -->
+                        <div class="dropdown">
+                            <button class="btn btn-outline-secondary dropdown-toggle" type="button" id="managementDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                                <i class="bi bi-gear"></i> Manage
+                            </button>
+                            <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="managementDropdown">
+                                <li>
+                                    <a href="{{ url_for('video_id_extractor') }}" class="dropdown-item">
+                                        <i class="bi bi-tag"></i> Video ID Extractor
+                                    </a>
+                                </li>
+                                <li>
+                                    <a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#addStrmModal">
+                                        <i class="bi bi-link"></i> Add by URL
+                                    </a>
+                                </li>
+                                <li>
+                                    <a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#importStrmFileModal">
+                                        <i class="bi bi-file-earmark-plus"></i> Import STRM File
+                                    </a>
+                                </li>
+                                {% if current_category %}
+                                <li>
+                                    <form action="{{ url_for('scan_strm_category', category=current_category) }}" method="post" class="d-inline">
+                                        <button type="submit" class="dropdown-item">
+                                            <i class="bi bi-search"></i> Scan "{{ current_category }}" folder
+                                        </button>
+                                    </form>
+                                </li>
+                                {% else %}
+                                <li>
+                                    <form action="{{ url_for('scan_strm_directory') }}" method="post" class="d-inline">
+                                        <button type="submit" class="dropdown-item">
+                                            <i class="bi bi-search"></i> Scan all folders
+                                        </button>
+                                    </form>
+                                </li>
+                                {% endif %}
+                                <li>
+                                    <a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#scanDirectoryModal">
+                                        <i class="bi bi-folder-plus"></i> Scan Directory
+                                    </a>
+                                </li>
+                                <li>
+                                    <form action="{{ url_for('sync_strm_movie_info') }}" method="post" class="d-inline">
+                                        <button type="submit" class="dropdown-item">
+                                            <i class="bi bi-arrow-repeat"></i> Sync Movie Info
+                                        </button>
+                                    </form>
+                                </li>
+                                <li>
+                                    <a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#syncMovieInfoModal">
+                                        <i class="bi bi-film"></i> 获取电影详情
+                                    </a>
+                                </li>
+                                <li><hr class="dropdown-divider"></li>
+                                {% if current_category %}
+                                <li>
+                                    <button type="button" class="dropdown-item text-danger" data-bs-toggle="modal" data-bs-target="#deleteCategoryModal">
+                                        <i class="bi bi-trash"></i> Delete all "{{ current_category }}" records
+                                    </button>
+                                </li>
+                                {% endif %}
+                                <li>
+                                    <button type="button" class="dropdown-item text-danger" data-bs-toggle="modal" data-bs-target="#deleteAllModal">
+                                        <i class="bi bi-trash"></i> Delete all records
+                                    </button>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- STRM Files Grid -->
+            {% if strm_files %}
+            
+            <!-- Search Results Header -->
+            {% if search_query %}
+            <div class="alert alert-info mb-4">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <strong>Search Results:</strong> Found {{ strm_files|length }} item{% if strm_files|length != 1 %}s{% endif %} for "{{ search_query }}"
+                        {% if current_category %}
+                        in category "{{ current_category|capitalize }}"
+                        {% endif %}
+                    </div>
+                    <a href="{{ url_for('strm_library', category=current_category, sort_by=sort_by, sort_order=sort_order) }}" class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-x-circle"></i> Clear Search
+                    </a>
+                </div>
+            </div>
+            {% endif %}
+            
+            <div class="movie-grid">
+                {% for file in strm_files %}
+                <div class="strm-card">
+                    <a href="{% if file.video_id %}{{ url_for('movie_detail', movie_id=file.video_id) }}{% else %}{{ url_for('strm_player', file_id=file.id) }}{% endif %}" class="text-decoration-none text-dark">
+                        {% if file.video_id %}
+                        <img src="{{ url_for('serve_image', filename='covers/' + file.video_id + '.jpg') }}" class="strm-thumbnail" alt="{{ file.title }}">
+                        {% elif file.cover_image %}
+                        <img src="{{ url_for('proxy_image', url=file.cover_image) }}" class="strm-thumbnail" alt="{{ file.title }}">
+                        {% elif file.thumbnail %}
+                        <img src="{{ url_for('proxy_image', url=file.thumbnail) }}" class="strm-thumbnail" alt="{{ file.title }}">
+                        {% else %}
+                        <div class="strm-thumbnail d-flex align-items-center justify-content-center bg-light">
+                            <i class="bi bi-film" style="font-size: 3rem; color: #adb5bd;"></i>
+                        </div>
+                        {% endif %}
+                        <div class="strm-info">
+                            <h5 class="strm-title">{{ file.title }}</h5>
+                            {% if file.actors %}
+                            <div class="strm-actors mb-1">
+                                {% for actor in file.actors|fromjson %}
+                                <span class="badge bg-info me-1">{{ actor.name }}</span>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                            <div class="strm-category">
+                                <span class="badge bg-secondary">{{ file.category|capitalize }}</span>
+                                {% if file.play_count > 0 %}
+                                <span class="badge bg-info">Played {{ file.play_count }} times</span>
+                                {% endif %}
+                                {% if file.date %}
+                                <span class="badge bg-primary">{{ file.date }}</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </a>
+                    <a href="{{ url_for('strm_player', file_id=file.id) }}" class="play-icon" title="Play now">
+                        <i class="bi bi-play-fill"></i>
+                    </a>
+                    
+                    <!-- Edit ID button -->
+                    <button type="button" class="edit-id-btn" title="Edit Video ID" 
+                            data-bs-toggle="modal" data-bs-target="#editVideoIdModal" 
+                            data-file-id="{{ file.id }}" 
+                            data-current-id="{{ file.video_id or '' }}">
+                        ID
+                    </button>
+
+                    <!-- Delete button -->
+                    <button type="button" class="delete-btn" title="Delete this file"
+                            data-bs-toggle="modal" data-bs-target="#deleteFileModal"
+                            data-file-id="{{ file.id }}"
+                            data-file-title="{{ file.title }}">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                    
+                    <!-- Tooltip with detailed information -->
+                    <div class="strm-tooltip">
+                        <h6>{{ file.title }}</h6>
+                        {% if file.date %}
+                        <p><small>Release Date: {{ file.date }}</small></p>
+                        {% endif %}
+                        {% if file.description %}
+                        <p>{{ file.description }}</p>
+                        {% endif %}
+                        {% if file.video_id %}
+                        <p><small>ID: {{ file.video_id }}</small></p>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            
+            <!-- Pagination -->
+            {% if pagination and pagination.pages|length > 1 %}
+            <nav aria-label="Page navigation" class="mt-4">
+                <ul class="pagination justify-content-center">
+                    <!-- First Page -->
+                    {% if pagination.current_page > 1 %}
+                    <li class="page-item">
+                        <a class="page-link" href="{{ url_for('strm_library_search' if search_query else 'strm_library', category=current_category, page=1, query=search_query, sort_by=sort_by, sort_order=sort_order) }}" aria-label="First Page">
+                            <i class="bi bi-chevron-double-left"></i>
+                        </a>
+                    </li>
+                    {% else %}
+                    <li class="page-item disabled">
+                        <span class="page-link">
+                            <i class="bi bi-chevron-double-left"></i>
+                        </span>
+                    </li>
+                    {% endif %}
+                
+                    <!-- Previous -->
+                    {% if pagination.current_page > 1 %}
+                    <li class="page-item">
+                        <a class="page-link" href="{{ url_for('strm_library_search' if search_query else 'strm_library', category=current_category, page=pagination.current_page-1, query=search_query, sort_by=sort_by, sort_order=sort_order) }}">Previous</a>
+                    </li>
+                    {% else %}
+                    <li class="page-item disabled">
+                        <span class="page-link">Previous</span>
+                    </li>
+                    {% endif %}
+                    
+                    <!-- Page Numbers -->
+                    {% for page in pagination.pages %}
+                    <li class="page-item {% if page == pagination.current_page %}active{% endif %}">
+                        <a class="page-link" href="{{ url_for('strm_library_search' if search_query else 'strm_library', category=current_category, page=page, query=search_query, sort_by=sort_by, sort_order=sort_order) }}">{{ page }}</a>
+                    </li>
+                    {% endfor %}
+                    
+                    <!-- Next -->
+                    {% if pagination.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="{{ url_for('strm_library_search' if search_query else 'strm_library', category=current_category, page=pagination.next_page, query=search_query, sort_by=sort_by, sort_order=sort_order) }}">Next</a>
+                    </li>
+                    {% else %}
+                    <li class="page-item disabled">
+                        <span class="page-link">Next</span>
+                    </li>
+                    {% endif %}
+                    
+                    <!-- Last Page -->
+                    {% if pagination.current_page < pagination.total_pages %}
+                    <li class="page-item">
+                        <a class="page-link" href="{{ url_for('strm_library_search' if search_query else 'strm_library', category=current_category, page=pagination.total_pages, query=search_query, sort_by=sort_by, sort_order=sort_order) }}" aria-label="Last Page">
+                            <i class="bi bi-chevron-double-right"></i>
+                        </a>
+                    </li>
+                    {% else %}
+                    <li class="page-item disabled">
+                        <span class="page-link">
+                            <i class="bi bi-chevron-double-right"></i>
+                        </span>
+                    </li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+            
+            {% else %}
+            <div class="no-strm-files">
+                <i class="bi bi-film" style="font-size: 4rem; color: #6c757d;"></i>
+                <h3 class="mt-3">No STRM Files Found</h3>
+                <p class="text-muted">Add your first STRM file using the button below.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Add Button -->
+<!--
+<div class="add-btn-container">
+    <div class="btn-group dropup">
+        <a href="#" class="add-btn" data-bs-toggle="dropdown" aria-expanded="false">
+            <i class="bi bi-plus"></i>
+        </a>
+        <ul class="dropdown-menu dropdown-menu-end">
+            <li><a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#addStrmModal">
+                <i class="bi bi-link"></i> Add by URL
+            </a></li>
+            <li><a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#importStrmFileModal">
+                <i class="bi bi-file-earmark-plus"></i> Import STRM File
+            </a></li>
+            <li><a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#scanDirectoryModal">
+                <i class="bi bi-folder-plus"></i> Scan Directory
+            </a></li>
+        </ul>
+    </div>
+</div>
+-->
+
+<!-- Add STRM Modal -->
+<div class="modal fade" id="addStrmModal" tabindex="-1" aria-labelledby="addStrmModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="addStrmModalLabel">Add STRM File</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="addStrmForm" action="{{ url_for('add_strm_file') }}" method="post">
+                    <div class="mb-3">
+                        <label for="strmUrl" class="form-label">Stream URL</label>
+                        <input type="url" class="form-control" id="strmUrl" name="url" required placeholder="https://example.com/stream.m3u8">
+                    </div>
+                    <div class="mb-3">
+                        <label for="strmTitle" class="form-label">Title</label>
+                        <input type="text" class="form-control" id="strmTitle" name="title" placeholder="Optional (will be extracted from URL if empty)">
+                    </div>
+                    <div class="mb-3">
+                        <label for="strmCategory" class="form-label">Category</label>
+                        <select class="form-select" id="strmCategory" name="category">
+                            <option value="movies">Movies</option>
+                            <option value="tv">TV Shows</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="strmThumbnail" class="form-label">Thumbnail URL (Optional)</label>
+                        <input type="url" class="form-control" id="strmThumbnail" name="thumbnail" placeholder="https://example.com/thumbnail.jpg">
+                    </div>
+                    <div class="mb-3">
+                        <label for="strmDescription" class="form-label">Description (Optional)</label>
+                        <textarea class="form-control" id="strmDescription" name="description" rows="3"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" form="addStrmForm" class="btn btn-primary">Add STRM</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Scan Directory Modal -->
+<div class="modal fade" id="scanDirectoryModal" tabindex="-1" aria-labelledby="scanDirectoryModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="scanDirectoryModalLabel">Scan Directory</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Scanning will search for all .strm files in the library directory and add them to the database.</p>
+                <form id="scanDirectoryForm" action="{{ url_for('scan_strm_directory') }}" method="post">
+                    <div class="mb-3">
+                        <label for="scanPath" class="form-label">Directory Path (Optional)</label>
+                        <input type="text" class="form-control" id="scanPath" name="directory" placeholder="Leave empty to scan default library directory">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" form="scanDirectoryForm" class="btn btn-primary">Start Scan</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Category Modal -->
+{% if current_category %}
+<div class="modal fade" id="deleteCategoryModal" tabindex="-1" aria-labelledby="deleteCategoryModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="deleteCategoryModalLabel">Delete All "{{ current_category|capitalize }}" Records</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-danger">
+                    <i class="bi bi-exclamation-triangle-fill"></i> Warning
+                </div>
+                <p>Are you sure you want to delete all STRM records in the "{{ current_category|capitalize }}" category?</p>
+                <p class="text-danger"><strong>This will remove all database entries and the actual .strm files in this category.</strong></p>
+                <p>This action cannot be undone.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form action="{{ url_for('delete_strm_category', category=current_category) }}" method="post">
+                    <button type="submit" class="btn btn-danger">Delete All {{ current_category|capitalize }} Records</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Delete All Modal -->
+<div class="modal fade" id="deleteAllModal" tabindex="-1" aria-labelledby="deleteAllModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="deleteAllModalLabel">Delete All STRM Records</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-danger">
+                    <i class="bi bi-exclamation-triangle-fill"></i> Warning
+                </div>
+                <p>Are you sure you want to delete <strong>ALL</strong> STRM records from all categories?</p>
+                <p class="text-danger"><strong>This will remove all database entries and the actual .strm files from the entire library.</strong></p>
+                <p>This action cannot be undone.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form action="{{ url_for('delete_all_strm_files') }}" method="post">
+                    <button type="submit" class="btn btn-danger">Delete All Records</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Import STRM File Modal -->
+<div class="modal fade" id="importStrmFileModal" tabindex="-1" aria-labelledby="importStrmFileModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="importStrmFileModalLabel">Import STRM File</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="importStrmForm" action="{{ url_for('import_strm_file') }}" method="post" enctype="multipart/form-data">
+                    <div class="mb-3">
+                        <label for="strmFile" class="form-label">STRM File</label>
+                        <input type="file" class="form-control" id="strmFile" name="strm_file" accept=".strm" required>
+                        <small class="text-muted">Select a .strm file to import</small>
+                    </div>
+                    <div class="mb-3">
+                        <label for="importTitle" class="form-label">Title (Optional)</label>
+                        <input type="text" class="form-control" id="importTitle" name="title" placeholder="Leave empty to use filename">
+                    </div>
+                    <div class="mb-3">
+                        <label for="importCategory" class="form-label">Category</label>
+                        <select class="form-select" id="importCategory" name="category">
+                            <option value="movies">Movies</option>
+                            <option value="tv">TV Shows</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" form="importStrmForm" class="btn btn-primary">Import</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Video ID Modal -->
+<div class="modal fade" id="editVideoIdModal" tabindex="-1" aria-labelledby="editVideoIdModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="editVideoIdModalLabel">Edit Video ID</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="editVideoIdForm" action="{{ url_for('update_strm_video_id') }}" method="post">
+                    <input type="hidden" id="fileIdInput" name="file_id" value="">
+                    <div class="mb-3">
+                        <label for="videoIdInput" class="form-label">Video ID</label>
+                        <input type="text" class="form-control" id="videoIdInput" name="video_id" placeholder="Enter video ID (e.g., ABC-123)">
+                        <small class="text-muted">Enter the correct video ID to fetch metadata from API</small>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" form="editVideoIdForm" class="btn btn-primary">Update</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Delete File Modal -->
+<div class="modal fade" id="deleteFileModal" tabindex="-1" aria-labelledby="deleteFileModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="deleteFileModalLabel">Delete STRM File</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-danger">
+                    <i class="bi bi-exclamation-triangle-fill"></i> Warning
+                </div>
+                <p>这将删除本影片及相关信息！</p>
+                <p class="text-danger"><strong>This will remove the database entry and the actual .strm file: <span id="deleteFileName"></span></strong></p>
+                <p>This action cannot be undone.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form id="deleteFileForm" action="{{ url_for('delete_strm_file', file_id=0) }}" method="post">
+                    <button type="submit" class="btn btn-danger">Delete</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 在底部添加获取电影详情的模态框 -->
+<div class="modal fade" id="syncMovieInfoModal" tabindex="-1" aria-labelledby="syncMovieInfoModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="syncMovieInfoModalLabel">获取电影详情</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-warning">
+                    <i class="bi bi-exclamation-triangle"></i> <strong>提示：</strong>
+                    该功能会从API获取完整的影片详情（包括标题、演员、封面和摘要等），并更新数据库中的电影信息。此过程可能会耗费较长时间，尤其是当影片库中影片较多时。
+                </div>
+                
+                <p>请选择要获取详情的范围：</p>
+                
+                <div class="d-grid gap-2 mt-3">
+                    {% if current_category %}
+                    <button type="button" class="btn btn-primary" id="syncCategoryMovieInfoBtn">
+                        <i class="bi bi-film"></i> 获取「{{ current_category }}」分类影片详情
+                    </button>
+                    {% endif %}
+                    
+                    <button type="button" class="btn btn-primary" id="syncAllMovieInfoBtn">
+                        <i class="bi bi-collection-play"></i> 获取所有分类影片详情
+                    </button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Handle video ID edit modal
+    document.addEventListener('DOMContentLoaded', function() {
+        const editVideoIdModal = document.getElementById('editVideoIdModal');
+        if (editVideoIdModal) {
+            editVideoIdModal.addEventListener('show.bs.modal', function(event) {
+                const button = event.relatedTarget;
+                const fileId = button.getAttribute('data-file-id');
+                const currentId = button.getAttribute('data-current-id');
+                
+                const fileIdInput = document.getElementById('fileIdInput');
+                const videoIdInput = document.getElementById('videoIdInput');
+                
+                fileIdInput.value = fileId;
+                videoIdInput.value = currentId;
+            });
+        }
+        
+        // Handle delete file modal
+        const deleteFileModal = document.getElementById('deleteFileModal');
+        if (deleteFileModal) {
+            deleteFileModal.addEventListener('show.bs.modal', function(event) {
+                const button = event.relatedTarget;
+                const fileId = button.getAttribute('data-file-id');
+                const fileTitle = button.getAttribute('data-file-title');
+                
+                const deleteFileForm = document.getElementById('deleteFileForm');
+                const deleteFileName = document.getElementById('deleteFileName');
+                
+                // Update form action with the correct file ID
+                deleteFileForm.action = "{{ url_for('delete_strm_file', file_id=0) }}".replace('0', fileId);
+                
+                // Show file title in the confirmation message
+                if (deleteFileName) {
+                    deleteFileName.textContent = fileTitle;
+                }
+            });
+        }
+    });
+    
+    // 同步特定分类影片详情
+    document.getElementById('syncCategoryMovieInfoBtn')?.addEventListener('click', function() {
+        if (confirm('确定要获取「{{ current_category }}」分类下所有影片的详细信息吗？此操作可能需要较长时间。')) {
+            // 显示加载中提示
+            this.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 处理中...';
+            this.disabled = true;
+            
+            // 发送请求
+            fetch('/api/strm/sync_category_movie_info', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    category: '{{ current_category }}'
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    alert(data.message);
+                    // 刷新页面
+                    window.location.reload();
+                } else {
+                    alert('错误: ' + data.message);
+                    this.innerHTML = '<i class="bi bi-film"></i> 获取「{{ current_category }}」分类影片详情';
+                    this.disabled = false;
+                }
+            })
+            .catch(error => {
+                alert('错误: ' + error.message);
+                this.innerHTML = '<i class="bi bi-film"></i> 获取「{{ current_category }}」分类影片详情';
+                this.disabled = false;
+            });
+        }
+    });
+    
+    // 同步所有影片详情
+    document.getElementById('syncAllMovieInfoBtn')?.addEventListener('click', function() {
+        if (confirm('确定要获取所有分类下的影片详细信息吗？此操作可能需要较长时间。')) {
+            // 显示加载中提示
+            this.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 处理中...';
+            this.disabled = true;
+            
+            // 发送请求
+            fetch('/api/strm/sync_all_movie_info', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    alert(data.message);
+                    // 刷新页面
+                    window.location.reload();
+                } else {
+                    alert('错误: ' + data.message);
+                    this.innerHTML = '<i class="bi bi-collection-play"></i> 获取所有分类影片详情';
+                    this.disabled = false;
+                }
+            })
+            .catch(error => {
+                alert('错误: ' + error.message);
+                this.innerHTML = '<i class="bi bi-collection-play"></i> 获取所有分类影片详情';
+                this.disabled = false;
+            });
+        }
+    });
+</script>
+{% endblock %} 

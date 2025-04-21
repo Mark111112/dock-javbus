@@ -1,175 +1,133 @@
-# JavBus Web - Docker Edition
 
-This is the Docker version of the JavBus application, enabling access to JavBus features via web browsers. The original application is no longer updated.  
-**You still need a https://github.com/ovnrain/javbus-api to obtain the API URL.** Credits to the original author.
 
-## Features
+# BUS影片管理系统
 
-1. Search movies by video code or actor name or any keywords
-2. Display latest movie list when no input is provided
-3. View movie details including cover/preview images, studio, categories, actors, and perform nested searches
-4. Display and copy magnet links
-5. Show movie descriptions (some entries require custom FANZA mapping)
-6. Translate titles and descriptions using online APIs or (requires API token)
-7. Online viewing on 2 ways
+## 项目简介
 
-## Quick Start
+这是一个基于Python Flask开发的JAV影片管理系统，提供了视频元数据管理、在线播放、115网盘集成、STRM文件库等功能。
 
-### Prerequisites
+## 主要功能
 
-- Install [Docker](https://docs.docker.com/get-docker/)
-- Install [Docker Compose](https://docs.docker.com/compose/install/)
-- Obtain a working javbus-api URL
+### 1. 影片管理
 
-### Docker Compose Deployment
+- 影片搜索与浏览
+- 演员信息管理
+- 收藏夹功能
+- 影片详情展示(包含标题、演员、发行日期、封面图等)
+- 影片简介自动翻译(支持多种翻译API)
 
-1. Clone/download this repository
+### 2. 视频播放
 
-2. Navigate to project directory
+- 支持在线HLS流播放
+- 115网盘视频在线播放
+- 自动代理解决跨域问题
+- 多清晰度切换
 
-3. Create `.env` file and set API_URL (optional)
+### 3. 115网盘集成
 
-4. Start application with Docker Compose
+- 云盘文件浏览与管理
+- 视频文件识别与关联
+- 扫码登录功能
+- 支持在线播放云盘视频
+
+### 4. STRM文件库
+
+- STRM文件生成与管理
+- 目录自动扫描
+- 分类管理
+- 支持按添加时间、标题等多种方式排序
+- 支持搜索功能
+
+### 5. 其他功能
+
+- 磁力链接管理
+- 图片缓存和代理
+- 支持有码/无码影片
+- 完善的配置管理
+- 日志记录系统
+
+## 技术特点
+
+- 基于Flask框架开发
+- 使用SQLite数据库存储数据
+- 支持多种API接口(JavBus、DMM等)
+- 支持多种翻译API(OpenAI、Ollama等)
+- 实现了完整的缓存机制
+- 支持Docker部署
+
+## 系统要求
+
+- Python 3.6+
+- 必要的Python包(requirements.txt)
+- SQLite3
+- 足够的磁盘空间(用于缓存图片和元数据)
+
+## 目录结构
+
+```
+.
+├── 115/            # 115云盘相关API文档
+├── buspic/         # 图片缓存目录
+├── config/         # 配置文件目录
+├── data/           # 数据文件目录
+├── logs/           # 日志目录
+├── modules/        # 模块目录
+├── static/         # 静态文件
+├── templates/      # 模板文件
+├── webserver.py    # 主程序
+└── requirements.txt # 依赖包列表
+```
+
+## 配置说明
+
+系统配置存储在`config/config.json`文件中，主要配置项包括：
+
+```json
+{
+  "api_url": "API服务器地址",
+  "watch_url_prefix": "视频播放前缀",
+  "base_url": "数据源基础URL",
+  "fanza_mappings": "番号映射配置",
+  "translation": {
+    "api_url": "翻译API地址",
+    "source_lang": "源语言",
+    "target_lang": "目标语言",
+    "api_token": "API密钥",
+    "model": "翻译模型"
+  }
+}
+```
+
+## 使用方法
+
+1. 安装依赖：
    
    ```bash
-   # Clone repository
-   git clone <repo-url>
-   cd dock-javbus
-   # Build and start
+   pip install -r requirements.txt
+   ```
+
+2. 配置系统：
+   编辑`config/config.json`文件，设置必要的API地址和密钥
+
+3. 启动服务：
+   
+   ```bash
+   python webserver.py
+   ```
+
+4. 使用Docker部署：
+   
+   ```bash
    docker-compose up -d
    ```
 
-### For manual deployment:
-
-```bash
-# Build image
-docker build -t dock-javbus
-
-# Run container
-docker run -d -p 9080:8080 -v /docker/dock-javbus/buspic /app/buspic -v /docker/dock-2_javbus/config /app/config -v /docker/dock-javbus/data /app/data --name dock-javbus furey79:dock-2_javbus
-```
-
-## Access the Application
-
-Visit http://localhost:9080 after startup.
-First-time setup:
-Configure API URL in the configuration and click "Save" to apply.
-
-## Data Persistence
-
-Default SQLite storage is preserved through volume mounts:
-
-```bash
-docker run -d -p 9080:8080 \
-  -v ./data:/app/data \
-  -v ./buspic:/app/buspic \
-  -v ./config:/app/config \
-  -v ./logs:/app/logs \
-  --name dock-javbus furey79:dock-2_javbus
-```
-
-## Custom Configuration
-
-Modify config.json via web interface or directly:
-
-```json
-{
-  "api_url": "your_api_url",
-  "watch_url_prefix": "https://missav.ai"
-}
-```
-
-### Notes
-
-- Requires valid JavBus API URL to function
-
-- All images/data are cached locally for performance
-
-- Contains adult content - strictly for legal adult use. Please comply with your local laws and regulations.
-
-# JavBus Web - Docker版
-
-这是JavBus应用程序的Docker版本，允许通过Web浏览器访问JavBus的功能。原应用程序不再更新。
-你还是需要一个https://github.com/ovnrain/javbus-api 来获得API URL。感谢作者。
-
-## 功能特性
-
-1. 输入番号或演员名称或其他任何信息进行查询，输出电影列表
-2. 不输入任何信息查询时，输出首页的电影列表
-3. 点击影片进入影片详情页面，展示封面图、预览图、厂牌、类别、演员等信息，点击相关信息进一步搜索
-4. 显示和复制磁力链接
-5. 获取影片简介（部分影片需要自定义fanza对应）
-6. 对影片标题和简介进行翻译（调用在线API或本地模型，需要输入API token）
-7. 2种方式在线观影
-
-## 快速开始
-
-### 前提条件
-
-- 安装 [Docker](https://docs.docker.com/get-docker/)
-- 安装 [Docker Compose](https://docs.docker.com/compose/install/)
-- 取得一个javbus-api url
-
-### 使用Docker Compose部署
-
-1. 克隆或下载本仓库到本地
-2. 进入项目目录
-3. 创建`.env`文件并设置API_URL环境变量（可选）
-4. 使用Docker Compose启动应用
-
-```bash
-# 克隆仓库
-git clone <仓库地址>
-cd dock-javbus
-
-# 使用Docker Compose构建和启动
-docker-compose up -d
-```
-
-### 手动构建和运行Docker镜像
-
-如果你不想使用Docker Compose，也可以手动构建和运行：
-
-```bash
-# 构建Docker镜像
-docker build -t dock-javbus
-
-# 运行容器
-docker run -d -p 9080:8080 -v /docker/dock-javbus/buspic /app/buspic -v /docker/dock-javbus/config /app/config -v /docker/dock-javbus/data /app/data --name dock-javbus furey79:dock-2_javbus
-```
-
-## 访问应用
-
-应用启动后，通过浏览器访问 http://localhost:9080 即可使用。
-
-首次使用时，你需要在设置中设置API地址，然后点击"保存设置"按钮以应用。
-
-## 数据持久化
-
-应用默认将数据存储在容器内的SQLite数据库中。如果你想持久化数据，可以挂载一个卷：
-
-```bash
-docker run -d -p 9080:8080 \
-  -v ./data:/app/data \
-  -v ./buspic:/app/buspic \
-  -v ./config:/app/config \
-  -v ./logs:/app/logs \
-  --name dock-javbus furey79:dock-2_javbus
-```
-
-## 自定义配置
-
-你可以通过网页配置按钮修改`config.json`文件来自定义应用配置，包括dmm (fanza)映射以及翻译设置等：
-
-```json
-{
-  "api_url": "你的API地址",
-  "watch_url_prefix": "https://missav.ai"
-}
-```
-
 ## 注意事项
 
-- 此应用需要一个有效的JavBus API地址才能正常工作
-- 所有图片和数据都会缓存在本地，以提高性能
-- 所有敏感内容仅供成年人使用，请遵守当地法律法规 
+- 请确保有足够的磁盘空间用于缓存
+- 建议使用反向代理来保护服务
+- 定期备份数据库文件
+- 注意配置文件中的敏感信息安全
+
+## License
+
+MIT License

@@ -5,6 +5,9 @@
 # 数据文件
 buspic/
 data/
+logs/
+nextbus/
+115/
 
 # Python缓存文件
 __pycache__/

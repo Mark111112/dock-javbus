@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 import os
@@ -6,7 +6,14 @@ import sys
 import json
 import time
 import requests
-from flask import Flask, request, jsonify, render_template, redirect, url_for, send_from_directory, Response, stream_with_context
+import base64
+import hashlib
+import secrets
+
+# Add current directory to Python path to ensure modules can be imported
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from flask import Flask, request, jsonify, render_template, redirect, url_for, send_from_directory, Response, stream_with_context, flash
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from javbus_db import JavbusDatabase
@@ -14,6 +21,9 @@ from translator import get_translator
 import logging
 import traceback
 import movieinfo  # Import the movieinfo module
+from datetime import datetime
+from strm_library import StrmLibrary  # Import the STRM library module
+from cloud115_library import Cloud115Library
 # 导入视频播放器适配器
 try:
     import video_player_adapter
@@ -24,6 +34,7 @@ except ImportError as e:
 
 # 添加URL解析库
 import urllib.parse
+import re
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -72,9 +83,31 @@ logger.addHandler(file_handler)
 app = Flask(__name__, template_folder='templates', static_folder='static')
 CORS(app)  # Enable CORS
 
+# Add secret key for session
+app.secret_key = os.urandom(24)
+
+# Add timestamp to date filter
+@app.template_filter('timestamp_to_date')
+def timestamp_to_date(timestamp):
+    """Convert Unix timestamp to human-readable date"""
+    if not timestamp:
+        return ""
+    return datetime.fromtimestamp(int(timestamp)).strftime('%Y-%m-%d %H:%M')
+
+# Add JSON parsing filter
+@app.template_filter('fromjson')
+def parse_json(json_string):
+    """Parse JSON string to Python object"""
+    try:
+        if json_string:
+            return json.loads(json_string)
+        return []
+    except:
+        return []
+
 # Configuration file path
 CONFIG_FILE = "config/config.json"
-DB_FILE = "data/javbus.db"
+DB_FILE = os.path.abspath("data/javbus.db")  # Use absolute path to avoid confusion
 
 # Directory setup
 os.makedirs("data", exist_ok=True)
@@ -83,6 +116,7 @@ os.makedirs("buspic/actor", exist_ok=True)
 
 # Initialize database
 db = JavbusDatabase(db_file=DB_FILE)
+logging.info(f"Using database file: {DB_FILE}")
 
 # Initialize translator
 translator = get_translator()
@@ -96,6 +130,7 @@ def load_config():
     config = {
         "api_url": "http://192.168.1.246:8922/api",
         "watch_url_prefix": "https://missav.ai",
+        "base_url": "https://www.javbus.com",
         "fanza_mappings": {
             "abf": "118abf",
             "abp": "118abp",
@@ -209,6 +244,7 @@ else:
         logging.error(f"Failed to update configuration file: {str(e)}")
 
 CURRENT_WATCH_URL_PREFIX = CURRENT_CONFIG.get("watch_url_prefix", "https://missav.ai")
+CURRENT_BASE_URL = CURRENT_CONFIG.get("base_url", "https://www.javbus.com")
 
 # Favorites management
 FAVORITES_FILE = "data/favorites.json"
@@ -349,6 +385,19 @@ def search_keyword():
             # 格式化电影列表数据
             formatted_movies = []
             for movie in movies_list:
+                # 保存电影的基本信息到数据库，以便影片详情页使用
+                # basic_movie_info = {
+                #    "id": movie.get("id", ""),
+                #    "title": movie.get("title", ""),
+                #    "img": movie.get("img", ""),
+                #    "date": movie.get("date", ""),
+                #    # 对于无码影片，添加标志
+                #    "is_uncensored": bool(movie_type == "uncensored" or re.search(r'_\d+$', movie.get("id", "")))
+                # }
+                
+                # 保存基本信息到数据库
+                # db.save_movie(basic_movie_info)
+                
                 formatted_movies.append({
                     "id": movie.get("id", ""),
                     "title": movie.get("title", ""),
@@ -372,7 +421,8 @@ def search_keyword():
                                   keyword_query=keyword,
                                   pagination=page_info,
                                   filter_type=filter_type,
-                                  filter_value=filter_value)
+                                  filter_value=filter_value,
+                                  movie_type=movie_type)
         else:
             logging.error(f"搜索失败: HTTP {response.status_code}")
             return render_template('search.html', 
@@ -480,9 +530,43 @@ def actor_detail(actor_id):
 @app.route('/movie/<movie_id>')
 def movie_detail(movie_id):
     """Show movie detail page"""
+    # Check if it looks like an uncensored movie ID
+    is_likely_uncensored = bool(re.search(r'_\d+$', movie_id))
+    
+    # Fetch movie data - our updated get_movie_data function will handle uncensored movies
     movie_data = get_movie_data(movie_id)
+    
     if movie_data:
         formatted_movie = format_movie_data(movie_data)
+        
+        # Check if it's still missing important information like magnets
+        if not movie_data.get("magnets") and (movie_data.get("is_uncensored", False) or is_likely_uncensored):
+            # For uncensored movies, we'll need to fetch magnets separately with type=uncensored
+            try:
+                logging.info(f"Fetching magnets for uncensored movie {movie_id}")
+                magnet_url = f"{CURRENT_API_URL}/magnets/{movie_id}"
+                params = {"type": "uncensored"}
+                
+                # Extract gid and uc if available
+                gid = movie_data.get("gid", "")
+                uc = movie_data.get("uc", "0")
+                if gid:
+                    params["gid"] = gid
+                if uc:
+                    params["uc"] = uc
+                
+                response = requests.get(magnet_url, params=params)
+                if response.status_code == 200:
+                    magnets = response.json()
+                    # Update movie data with magnets
+                    movie_data["magnets"] = magnets
+                    db.save_movie(movie_data)
+                    
+                    # Re-format movie data to include magnets
+                    formatted_movie = format_movie_data(movie_data)
+                    logging.info(f"Successfully fetched magnets for {movie_id}")
+            except Exception as e:
+                logging.error(f"Failed to fetch magnets for uncensored movie: {str(e)}")
         
         # Check if movie is in favorites
         favorites = load_favorites()
@@ -491,49 +575,173 @@ def movie_detail(movie_id):
         # Note: We'll fetch summary asynchronously if it's missing
         has_summary = bool(formatted_movie.get("summary") or movie_data.get("description"))
         
-        # Get magnet links for this movie
+        # Get magnet links for this movie if they're not already fetched
+        if not formatted_movie.get("magnet_links"):
+            try:
+                # Extract gid and uc from movie data if available
+                gid = movie_data.get("gid", "")
+                uc = movie_data.get("uc", "0")
+                
+                # Call the API to get magnet links
+                magnet_url = f"{CURRENT_API_URL}/magnets/{movie_id}"
+                params = {}
+                
+                # For uncensored movies, we need to include the type parameter
+                if formatted_movie.get("is_uncensored", False) or is_likely_uncensored:
+                    params["type"] = "uncensored"
+                
+                if gid:
+                    params["gid"] = gid
+                if uc:
+                    params["uc"] = uc
+                
+                logging.info(f"Fetching magnets for {movie_id} with params: {params}")
+                response = requests.get(magnet_url, params=params)
+                if response.status_code == 200:
+                    magnets = response.json()
+                    # Format and sort magnets (HD first, then by size)
+                    formatted_magnets = []
+                    for magnet in magnets:
+                        formatted_magnets.append({
+                            "name": magnet.get("title", ""),
+                            "size": magnet.get("size", ""),
+                            "link": magnet.get("link", ""),
+                            "date": magnet.get("date", ""),
+                            "is_hd": magnet.get("isHD", False),
+                            "has_subtitle": magnet.get("hasSubtitle", False)
+                        })
+                    
+                    # Sort magnets: HD first, then with subtitles, then by size
+                    formatted_magnets.sort(key=lambda x: (
+                        not x["is_hd"],  # HD first
+                        not x["has_subtitle"],  # Subtitles second
+                        -float(x["size"].replace("GB", "").replace("MB", "").strip()) if x["size"] else 0  # Size third (descending)
+                    ))
+                    
+                    formatted_movie["magnet_links"] = formatted_magnets
+                    
+                    # Save magnets in the original data for future use
+                    movie_data["magnets"] = magnets
+                    db.save_movie(movie_data)
+            except Exception as e:
+                logging.error(f"Failed to get magnet links: {str(e)}")
+        
+        # Update STRM library metadata if exists for this movie ID
         try:
-            # Extract gid and uc from movie data if available
-            gid = movie_data.get("gid", "")
-            uc = movie_data.get("uc", "0")
+            # 确保数据库中存在必要的列
+            db.add_video_id_column_if_not_exists()
+            db.add_cover_and_actors_columns_if_not_exists()
+            db.add_date_column_if_not_exists()
             
-            # Call the API to get magnet links
-            magnet_url = f"{CURRENT_API_URL}/magnets/{movie_id}"
-            params = {}
-            if gid:
-                params["gid"] = gid
-            if uc:
-                params["uc"] = uc
+            # 查找所有带有此video_id的STRM文件
+            strm_files = db.get_strm_files()
+            matched_files = []
             
-            response = requests.get(magnet_url, params=params)
-            if response.status_code == 200:
-                magnets = response.json()
-                # Format and sort magnets (HD first, then by size)
-                formatted_magnets = []
-                for magnet in magnets:
-                    formatted_magnets.append({
-                        "name": magnet.get("title", ""),
-                        "size": magnet.get("size", ""),
-                        "link": magnet.get("link", ""),
-                        "date": magnet.get("shareDate", ""),
-                        "is_hd": magnet.get("isHD", False),
-                        "has_subtitle": magnet.get("hasSubtitle", False)
+            for file in strm_files:
+                if file.get('video_id') == movie_id:
+                    matched_files.append(file)
+            
+            if matched_files:
+                logging.info(f"为 {movie_id} 找到了 {len(matched_files)} 个STRM文件记录，更新它们的元数据")
+                
+                # 准备演员数据 (JSON格式)
+                actors_data = []
+                for actor in formatted_movie.get("actors", []):
+                    actors_data.append({
+                        "id": actor.get("id", ""),
+                        "name": actor.get("name", ""),
+                        "image_url": actor.get("image_url", "")
                     })
                 
-                # Sort magnets: HD first, then with subtitles, then by size
-                formatted_magnets.sort(key=lambda x: (
-                    not x["is_hd"],  # HD first
-                    not x["has_subtitle"],  # Subtitles second
-                    -float(x["size"].replace("GB", "").replace("MB", "").strip()) if x["size"] else 0  # Size third (descending)
-                ))
+                # 将演员数据序列化为JSON字符串
+                actors_json = json.dumps(actors_data)
                 
-                formatted_movie["magnet_links"] = formatted_magnets
+                # 获取封面图片URL
+                cover_image = formatted_movie.get("image_url", "")
+                
+                # 获取电影标题和发布日期
+                movie_title = formatted_movie.get("title", "")
+                movie_date = formatted_movie.get("date", "")
+                
+                # 更新每个匹配的文件
+                for file in matched_files:
+                    # 更新元数据
+                    db.update_strm_metadata(
+                        file_id=file.get('id'),
+                        video_id=movie_id,
+                        cover_image=cover_image,
+                        actors=actors_json
+                    )
+                    
+                    # 更新标题和日期
+                    db.update_strm_movie_info(
+                        file_id=file.get('id'),
+                        title=movie_title,
+                        date=movie_date
+                    )
+                
+                logging.info(f"成功更新STRM文件的元数据，影片ID: {movie_id}")
+                
+            # 同样更新115云盘文件库
+            try:
+                # 查找所有带有此video_id的cloud115文件
+                cloud115_files = db.get_cloud115_files()
+                cloud115_matched_files = []
+                
+                for file in cloud115_files:
+                    if file.get('video_id') == movie_id:
+                        cloud115_matched_files.append(file)
+                
+                if cloud115_matched_files:
+                    logging.info(f"为 {movie_id} 找到了 {len(cloud115_matched_files)} 个115云盘文件记录，更新它们的元数据")
+                    
+                    # 准备演员数据 (JSON格式)
+                    actors_data = []
+                    for actor in formatted_movie.get("actors", []):
+                        actors_data.append({
+                            "id": actor.get("id", ""),
+                            "name": actor.get("name", ""),
+                            "image_url": actor.get("image_url", "")
+                        })
+                    
+                    # 将演员数据序列化为JSON字符串
+                    actors_json = json.dumps(actors_data)
+                    
+                    # 获取封面图片URL
+                    cover_image = formatted_movie.get("image_url", "")
+                    
+                    # 获取电影标题和发布日期
+                    movie_title = formatted_movie.get("title", "")
+                    movie_date = formatted_movie.get("date", "")
+                    
+                    # 更新每个匹配的文件
+                    for file in cloud115_matched_files:
+                        # 更新元数据
+                        db.update_cloud115_metadata(
+                            file_id=file.get('id'),
+                            video_id=movie_id,
+                            cover_image=cover_image,
+                            actors=actors_json
+                        )
+                        
+                        # 更新标题和日期
+                        db.update_cloud115_movie_info(
+                            file_id=file.get('id'),
+                            title=movie_title,
+                            date=movie_date
+                        )
+                    
+                    logging.info(f"成功更新115云盘文件的元数据，影片ID: {movie_id}")
+            except Exception as e:
+                logging.error(f"更新115云盘文件元数据时出错: {str(e)}")
+                logging.error(traceback.format_exc())
+                
         except Exception as e:
-            logging.error(f"Failed to get magnet links: {str(e)}")
+            logging.error(f"更新STRM文件元数据时出错: {str(e)}")
+            logging.error(traceback.format_exc())
         
         return render_template('movie.html', 
                               movie=formatted_movie, 
-                              movie_data=movie_data, 
                               has_summary=has_summary, 
                               movie_id=movie_id,
                               watch_url_prefix=CURRENT_WATCH_URL_PREFIX)
@@ -864,10 +1072,24 @@ def clear_favorites():
 @app.route('/images/<path:filename>')
 def serve_image(filename):
     """Serve images from the buspic directory"""
+    # Define the fallback image path
+    fallback_image = "static/images/no-cover.jpg"
+    
+    # Make sure the fallback image exists
+    if not os.path.exists(fallback_image):
+        try:
+            # Try to import and run the placeholder image generation script
+            import serve_image_fallback
+            serve_image_fallback.create_placeholder_image()
+        except ImportError:
+            # If the script doesn't exist, create a simple directory
+            os.makedirs("static/images", exist_ok=True)
+            logging.warning("Fallback image creation script not available. Created directory only.")
+    
     # Split the path to get the movie ID and actual filename
     parts = filename.split('/')
     if len(parts) < 2:
-        return "Invalid path", 400
+        return send_from_directory(os.path.dirname(fallback_image), os.path.basename(fallback_image))
     
     # Check if this is an actor image from the unified actor directory
     if parts[0] == 'actor':
@@ -895,8 +1117,8 @@ def serve_image(filename):
         if os.path.exists(file_path):
             return send_from_directory(directory, parts[1])
         
-        # Otherwise return a default image
-        return send_from_directory('static/img', 'no_image.jpg')
+        # Otherwise return the fallback image
+        return send_from_directory(os.path.dirname(fallback_image), os.path.basename(fallback_image))
     
     # Check if this is a cover image
     if parts[0] == 'covers':
@@ -914,7 +1136,7 @@ def serve_image(filename):
             try:
                 # 获取图片URL而不是完整的电影数据
                 image_url = get_movie_image_url(movie_id)
-                if image_url:
+                if image_url and not image_url.startswith('/static/'):  # Skip if it's a fallback image
                     success = download_image(image_url, file_path)
                     if not success:
                         # 如果下载失败，尝试获取完整数据以找到样本图
@@ -923,6 +1145,8 @@ def serve_image(filename):
                             samples = movie_data.get("samples", [])
                             if samples and len(samples) > 0:
                                 sample_url = samples[0].get("src", "")
+                                if not sample_url:
+                                    sample_url = samples[0].get("thumbnail", "")
                                 if sample_url:
                                     download_image(sample_url, file_path)
             except Exception as e:
@@ -932,8 +1156,8 @@ def serve_image(filename):
         if os.path.exists(file_path):
             return send_from_directory(directory, parts[1])
         
-        # Otherwise return a default image
-        return send_from_directory('static/img', 'no_image.jpg')
+        # Otherwise return the fallback image
+        return send_from_directory(os.path.dirname(fallback_image), os.path.basename(fallback_image))
     
     # Regular movie image handling (sample images and movie-specific covers)
     movie_id = parts[0]
@@ -952,7 +1176,7 @@ def serve_image(filename):
             if "cover" in image_name:
                 # 修改：对于封面图片，先尝试使用简化方法获取URL
                 image_url = get_movie_image_url(movie_id)
-                if image_url:
+                if image_url and not image_url.startswith('/static/'):  # Skip if it's a fallback image
                     success = download_image(image_url, file_path)
                     # Also save to covers directory
                     if success:
@@ -967,6 +1191,8 @@ def serve_image(filename):
                             samples = movie_data.get("samples", [])
                             if samples and len(samples) > 0:
                                 sample_url = samples[0].get("src", "")
+                                if not sample_url:
+                                    sample_url = samples[0].get("thumbnail", "")
                                 if sample_url and download_image(sample_url, file_path):
                                     shutil.copy2(file_path, cover_path)
                 else:
@@ -974,7 +1200,7 @@ def serve_image(filename):
                     movie_data = get_movie_data(movie_id)
                     if movie_data:
                         full_image_url = movie_data.get("img", "")
-                        if full_image_url:
+                        if full_image_url and not full_image_url.startswith('/static/'):  # Skip if it's a fallback image
                             success = download_image(full_image_url, file_path)
                             # Also save to covers directory
                             if success:
@@ -1013,11 +1239,19 @@ def serve_image(filename):
                         sample_index = int(image_name.split('_')[1].split('.')[0]) - 1
                         samples = movie_data.get("samples", [])
                         if samples and 0 <= sample_index < len(samples):
+                            # 首先尝试获取全尺寸图片，如果没有则使用缩略图
                             sample_url = samples[sample_index].get("src", "")
+                            if not sample_url:
+                                sample_url = samples[sample_index].get("thumbnail", "")
+                                logging.info(f"No full-size image available for sample {sample_index+1} of {movie_id}, using thumbnail instead")
+                            
                             if sample_url:
                                 download_image(sample_url, file_path)
-                    except (ValueError, IndexError):
-                        logging.error(f"Invalid sample index in filename: {image_name}")
+                                logging.info(f"Downloaded sample image {sample_index+1} for {movie_id}")
+                            else:
+                                logging.error(f"No image URL found for sample {sample_index+1} of {movie_id}")
+                    except (ValueError, IndexError) as e:
+                        logging.error(f"Invalid sample index in filename: {image_name}, Error: {str(e)}")
         except Exception as e:
             logging.error(f"Failed to download image: {str(e)}")
     
@@ -1025,32 +1259,67 @@ def serve_image(filename):
     if os.path.exists(file_path):
         return send_from_directory(directory, image_name)
     
-    # Otherwise return a default image
-    return send_from_directory('static/img', 'no_image.jpg')
+    # Otherwise return the fallback image
+    return send_from_directory(os.path.dirname(fallback_image), os.path.basename(fallback_image))
 
 # Helper functions
 def get_movie_data(movie_id):
     """Get movie data from database or API"""
-    # Try to get from database first
-    movie_data = db.get_movie(movie_id)
+    # Get the caller function name
+    caller_function = sys._getframe().f_back.f_code.co_name
     
-    # If not in database, try to get from API
-    if not movie_data:
+    # Try to get from database first with a shorter expiration time to ensure data is fresh
+    movie_data = db.get_movie(movie_id, max_age=1)  # 1 day expiration to ensure frequent updates
+    
+    # Check if it's likely an uncensored movie based on ID pattern or if data is incomplete
+    is_likely_uncensored = bool(re.search(r'_\d+$', movie_id))  # IDs like xxx_001 are often uncensored
+    is_data_incomplete = not movie_data or not (movie_data.get("director") or movie_data.get("publisher") or movie_data.get("producer") or movie_data.get("magnets"))
+    
+    # Only fetch from API if we're in the movie_detail route or related functions
+    # Don't fetch when displaying the cloud115_library or cloud115_library_search pages
+    should_fetch_from_api = ('movie_detail' in caller_function or 
+                           'update_cloud115_video_id' in caller_function or
+                           'refresh_movie' in caller_function)
+    
+    # If not in database or data is incomplete, try to get from API only if we should fetch
+    if is_data_incomplete and should_fetch_from_api:
         try:
-            response = requests.get(f"{CURRENT_API_URL}/movies/{movie_id}")
+            logging.info(f"Fetching complete data for movie {movie_id} from API (is_likely_uncensored={is_likely_uncensored})")
+            
+            # For uncensored movies, we may need to specify a type parameter
+            params = {}
+            if is_likely_uncensored:
+                params["type"] = "uncensored"
+                
+            response = requests.get(f"{CURRENT_API_URL}/movies/{movie_id}", params=params)
             if response.status_code == 200:
                 movie_data = response.json()
                 # Save to database
-                db.save_movie(movie_data)
+                if not db.save_movie(movie_data):
+                    logging.error(f"Failed to save movie data for {movie_id} to database")
+                else:
+                    logging.info(f"Successfully retrieved and saved complete data for {movie_id}")
+            else:
+                logging.error(f"API returned status code {response.status_code} for movie {movie_id}")
         except Exception as e:
             logging.error(f"Failed to get movie data from API: {str(e)}")
+    else:
+        # If we got data from the database and we're in movie_detail function, log it
+        if movie_data and 'movie_detail' in caller_function:
+            logging.info(f"Retrieved movie data for {movie_id} from database")
+            
+            # If we're viewing the movie details page, always save the movie data again 
+            # to ensure it's properly saved according to JavbusDatabase requirements
+            logging.info(f"Ensuring movie data for {movie_id} is properly saved in the database")
+            if not db.save_movie(movie_data):
+                logging.error(f"Failed to update movie data for {movie_id} in database")
     
     return movie_data
 
 def get_actor_data(actor_id):
     """Get actor data from database or API"""
-    # Try to get from database first
-    actor_data = db.get_star(actor_id)
+    # Try to get from database first with a shorter expiration time
+    actor_data = db.get_star(actor_id, max_age=1)  # 1 day expiration to ensure fresh data
     
     # If not in database, try to get from API
     if not actor_data:
@@ -1059,9 +1328,23 @@ def get_actor_data(actor_id):
             if response.status_code == 200:
                 actor_data = response.json()
                 # Save to database
-                db.save_star(actor_data)
+                if not db.save_star(actor_data):
+                    logging.error(f"Failed to save actor data for {actor_id} to database")
+                else:
+                    logging.info(f"Successfully retrieved and saved actor data for {actor_id}")
+            else:
+                logging.error(f"API returned status code {response.status_code} for actor {actor_id}")
         except Exception as e:
             logging.error(f"Failed to get actor data from API: {str(e)}")
+    else:
+        logging.info(f"Retrieved actor data for {actor_id} from database")
+        
+        # If we're viewing the actor details page, always save the actor data again
+        # to ensure it's properly saved according to JavbusDatabase requirements
+        if actor_data and 'actor_detail' in sys._getframe().f_back.f_code.co_name:
+            logging.info(f"Ensuring actor data for {actor_id} is properly saved in the database")
+            if not db.save_star(actor_data):
+                logging.error(f"Failed to update actor data for {actor_id} in database")
     
     return actor_data
 
@@ -1126,16 +1409,28 @@ def get_actor_movies(actor_id):
 
 def format_movie_data(movie_data):
     """Format movie data for template rendering"""
+    # Check if it's likely an uncensored movie
+    is_uncensored = movie_data.get("is_uncensored", False) or bool(re.search(r'_\d+$', movie_data.get("id", "")))
+    
     formatted_movie = {
         "id": movie_data.get("id", ""),
         "title": movie_data.get("title", ""),
         "translated_title": movie_data.get("translated_title", ""),
         "image_url": movie_data.get("img", ""),
         "date": movie_data.get("date", ""),
+        "is_uncensored": is_uncensored,
+        # For uncensored movies, publisher and producer might be structured differently
         "producer": movie_data.get("publisher", {}).get("name", "") if isinstance(movie_data.get("publisher"), dict) else movie_data.get("publisher", ""),
+        "publisher": movie_data.get("publisher", {}),  # Add the publisher object
+        # Make sure we also have producer object if it exists
+        "producer_obj": movie_data.get("producer", {}),  # Add the producer object
+        "director": movie_data.get("director", {}),  # Add the director object
+        "series": movie_data.get("series", {}),  # Add the series object
+        "videoLength": movie_data.get("videoLength", ""),  # Add video length
+        "genres": movie_data.get("genres", []),  # Add full genres objects
         "summary": movie_data.get("description", ""),
         "translated_summary": movie_data.get("translated_description", ""),
-        "genres": [genre.get("name", "") for genre in movie_data.get("genres", [])] if isinstance(movie_data.get("genres"), list) else [],
+        "samples": movie_data.get("samples", []),  # Add samples
         "actors": [],
         "magnet_links": [],
         "sample_images": []
@@ -1165,71 +1460,130 @@ def format_movie_data(movie_data):
     
     # Format sample images
     for i, sample in enumerate(movie_data.get("samples", [])):
+        # For samples without src (full-size image), use the thumbnail as both thumbnail and full image
+        sample_src = sample.get("src")
+        sample_thumbnail = sample.get("thumbnail", "")
+        
+        # If src is null or empty, use the thumbnail as the source
+        if not sample_src and sample_thumbnail:
+            sample_src = sample_thumbnail
+            can_enlarge = False  # Flag to indicate if image can be enlarged
+        else:
+            can_enlarge = bool(sample_src)  # Can enlarge only if we have a proper src
+            
         formatted_movie["sample_images"].append({
             "index": i + 1,
-            "src": sample.get("src", ""),
-            "thumbnail": sample.get("thumbnail", sample.get("src", "")),
-            "url": f"/images/{formatted_movie['id']}/sample_{i+1}.jpg"
+            "src": sample_src or sample_thumbnail,  # Fallback to thumbnail if src is None
+            "thumbnail": sample_thumbnail,
+            "url": f"/images/{formatted_movie['id']}/sample_{i+1}.jpg",
+            "can_enlarge": can_enlarge  # Add flag to indicate if image can be enlarged
         })
     
     return formatted_movie
 
 def download_image(url, save_path):
     """Download an image from URL and save it to path"""
-    try:
-        # 设置请求头，模拟浏览器行为
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-            "Referer": "https://www.javbus.com/",
-            "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-            "Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Cache-Control": "no-cache",
-            "Pragma": "no-cache"
-        }
-        
-        # 首先尝试直接下载图片
-        response = requests.get(url, headers=headers, stream=True, timeout=10)
-        
-        # 如果直接下载失败，使用更复杂的会话方法
-        if response.status_code != 200:
-            # 确定来源域名
-            domain = ""
+    max_retries = 2
+    retry_delay = 1
+    timeout = 5  # Shorter timeout to avoid long waits
+    
+    for retry in range(max_retries + 1):
+        try:
+            # 设置请求头，模拟浏览器行为
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+                "Referer": CURRENT_BASE_URL + "/",
+                "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+                "Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache"
+            }
+            
+            # 根据URL来源设置正确的Referer
             if "javbus" in url:
-                domain = "javbus.com"
-                referer = "https://www.javbus.com/"
+                headers["Referer"] = CURRENT_BASE_URL + "/"
             elif "dmm.co.jp" in url:
-                domain = "dmm.co.jp"
-                referer = "https://www.dmm.co.jp/"
+                headers["Referer"] = "https://www.dmm.co.jp/"
             else:
+                # 从URL中提取域名作为Referer
                 domain = url.split('/')[2]
-                referer = f"https://{domain}/"
+                headers["Referer"] = f"https://{domain}/"
             
-            # 更新请求头中的Referer
-            headers["Referer"] = referer
+            # 首先尝试直接下载图片
+            response = requests.get(url, headers=headers, stream=True, timeout=timeout)
             
-            # 创建一个会话来保持cookies
-            session = requests.Session()
-            session.headers.update(headers)
+            # 如果直接下载失败，使用更复杂的会话方法
+            if response.status_code != 200:
+                # 创建一个会话来保持cookies
+                session = requests.Session()
+                session.headers.update(headers)
+                
+                # 对于DMM，需要先访问其主页面以获取必要的cookies
+                if "dmm.co.jp" in url:
+                    session.get("https://www.dmm.co.jp/", timeout=timeout)
+                elif "javbus.com" in url:
+                    # 对于javbus，先访问主页获取cookies
+                    session.get(f"{CURRENT_BASE_URL}/", timeout=timeout)
+                
+                # 重新尝试下载图片
+                response = session.get(url, stream=True, timeout=timeout)
             
-            # 对于DMM，需要先访问其主页面以获取必要的cookies
-            if "dmm.co.jp" in url:
-                session.get("https://www.dmm.co.jp/")
+            # 如果下载成功，保存图片
+            if response.status_code == 200:
+                # Check if the response contains an image
+                content_type = response.headers.get('Content-Type', '')
+                if not content_type.startswith('image/'):
+                    logging.warning(f"Downloaded content is not an image (Content-Type: {content_type}) from {url}")
+                    # Try one more time with a different approach if this isn't the last retry
+                    if retry < max_retries:
+                        continue
+                
+                # Ensure the directory exists
+                os.makedirs(os.path.dirname(save_path), exist_ok=True)
+                
+                with open(save_path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                # Check if the file was successfully saved and has content
+                if os.path.exists(save_path) and os.path.getsize(save_path) > 0:
+                    return True
+                else:
+                    logging.error(f"Downloaded image file is empty or missing: {save_path}")
+                    # Continue to retry if this isn't the last attempt
+                    if retry < max_retries:
+                        continue
+            else:
+                logging.error(f"Failed to download image from {url}, status code: {response.status_code}")
+                # Continue to retry if this isn't the last attempt
+                if retry < max_retries:
+                    time.sleep(retry_delay * (2 ** retry))  # Exponential backoff
+                    continue
             
-            # 重新尝试下载图片
-            response = session.get(url, stream=True, timeout=10)
-        
-        # 如果下载成功，保存图片
-        if response.status_code == 200:
-            with open(save_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-            return True
-        
-        logging.error(f"Failed to download image from {url}, status code: {response.status_code}")
-        return False
-    except Exception as e:
-        logging.error(f"Failed to download image from {url}: {str(e)}")
-        return False
+            # If we've reached this point on the last retry, we've failed
+            if retry == max_retries:
+                return False
+                
+        except requests.exceptions.Timeout:
+            logging.error(f"Timeout while downloading image from {url}")
+            if retry < max_retries:
+                time.sleep(retry_delay * (2 ** retry))  # Exponential backoff
+                continue
+            return False
+        except requests.exceptions.ConnectionError:
+            logging.error(f"Connection error while downloading image from {url}")
+            if retry < max_retries:
+                time.sleep(retry_delay * (2 ** retry))  # Exponential backoff
+                continue
+            return False
+        except Exception as e:
+            logging.error(f"Failed to download image from {url}: {str(e)}")
+            if retry < max_retries:
+                time.sleep(retry_delay * (2 ** retry))  # Exponential backoff
+                continue
+            return False
+    
+    # If we've reached this point after all retries, we've failed
+    return False
 
 @app.route('/config')
 def config_page():
@@ -1267,10 +1621,11 @@ def save_config_api():
             f.write(config_str)
         
         # Update current configuration
-        global CURRENT_CONFIG, CURRENT_API_URL, CURRENT_WATCH_URL_PREFIX, fanza_scraper
+        global CURRENT_CONFIG, CURRENT_API_URL, CURRENT_WATCH_URL_PREFIX, CURRENT_BASE_URL, fanza_scraper
         CURRENT_CONFIG = config_data
         CURRENT_API_URL = config_data.get("api_url", "")
         CURRENT_WATCH_URL_PREFIX = config_data.get("watch_url_prefix", "https://missav.ai")
+        CURRENT_BASE_URL = config_data.get("base_url", "https://www.javbus.com")
         
         # Reload fanza mappings in the existing FanzaScraper instance
         fanza_mappings = config_data.get("fanza_mappings", {})
@@ -1388,6 +1743,7 @@ def proxy_stream():
         # 获取URL的基本路径（用于解析相对路径）
         url_parts = urllib.parse.urlparse(decoded_url)
         base_url = f"{url_parts.scheme}://{url_parts.netloc}{os.path.dirname(url_parts.path)}/"
+        base_domain = f"{url_parts.scheme}://{url_parts.netloc}"
         
         # 设置请求头
         headers = {
@@ -1437,8 +1793,11 @@ def proxy_stream():
                 if line.startswith("http"):
                     # 绝对URL
                     absolute_url = line
+                elif line.startswith("/"):
+                    # 以斜杠开头的相对URL（相对于域名根目录）
+                    absolute_url = base_domain + line
                 else:
-                    # 相对URL，转换为绝对URL
+                    # 常规相对URL，转换为绝对URL
                     absolute_url = urllib.parse.urljoin(base_url, line)
                 
                 # 将URL转换为代理URL
@@ -1498,7 +1857,7 @@ def get_movie_image_url(movie_id):
             # 例如：从 https://www.javbus.com/pics/thumb/b9f2.jpg 提取 b9f2
             thumb_id = thumb_url.split('/')[-1].split('.')[0]
             # 构造高清封面图URL
-            cover_url = f"https://www.javbus.com/pics/cover/{thumb_id}_b.jpg"
+            cover_url = f"{CURRENT_BASE_URL}/pics/cover/{thumb_id}_b.jpg"
             return cover_url
             
         # 处理DMM格式的URL
@@ -1510,13 +1869,38 @@ def get_movie_image_url(movie_id):
         return thumb_url
     
     # 如果数据库中没有，尝试从API获取基本信息
+    # 使用安全的方式获取图片URL，添加超时和重试机制
     try:
+        # 设置超时时间（秒）和最大重试次数
+        timeout = 3
+        max_retries = 2
+        retry_delay = 1  # 初始重试延迟（秒）
+        
+        # 使用本地占位符图片路径作为默认返回值
+        default_image = f"/static/images/no-cover.jpg"
+        
+        # 设置请求API的函数，添加重试逻辑
+        def fetch_with_retry(url, params=None, current_retry=0):
+            try:
+                return requests.get(url, params=params, timeout=timeout)
+            except (requests.ConnectionError, requests.Timeout) as e:
+                if current_retry < max_retries:
+                    # 使用指数退避策略增加重试延迟
+                    sleep_time = retry_delay * (2 ** current_retry)
+                    logging.warning(f"API连接失败，将在{sleep_time}秒后重试: {str(e)}")
+                    time.sleep(sleep_time)
+                    return fetch_with_retry(url, params, current_retry + 1)
+                else:
+                    # 超过最大重试次数，记录错误并返回None
+                    logging.error(f"API连接失败，已超过最大重试次数: {str(e)}")
+                    return None
+        
         # 构建搜索参数，找出包含此ID的电影
         search_url = f"{CURRENT_API_URL}/movies/search"
         search_params = {"keyword": movie_id, "page": "1"}
         
-        response = requests.get(search_url, params=search_params)
-        if response.status_code == 200:
+        response = fetch_with_retry(search_url, search_params)
+        if response and response.status_code == 200:
             data = response.json()
             movies_list = data.get("movies", [])
             
@@ -1531,7 +1915,7 @@ def get_movie_image_url(movie_id):
                         # 从缩略图URL中提取ID部分
                         thumb_id = thumb_url.split('/')[-1].split('.')[0]
                         # 构造高清封面图URL
-                        cover_url = f"https://www.javbus.com/pics/cover/{thumb_id}_b.jpg"
+                        cover_url = f"{CURRENT_BASE_URL}/pics/cover/{thumb_id}_b.jpg"
                         return cover_url
                         
                     # 处理DMM格式的URL
@@ -1544,8 +1928,8 @@ def get_movie_image_url(movie_id):
         
         # 如果搜索没有结果，尝试直接获取电影数据（这是最后的选择）
         # 注意这会获取完整的电影详情，但我们会在最后尝试
-        response = requests.get(f"{CURRENT_API_URL}/movies/{movie_id}")
-        if response.status_code == 200:
+        response = fetch_with_retry(f"{CURRENT_API_URL}/movies/{movie_id}")
+        if response and response.status_code == 200:
             movie_data = response.json()
             if movie_data and movie_data.get("img"):
                 # 将缩略图URL转换为高清封面图URL
@@ -1556,7 +1940,7 @@ def get_movie_image_url(movie_id):
                     # 从缩略图URL中提取ID部分
                     thumb_id = thumb_url.split('/')[-1].split('.')[0]
                     # 构造高清封面图URL
-                    cover_url = f"https://www.javbus.com/pics/cover/{thumb_id}_b.jpg"
+                    cover_url = f"{CURRENT_BASE_URL}/pics/cover/{thumb_id}_b.jpg"
                     # 只保存基础信息到数据库
                     basic_info = {
                         "id": movie_id,
@@ -1590,12 +1974,2583 @@ def get_movie_image_url(movie_id):
                 }
                 db.save_movie(basic_info)
                 return thumb_url
+        
+        # 检查本地是否有实际存在的封面图片
+        local_cover_path = f"buspic/covers/{movie_id}.jpg"
+        if os.path.exists(local_cover_path):
+            return f"/images/covers/{movie_id}.jpg"
+            
+        # 如果所有尝试都失败，记录一条错误并返回默认图片路径
+        logging.warning(f"无法获取电影 {movie_id} 的图片URL，将使用默认封面图")
+        return default_image
     
     except Exception as e:
-        logging.error(f"Failed to get movie image URL: {str(e)}")
+        logging.error(f"获取电影图片URL失败: {str(e)}")
+        # 出现异常时返回默认图片路径
+        return "/static/images/no-cover.jpg"
+
+# STRM Library routes
+# Initialize STRM library
+strm_lib = StrmLibrary(db)
+
+@app.route('/strm')
+def strm_library_route():
+    """Show STRM library page"""
+    return redirect(url_for('strm_library'))
+
+@app.route('/strm/search')
+def strm_library_search():
+    """Search STRM library"""
+    query = request.args.get('query', '')
+    category = request.args.get('category', '')
+    page = request.args.get('page', '1')
+    sort_by = request.args.get('sort_by', 'added_time')
+    sort_order = request.args.get('sort_order', 'desc')
+    
+    # Convert page to int and handle errors
+    try:
+        page = int(page)
+        if page < 1:
+            page = 1
+    except ValueError:
+        page = 1
+    
+    # Items per page
+    per_page = 24
+    offset = (page - 1) * per_page
+    
+    # Get search results with sorting applied at database level
+    strm_files = db.search_strm_files(
+        query, 
+        category=category if category else None, 
+        limit=per_page, 
+        offset=offset,
+        sort_by=sort_by,
+        sort_order=sort_order
+    )
+    
+    # Get all categories for the selector
+    categories = db.get_strm_categories()
+    
+    # Calculate pagination
+    if category:
+        total_count = len(db.search_strm_files(query, category=category))
+    else:
+        total_count = len(db.search_strm_files(query))
+    
+    total_pages = (total_count + per_page - 1) // per_page  # Ceiling division
+    
+    # Generate page numbers
+    max_visible_pages = 10
+    if total_pages <= max_visible_pages:
+        pages = list(range(1, total_pages + 1))
+    else:
+        # Show pages around current page
+        pages = list(range(
+            max(1, min(page - max_visible_pages // 2, total_pages - max_visible_pages + 1)),
+            min(total_pages + 1, max(page + max_visible_pages // 2 + 1, max_visible_pages + 1))
+        ))
+    
+    # Pagination info
+    pagination = {
+        'current_page': page,
+        'total_pages': total_pages,
+        'has_next': page < total_pages,
+        'next_page': min(page + 1, total_pages),
+        'pages': pages
+    }
+    
+    # Get the display text for the current sort option
+    sort_display = get_sort_display(sort_by, sort_order)
+    
+    return render_template('strm_library.html', 
+                          strm_files=strm_files, 
+                          categories=categories, 
+                          current_category=category,
+                          pagination=pagination if total_pages > 1 else None,
+                          search_query=query,
+                          sort_by=sort_by,
+                          sort_order=sort_order,
+                          sort_display=sort_display)
+
+@app.route('/strm/library')
+def strm_library():
+    """Show STRM library page"""
+    category = request.args.get('category', '')
+    page = request.args.get('page', '1')
+    sort_by = request.args.get('sort_by', 'added_time')
+    sort_order = request.args.get('sort_order', 'desc')
+    
+    # Convert page to int and handle errors
+    try:
+        page = int(page)
+        if page < 1:
+            page = 1
+    except ValueError:
+        page = 1
+    
+    # Items per page
+    per_page = 24
+    offset = (page - 1) * per_page
+    
+    # Get STRM files with sorting applied at database level
+    strm_files = db.get_strm_files(
+        category=category if category else None, 
+        limit=per_page, 
+        offset=offset,
+        sort_by=sort_by,
+        sort_order=sort_order
+    )
+    
+    # Get all categories for the selector
+    categories = db.get_strm_categories()
+    
+    # Calculate pagination
+    if category:
+        total_count = len(db.get_strm_files(category=category))
+    else:
+        total_count = len(db.get_strm_files())
+    
+    total_pages = (total_count + per_page - 1) // per_page  # Ceiling division
+    
+    # Generate page numbers
+    max_visible_pages = 10
+    if total_pages <= max_visible_pages:
+        pages = list(range(1, total_pages + 1))
+    else:
+        # Show pages around current page
+        pages = list(range(
+            max(1, min(page - max_visible_pages // 2, total_pages - max_visible_pages + 1)),
+            min(total_pages + 1, max(page + max_visible_pages // 2 + 1, max_visible_pages + 1))
+        ))
+    
+    # Pagination info
+    pagination = {
+        'current_page': page,
+        'total_pages': total_pages,
+        'has_next': page < total_pages,
+        'next_page': min(page + 1, total_pages),
+        'pages': pages
+    }
+    
+    # Get the display text for the current sort option
+    sort_display = get_sort_display(sort_by, sort_order)
+    
+    return render_template('strm_library.html', 
+                          strm_files=strm_files, 
+                          categories=categories, 
+                          current_category=category,
+                          pagination=pagination if total_pages > 1 else None,
+                          sort_by=sort_by,
+                          sort_order=sort_order,
+                          sort_display=sort_display)
+
+def get_sort_display(sort_by, sort_order):
+    """Get a human-readable display string for the current sort options"""
+    sort_by_text = {
+        'added_time': 'Added Time',
+        'date_added': 'Added Time',
+        'video_id': 'Video ID',
+        'title': 'Title',
+        'date': 'Release Date'
+    }.get(sort_by, 'Sort')
+    
+    sort_order_text = {
+        'asc': '↑',
+        'desc': '↓',
+        'random': '⤮'
+    }.get(sort_order, '')
+    
+    return f"{sort_by_text} {sort_order_text}"
+
+@app.route('/strm/player/<int:file_id>')
+def strm_player(file_id):
+    """Show STRM player page"""
+    # Get STRM file info
+    strm_file = db.get_strm_file(file_id)
+    if not strm_file:
+        return render_template('error.html', 
+                              error_title="File Not Found", 
+                              error_message=f"Could not find STRM file with ID {file_id}"), 404
+    
+    # Get stream URL
+    strm_url = strm_lib.get_strm_play_url(file_id)
+    if not strm_url:
+        return render_template('error.html', 
+                              error_title="Stream Error", 
+                              error_message="Could not get stream URL"), 500
+    
+    # Add file_path for template
+    strm_file['file_path'] = strm_file.get('filepath', '')
+    
+    # Determine source type based on URL or extension
+    source_type = 'application/x-mpegURL'  # Default to HLS
+    url_lower = strm_url.lower()
+    if url_lower.endswith('.mp4'):
+        source_type = 'video/mp4'
+    elif url_lower.endswith('.mkv'):
+        source_type = 'video/x-matroska'
+    elif url_lower.endswith('.webm'):
+        source_type = 'video/webm'
+    elif url_lower.endswith('.m3u8'):
+        source_type = 'application/x-mpegURL'
+    
+    # Get referring page for the back button
+    referrer = request.referrer
+    
+    # 更新播放计数
+    db.update_strm_play_count(file_id)
+    
+    return render_template('strm_player_new.html', 
+                          strm_file=strm_file, 
+                          strm_url=strm_url,
+                          source_type=source_type,
+                          referrer=referrer)
+
+@app.route('/strm/add', methods=['POST'])
+def add_strm_file():
+    """Add a new STRM file"""
+    url = request.form.get('url', '')
+    title = request.form.get('title', '')
+    category = request.form.get('category', 'movies')
+    thumbnail = request.form.get('thumbnail', '')
+    description = request.form.get('description', '')
+    
+    if not url:
+        return redirect(url_for('strm_library'))
+    
+    # Create STRM file
+    result = strm_lib.import_strm_url(url, title, category, thumbnail, description)
+    
+    # Redirect to library page
+    if result:
+        return redirect(url_for('strm_library', category=category))
+    else:
+        return render_template('error.html', 
+                              error_title="STRM Creation Failed", 
+                              error_message="Failed to create STRM file"), 500
+
+@app.route('/strm/delete/<int:file_id>', methods=['POST'])
+def delete_strm_file(file_id):
+    """Delete a STRM file"""
+    # Get STRM file info for category (for redirect)
+    strm_file = db.get_strm_file(file_id)
+    category = strm_file.get('category', '') if strm_file else ''
+    
+    # Delete the file
+    result = strm_lib.delete_strm_file(file_id)
+    
+    # Redirect to library page
+    if result:
+        return redirect(url_for('strm_library', category=category))
+    else:
+        return render_template('error.html', 
+                              error_title="Deletion Failed", 
+                              error_message=f"Failed to delete STRM file with ID {file_id}"), 500
+
+@app.route('/strm/scan', methods=['POST'])
+def scan_strm_directory():
+    """Scan directory for STRM files"""
+    directory = request.form.get('directory', '')
+    
+    # Scan directory
+    count = strm_lib.scan_directory(directory if directory else None)
+    
+    # Redirect to library page
+    return redirect(url_for('strm_library'))
+
+@app.route('/api/proxy/image')
+def proxy_image():
+    """代理图片请求，解决CORS问题"""
+    image_url = request.args.get('url')
+    
+    if not image_url:
+        return jsonify({"error": "Missing URL parameter"}), 400
+        
+    try:
+        # 解码URL
+        decoded_url = urllib.parse.unquote(image_url)
+        
+        # 设置请求头
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Referer": urllib.parse.urlparse(decoded_url).netloc
+        }
+        
+        # 发送请求
+        response = requests.get(
+            decoded_url,
+            headers=headers,
+            stream=True,
+            timeout=10,
+            verify=False
+        )
+        
+        # 检查响应状态
+        if response.status_code != 200:
+            logging.error(f"代理图片请求失败: HTTP {response.status_code}")
+            return send_from_directory('static/img', 'no_image.jpg')
+            
+        # 获取内容类型
+        content_type = response.headers.get("Content-Type", "image/jpeg")
+        
+        # 创建响应
+        proxy_response = Response(
+            stream_with_context(response.iter_content(chunk_size=1024)),
+            status=response.status_code
+        )
+        
+        # 设置内容类型
+        proxy_response.headers["Content-Type"] = content_type
+        
+        # 设置CORS头
+        proxy_response.headers["Access-Control-Allow-Origin"] = "*"
+        proxy_response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        proxy_response.headers["Access-Control-Allow-Headers"] = "Origin, X-Requested-With, Content-Type, Accept"
+        
+        # 复制其他重要的响应头
+        for header in ["Content-Length", "Cache-Control", "Etag"]:
+            if header in response.headers:
+                proxy_response.headers[header] = response.headers[header]
+                
+        return proxy_response
+        
+    except Exception as e:
+        logging.error(f"代理图片失败: {str(e)}")
+        return send_from_directory('static/img', 'no_image.jpg')
+
+@app.route('/strm/delete_category/<category>', methods=['POST'])
+def delete_strm_category(category):
+    """删除某个分类的所有STRM记录"""
+    try:
+        # 获取分类下的所有文件
+        files = db.get_strm_files(category=category)
+        count = 0
+        
+        # 逐个删除文件
+        for file in files:
+            if strm_lib.delete_strm_file(file['id']):
+                count += 1
+                
+        logging.info(f"已删除分类 '{category}' 中的 {count} 个STRM文件")
+        
+        return redirect(url_for('strm_library'))
+    except Exception as e:
+        logging.error(f"删除分类STRM文件失败: {str(e)}")
+        return render_template('error.html', 
+                              error_title="Deletion Failed", 
+                              error_message=f"Failed to delete STRM files in category {category}: {str(e)}"), 500
+
+@app.route('/strm/delete_all', methods=['POST'])
+def delete_all_strm_files():
+    """删除所有STRM记录"""
+    try:
+        # 获取所有文件
+        files = db.get_strm_files()
+        count = 0
+        
+        # 逐个删除文件
+        for file in files:
+            if strm_lib.delete_strm_file(file['id']):
+                count += 1
+                
+        logging.info(f"已删除所有分类中的 {count} 个STRM文件")
+        
+        return redirect(url_for('strm_library'))
+    except Exception as e:
+        logging.error(f"删除所有STRM文件失败: {str(e)}")
+        return render_template('error.html', 
+                              error_title="Deletion Failed", 
+                              error_message=f"Failed to delete all STRM files: {str(e)}"), 500
+
+@app.route('/strm/scan_category/<category>', methods=['POST'])
+def scan_strm_category(category):
+    """扫描特定分类目录下的STRM文件"""
+    try:
+        # 构建分类目录路径
+        category_dir = os.path.join(strm_lib.strm_dir, category)
+        
+        # 确保目录存在
+        if not os.path.exists(category_dir):
+            os.makedirs(category_dir, exist_ok=True)
+            
+        # 扫描目录
+        count = strm_lib.scan_directory(category_dir)
+        
+        logging.info(f"已扫描分类 '{category}' 目录，添加了 {count} 个STRM文件")
+        
+        return redirect(url_for('strm_library', category=category))
+    except Exception as e:
+        logging.error(f"扫描分类目录失败: {str(e)}")
+        return render_template('error.html', 
+                              error_title="Scan Failed", 
+                              error_message=f"Failed to scan category directory {category}: {str(e)}"), 500
+
+@app.route('/player/<int:file_id>')
+def player(file_id):
+    strm_file = StrmFile.query.get_or_404(file_id)
+    strm_url = strm_file.get_play_url()
+    
+    # Detect file format from URL
+    source_type = 'application/x-mpegURL'  # Default to HLS
+    if strm_url.lower().endswith('.mp4'):
+        source_type = 'video/mp4'
+    elif strm_url.lower().endswith('.mkv'):
+        source_type = 'video/x-matroska'
+    elif strm_url.lower().endswith('.webm'):
+        source_type = 'video/webm'
+    elif strm_url.lower().endswith('.m3u8'):
+        source_type = 'application/x-mpegURL'
+    
+    # Update play count
+    strm_file.play_count += 1
+    db.session.commit()
+    
+    return render_template('strm_player_new.html', 
+                         strm_file=strm_file,
+                         strm_url=strm_url,
+                         source_type=source_type)
+
+@app.route('/strm/video_ids', methods=['GET'])
+def video_id_extractor():
+    """显示视频ID提取器页面"""
+    # 获取分类列表
+    categories = db.get_strm_categories()
+    
+    # 获取默认字典
+    dictionary = strm_lib.get_default_dictionary()
+    
+    # 如果字典为空，使用预设值
+    if not dictionary:
+        # 将默认字典保存到文件
+        with open("config/filter_dictionary.txt", 'w', encoding='utf-8') as f:
+            for line in [
+                # 常见前缀/后缀
+                "[Thz.la]", "720p", "720P", "1080p", "1080P", "FHD", "[FHD]",
+                # 演员前缀
+                "1pondo-", "1Pon", "1Pondo", "1pon", "1pondo", "Carib", "carib", 
+                "-pacopacomama", "]Caribbean", "Caribbean", "paco-", "paco_",
+                # 网站标识
+                "YA88.CC", "dioguitar23", "avav77.xyz", "Myxav.Pw",
+                "hjd2048", "fun2048", "Vol", "_hd_", "_hd", "QJ530", 
+                "boy999", "play999", "av9", "xv9",
+                # 分辨率标识
+                "00Kbps", "000Kbps", "-4K", "-4k", "PP168", "chd1080", "-3D"
+            ]:
+                f.write(f"{line}\n")
+        
+        # 重新读取字典
+        dictionary = strm_lib.get_default_dictionary()
+    
+    return render_template('video_id_extractor.html', 
+                          categories=categories, 
+                          dictionary=dictionary)
+
+@app.route('/strm/save_dictionary', methods=['POST'])
+def save_video_id_dictionary():
+    """保存视频ID提取器的过滤字典"""
+    dictionary_text = request.form.get('dictionary', '')
+    dictionary_list = [line.strip() for line in dictionary_text.split('\n') if line.strip()]
+    
+    # 保存到文件
+    if strm_lib.update_default_dictionary(dictionary_list):
+        flash("过滤字典保存成功")
+    else:
+        flash("过滤字典保存失败", "error")
+    
+    # 重定向回提取器页面
+    return redirect(url_for('video_id_extractor'))
+
+@app.route('/strm/extract_ids', methods=['POST'])
+def extract_video_ids():
+    """执行视频ID提取"""
+    category = request.form.get('category', '')
+    preview_only = request.form.get('preview_only', '1') == '1'
+    
+    # 获取字典
+    dictionary = strm_lib.get_default_dictionary()
+    
+    # 执行提取
+    if preview_only:
+        # 预览模式，不修改数据库
+        updated_count, results = 0, []
+        
+        # 获取STRM文件
+        strm_files = db.get_strm_files(category=category if category else None)
+        
+        if strm_files:
+            # 导入模块
+            try:
+                from modules.video_id_matcher import VideoIDMatcher
+                matcher = VideoIDMatcher()
+                
+                # 加载字典
+                if dictionary:
+                    matcher.load_dictionary_from_json(dictionary)
+                
+                # 处理STRM文件
+                processed_files = matcher.process_strm_files(strm_files)
+                
+                # 准备预览结果
+                results = []
+                for file in processed_files:
+                    file_id = file.get('id')
+                    video_id = file.get('video_id')
+                    original_title = file.get('title', '')
+                    
+                    # 预览标题更新
+                    updated_title = matcher.update_strm_title(file, video_id)
+                    
+                    results.append({
+                        'id': file_id,
+                        'video_id': video_id,
+                        'title': updated_title,
+                        'original_title': original_title
+                    })
+            except ImportError:
+                # 如果模块导入失败，直接使用strm_lib的方法
+                logging.warning("无法导入VideoIDMatcher模块，使用STRM库的提取方法")
+                _, results = strm_lib.extract_video_ids(
+                    category=category if category else None,
+                    dictionary=dictionary
+                )
+    else:
+        # 执行实际更新
+        updated_count, results = strm_lib.extract_video_ids(
+            category=category if category else None,
+            dictionary=dictionary
+        )
+    
+    # 渲染结果页面
+    categories = db.get_strm_categories()
+    return render_template('video_id_extractor.html', 
+                          categories=categories, 
+                          dictionary=dictionary,
+                          results=results,
+                          updated_count=updated_count,
+                          preview_only=preview_only,
+                          selected_category=category)
+
+@app.route('/strm/find_video/<video_id>')
+def find_strm_file(video_id):
+    """根据视频ID查找并重定向到STRM播放器页面"""
+    try:
+        # 确保数据库中存在video_id列
+        db.add_video_id_column_if_not_exists()
+        
+        # 查询数据库中匹配的STRM文件
+        matching_files = []
+        strm_files = db.get_strm_files()
+        
+        for file in strm_files:
+            if file.get('video_id') == video_id:
+                matching_files.append(file)
+        
+        # 如果找到，重定向到播放器页面
+        if matching_files:
+            strm_file = matching_files[0]
+            return redirect(url_for('strm_player', file_id=strm_file['id']))
+        
+        # 如果未找到，显示错误页面
+        flash(f"找不到对应视频ID为 {video_id} 的STRM文件。", "warning")
+        return render_template('error.html', 
+                              error_title="STRM文件未找到", 
+                              error_message=f"无法找到视频ID为 {video_id} 的STRM文件，请确保您已将此影片添加到STRM库。")
+    except Exception as e:
+        logging.error(f"查找STRM文件时出错: {str(e)}")
+        import traceback
+        logging.error(traceback.format_exc())
+        return render_template('error.html', 
+                              error_title="查找错误", 
+                              error_message=f"查找STRM文件时出错: {str(e)}")
+
+@app.route('/strm/import', methods=['POST'])
+def import_strm_file():
+    """Import a STRM file"""
+    if 'strm_file' not in request.files:
+        return redirect(url_for('strm_library'))
+        
+    strm_file = request.files['strm_file']
+    if strm_file.filename == '':
+        return redirect(url_for('strm_library'))
+    
+    # Get form data
+    title = request.form.get('title', '')
+    category = request.form.get('category', 'movies')
+    
+    # Read file content (URL)
+    url = strm_file.read().decode('utf-8').strip()
+    
+    if not url:
+        return render_template('error.html', 
+                              error_title="Import Failed", 
+                              error_message="The STRM file appears to be empty"), 400
+    
+    # Use the filename as title if no title provided
+    if not title:
+        title = os.path.splitext(strm_file.filename)[0]
+    
+    # Create STRM file
+    result = strm_lib.import_strm_url(url, title, category)
+    
+    # Redirect to library page
+    if result:
+        return redirect(url_for('strm_library', category=category))
+    else:
+        return render_template('error.html', 
+                              error_title="STRM Import Failed", 
+                              error_message="Failed to import STRM file"), 500
+
+@app.route('/strm/sync_movie_info', methods=['POST'])
+def sync_strm_movie_info():
+    """Sync movie information for STRM files"""
+    try:
+        # 获取具有视频ID的STRM文件
+        from strm_library import StrmLibrary
+        strm_lib = StrmLibrary(db)
+        result = strm_lib.sync_strm_movie_info()
+        
+        # 显示结果
+        if result["success"] > 0:
+            flash(f"成功获取了 {result['success']} 个文件的影片详情", "success")
+        
+        if result["failed"] > 0:
+            flash(f"{result['failed']} 个文件获取影片详情失败", "warning")
+            
+        return redirect(url_for('strm_library'))
+    except Exception as e:
+        logging.error(f"同步STRM影片信息失败: {str(e)}")
+        return render_template('error.html', 
+                              error_title="同步失败", 
+                              error_message=f"同步STRM影片信息失败: {str(e)}"), 500
+
+@app.route('/strm/update/<int:file_id>', methods=['POST'])
+def update_strm_file(file_id):
+    """强制更新单个STRM文件的元数据"""
+    try:
+        # 获取STRM文件信息
+        strm_file = db.get_strm_file(file_id)
+        if not strm_file:
+            flash("STRM文件不存在")
+            return redirect(url_for('strm_library'))
+        
+        # 获取文件的video_id
+        video_id = strm_file.get('video_id')
+        if not video_id:
+            flash("STRM文件没有关联的视频ID，无法更新")
+            return redirect(url_for('strm_library'))
+        
+        # 获取电影信息
+        movie_data = db.get_movie(video_id)
+        if not movie_data:
+            flash(f"无法找到影片ID为 {video_id} 的信息")
+            return redirect(url_for('strm_library'))
+        
+        # 准备演员数据 (JSON格式)
+        actors_data = []
+        for actor in movie_data.get("actors", []):
+            actors_data.append({
+                "id": actor.get("id", ""),
+                "name": actor.get("name", ""),
+                "image_url": actor.get("image_url", "")
+            })
+        
+        # 将演员数据序列化为JSON字符串
+        actors_json = json.dumps(actors_data)
+        
+        # 获取封面图片URL
+        cover_image = movie_data.get("image_url", "")
+        
+        # 获取电影标题和发布日期
+        movie_title = movie_data.get("title", "")
+        movie_date = movie_data.get("date", "")
+        
+        # 更新元数据
+        db.update_strm_metadata(
+            file_id=file_id,
+            video_id=video_id,
+            cover_image=cover_image,
+            actors=actors_json
+        )
+        
+        # 更新标题和日期
+        db.update_strm_movie_info(
+            file_id=file_id,
+            title=movie_title,
+            date=movie_date
+        )
+        
+        # 显示成功消息
+        flash(f"成功更新了STRM文件 {movie_title} 的元数据")
+        
+        # 获取分类用于重定向
+        category = strm_file.get('category', '')
+        
+        # 重定向回库页面
+        return redirect(url_for('strm_library', category=category))
+    except Exception as e:
+        logging.error(f"更新STRM文件元数据时出错: {str(e)}")
+        import traceback
+        logging.error(traceback.format_exc())
+        return render_template('error.html', 
+                              error_title="更新失败", 
+                              error_message=f"更新STRM文件元数据失败: {str(e)}"), 500
+
+@app.route('/strm/update_video_id', methods=['POST'])
+def update_strm_video_id():
+    """更新STRM文件的视频ID并获取新的元数据"""
+    try:
+        file_id = request.form.get('file_id')
+        video_id = request.form.get('video_id')
+        
+        if not file_id or not video_id:
+            flash('文件ID和视频ID都必须提供', 'danger')
+            return redirect(url_for('strm_library'))
+        
+        # 转换为整数
+        file_id = int(file_id)
+        
+        # 获取数据库连接
+        db = JavbusDatabase()
+        
+        # 获取STRM文件
+        strm_file = db.get_strm_file(file_id)
+        if not strm_file:
+            flash('找不到指定的STRM文件', 'danger')
+            return redirect(url_for('strm_library'))
+        
+        # 更新视频ID
+        db.update_strm_video_id(file_id, video_id)
+        
+        # 获取电影信息
+        try:
+            # 使用movieinfo模块获取电影信息
+            movie_data = movieinfo.get_movie_info(video_id)
+            
+            if movie_data:
+                # 格式化电影数据
+                formatted_data = format_movie_data(movie_data)
+                
+                # 保存电影信息到数据库
+                db.save_movie(formatted_data)
+                
+                # 下载封面图片
+                cover_url = formatted_data.get('cover')
+                if cover_url:
+                    cover_path = os.path.join(config['image_directory'], 'covers', f"{video_id}.jpg")
+                    download_image(cover_url, cover_path)
+                
+                # 更新STRM文件的元数据
+                update_data = {
+                    'title': formatted_data.get('title', strm_file['title']),
+                    'date': formatted_data.get('date'),
+                    'actors': json.dumps(formatted_data.get('actresses', [])),
+                    'description': formatted_data.get('description', '')
+                }
+                
+                # 更新STRM元数据
+                db.update_strm_movie_info(file_id, update_data.get('title'), update_data.get('date'))
+                
+                # 更新带演员信息的元数据
+                db.update_strm_metadata(file_id, 
+                                       video_id=video_id, 
+                                       cover_image=formatted_data.get('cover', ''), 
+                                       actors=update_data.get('actors'))
+                
+                flash(f'成功更新视频ID并获取元数据: {video_id}', 'success')
+            else:
+                flash(f'无法获取视频ID为 {video_id} 的元数据', 'warning')
+        except Exception as e:
+            app.logger.error(f"获取电影信息出错: {str(e)}")
+            flash(f'已更新视频ID，但获取元数据失败: {str(e)}', 'warning')
+        
+        # 从引用URL中获取参数，而不是request.args
+        # 使用refer获取来源页面
+        referrer = request.referrer
+        
+        # 默认重定向到库主页
+        redirect_url = url_for('strm_library')
+        
+        # 获取原来的分类和查询参数
+        category = strm_file.get('category', '')
+        
+        if referrer and 'strm_library_search' in referrer:
+            # 是搜索页面
+            return redirect(url_for('strm_library_search', category=category))
+        else:
+            # 是普通库页面
+            return redirect(url_for('strm_library', category=category))
+            
+    except Exception as e:
+        app.logger.error(f"更新STRM视频ID时出错: {str(e)}")
+        app.logger.error(traceback.format_exc())
+        flash(f'更新视频ID时出错: {str(e)}', 'danger')
+        return redirect(url_for('strm_library'))
+
+# 115云盘库路由
+# 初始化115云盘库
+cloud115_lib = Cloud115Library(db)
+
+@app.route('/cloud115')
+def cloud115_library_route():
+    """Show 115 cloud library page"""
+    return redirect(url_for('cloud115_library'))
+
+@app.route('/cloud115/search')
+def cloud115_library_search():
+    """Search 115 cloud library"""
+    query = request.args.get('query', '')
+    category = request.args.get('category', '')
+    page = request.args.get('page', '1')
+    sort_by = request.args.get('sort_by', 'added_time')
+    sort_order = request.args.get('sort_order', 'desc')
+    
+    # Convert page to int and handle errors
+    try:
+        page = int(page)
+        if page < 1:
+            page = 1
+    except ValueError:
+        page = 1
+    
+    # Items per page
+    per_page = 24
+    offset = (page - 1) * per_page
+    
+    # Get search results with sorting applied at database level
+    cloud115_files = db.search_cloud115_files(
+        query, 
+        category=category if category else None, 
+        limit=per_page, 
+        offset=offset,
+        sort_by=sort_by,
+        sort_order=sort_order
+    )
+    
+    # Get all categories for the selector
+    categories = db.get_cloud115_categories()
+    
+    # Calculate pagination
+    if category:
+        total_count = len(db.search_cloud115_files(query, category=category))
+    else:
+        total_count = len(db.search_cloud115_files(query))
+    
+    total_pages = (total_count + per_page - 1) // per_page  # Ceiling division
+    
+    # Generate page numbers
+    max_visible_pages = 10
+    if total_pages <= max_visible_pages:
+        pages = list(range(1, total_pages + 1))
+    else:
+        # Show pages around current page
+        pages = list(range(
+            max(1, min(page - max_visible_pages // 2, total_pages - max_visible_pages + 1)),
+            min(total_pages + 1, max(page + max_visible_pages // 2 + 1, max_visible_pages + 1))
+        ))
+    
+    # Pagination info
+    pagination = {
+        'current_page': page,
+        'total_pages': total_pages,
+        'has_next': page < total_pages,
+        'next_page': min(page + 1, total_pages),
+        'pages': pages
+    }
+    
+    # Get the display text for the current sort option
+    sort_display = get_sort_display(sort_by, sort_order)
+    
+    return render_template('cloud115_library.html', 
+                          cloud115_files=cloud115_files, 
+                          categories=categories, 
+                          current_category=category,
+                          pagination=pagination if total_pages > 1 else None,
+                          search_query=query,
+                          sort_by=sort_by,
+                          sort_order=sort_order,
+                          sort_display=sort_display)
+
+@app.route('/cloud115/library')
+def cloud115_library():
+    """Show 115 cloud library page"""
+    category = request.args.get('category', '')
+    page = request.args.get('page', '1')
+    sort_by = request.args.get('sort_by', 'added_time')
+    sort_order = request.args.get('sort_order', 'desc')
+    
+    # Convert page to int and handle errors
+    try:
+        page = int(page)
+        if page < 1:
+            page = 1
+    except ValueError:
+        page = 1
+    
+    # Items per page
+    per_page = 24
+    offset = (page - 1) * per_page
+    
+    # Get cloud115 files with sorting applied at database level
+    cloud115_files = db.get_cloud115_files(
+        category=category if category else None, 
+        limit=per_page, 
+        offset=offset,
+        sort_by=sort_by,
+        sort_order=sort_order
+    )
+    
+    # Get all categories for the selector
+    categories = db.get_cloud115_categories()
+    
+    # Calculate pagination
+    if category:
+        total_count = len(db.get_cloud115_files(category=category))
+    else:
+        total_count = len(db.get_cloud115_files())
+    
+    total_pages = (total_count + per_page - 1) // per_page  # Ceiling division
+    
+    # Generate page numbers
+    max_visible_pages = 10
+    if total_pages <= max_visible_pages:
+        pages = list(range(1, total_pages + 1))
+    else:
+        # Show pages around current page
+        pages = list(range(
+            max(1, min(page - max_visible_pages // 2, total_pages - max_visible_pages + 1)),
+            min(total_pages + 1, max(page + max_visible_pages // 2 + 1, max_visible_pages + 1))
+        ))
+    
+    # Pagination info
+    pagination = {
+        'current_page': page,
+        'total_pages': total_pages,
+        'has_next': page < total_pages,
+        'next_page': min(page + 1, total_pages),
+        'pages': pages
+    }
+    
+    # Get the display text for the current sort option
+    sort_display = get_sort_display(sort_by, sort_order)
+    
+    return render_template('cloud115_library.html', 
+                          cloud115_files=cloud115_files, 
+                          categories=categories, 
+                          current_category=category,
+                          pagination=pagination if total_pages > 1 else None,
+                          sort_by=sort_by,
+                          sort_order=sort_order,
+                          sort_display=sort_display)
+
+@app.route('/cloud115/id_extractor')
+def cloud115_id_extractor_page():
+    """显示115云盘视频ID提取器页面"""
+    # 获取分类列表
+    categories = db.get_cloud115_categories()
+    
+    # 获取默认字典
+    dictionary = cloud115_lib.get_default_dictionary() if hasattr(cloud115_lib, 'get_default_dictionary') else []
+    
+    # 如果字典为空且strm_lib可用，从strm_lib获取字典
+    if not dictionary and 'strm_lib' in globals():
+        dictionary = strm_lib.get_default_dictionary()
+    
+    # 如果字典还是空的，使用预设值
+    if not dictionary:
+        # 将默认字典保存到文件
+        os.makedirs("config", exist_ok=True)
+        with open("config/filter_dictionary.txt", 'w', encoding='utf-8') as f:
+            for line in [
+                # 常见前缀/后缀
+                "[Thz.la]", "720p", "720P", "1080p", "1080P", "FHD", "[FHD]",
+                # 演员前缀
+                "1pondo-", "1Pon", "1Pondo", "1pon", "1pondo", "Carib", "carib", 
+                "-pacopacomama", "]Caribbean", "Caribbean", "paco-", "paco_",
+                # 网站标识
+                "YA88.CC", "dioguitar23", "avav77.xyz", "Myxav.Pw",
+                "hjd2048", "fun2048", "Vol", "_hd_", "_hd", "QJ530", 
+                "boy999", "play999", "av9", "xv9",
+                # 分辨率标识
+                "00Kbps", "000Kbps", "-4K", "-4k", "PP168", "chd1080", "-3D"
+            ]:
+                f.write(f"{line}\n")
+        
+        # 读取字典
+        dictionary = []
+        try:
+            with open("config/filter_dictionary.txt", 'r', encoding='utf-8') as f:
+                dictionary = [line.strip() for line in f if line.strip()]
+        except Exception as e:
+            logging.error(f"读取云盘过滤字典出错: {str(e)}")
+    
+    return render_template('115_id_extractor.html', 
+                          categories=categories, 
+                          dictionary=dictionary)
+
+# 添加一个兼容路由，与HTML文件中使用的url_for('cloud115_id_extractor')一致
+@app.route('/cloud115_id_extractor')
+def cloud115_id_extractor():
+    """重定向到正确的115云盘ID提取器页面"""
+    return redirect(url_for('cloud115_id_extractor_page'))
+
+@app.route('/cloud115/save_dictionary', methods=['POST'])
+def save_cloud115_dictionary():
+    """保存115云盘视频ID提取器的过滤字典"""
+    dictionary_text = request.form.get('dictionary', '')
+    dictionary_list = [line.strip() for line in dictionary_text.split('\n') if line.strip()]
+    
+    # 保存到文件
+    try:
+        os.makedirs("config", exist_ok=True)
+        with open("config/filter_dictionary.txt", 'w', encoding='utf-8') as f:
+            for item in dictionary_list:
+                f.write(f"{item}\n")
+        flash("过滤字典保存成功")
+    except Exception as e:
+        flash(f"过滤字典保存失败: {str(e)}", "error")
+        logging.error(f"保存115云盘过滤字典出错: {str(e)}")
+    
+    # 重定向回提取器页面
+    return redirect(url_for('cloud115_id_extractor_page'))
+
+@app.route('/cloud115/extract_ids', methods=['POST'])
+def extract_cloud115_ids():
+    """执行115云盘视频ID提取"""
+    category = request.form.get('category', '')
+    preview_only = request.form.get('preview_only', '1') == '1'
+    
+    # 获取字典
+    dictionary = []
+    try:
+        with open("config/filter_dictionary.txt", 'r', encoding='utf-8') as f:
+            dictionary = [line.strip() for line in f if line.strip()]
+    except Exception as e:
+        logging.error(f"读取115云盘过滤字典出错: {str(e)}")
+    
+    results = []
+    updated_count = 0
+    
+    try:
+        # 导入VideoIDMatcher模块
+        from modules.video_id_matcher import VideoIDMatcher
+        matcher = VideoIDMatcher()
+        
+        # 加载字典
+        if dictionary:
+            matcher.load_dictionary_from_json(dictionary)
+            
+        # 获取文件
+        cloud115_files = db.get_cloud115_files(category=category if category else None)
+        
+        if not cloud115_files:
+            flash("未找到任何115云盘文件。", "warning")
+            # 渲染结果页面
+            categories = db.get_cloud115_categories()
+            return render_template('115_id_extractor.html', 
+                                  categories=categories, 
+                                  dictionary=dictionary,
+                                  results=[],
+                                  updated_count=0,
+                                  preview_only=preview_only,
+                                  selected_category=category)
+        
+        # 处理文件
+        processed_files = matcher.process_strm_files(cloud115_files)
+        
+        # 如果预览模式，只生成结果
+        if preview_only:
+            # 准备预览结果
+            for file in processed_files:
+                file_id = file.get('id')
+                video_id = file.get('video_id')
+                original_title = file.get('title', '')
+                
+                # 预览标题更新
+                updated_title = matcher.update_strm_title(file, video_id)
+                
+                results.append({
+                    'id': file_id,
+                    'video_id': video_id,
+                    'title': updated_title,
+                    'original_title': original_title
+                })
+        else:
+            # 实际更新模式
+            # 更新数据库
+            for file in processed_files:
+                file_id = file.get('id')
+                video_id = file.get('video_id')
+                original_title = file.get('title', '')
+                
+                # 获取更新后的标题
+                updated_title = matcher.update_strm_title(file, video_id)
+                
+                # 更新数据库
+                if db.update_cloud115_video_id(file_id, video_id, updated_title):
+                    updated_count += 1
+                    
+                    # 尝试获取影片信息
+                    movie_data = get_movie_data(video_id)
+                    if movie_data:
+                        # 更新文件的封面和演员信息
+                        actors = [star.get('name', '') for star in movie_data.get('stars', [])]
+                        db.update_cloud115_metadata(
+                            file_id,
+                            cover_image=movie_data.get('img', ''),
+                            actors=actors
+                        )
+                
+                results.append({
+                    'id': file_id,
+                    'video_id': video_id,
+                    'title': updated_title,
+                    'original_title': original_title
+                })
+            
+            flash(f"已成功更新 {updated_count} 个文件的影片ID。", "success")
+    except Exception as e:
+        logging.error(f"提取115云盘文件影片ID错误: {str(e)}")
+        import traceback
+        logging.error(traceback.format_exc())
+        flash(f"提取视频ID时出错: {str(e)}", "error")
+    
+    # 渲染结果页面
+    categories = db.get_cloud115_categories()
+    
+    return render_template('115_id_extractor.html', 
+                          categories=categories, 
+                          dictionary=dictionary,
+                          results=results,
+                          updated_count=updated_count,
+                          preview_only=preview_only,
+                          selected_category=category)
+
+@app.route('/cloud115/player/<int:file_id>', methods=['GET'])
+def cloud115_player(file_id):
+    """115云盘视频播放页面"""
+    try:
+        # 获取文件信息
+        file_info = db.get_cloud115_file(file_id)
+        if not file_info:
+            flash('找不到指定的视频文件', 'danger')
+            return redirect(url_for('cloud115_library'))
+        
+        # 更新播放次数
+        db.update_cloud115_play_count(file_id)
+        
+        # 返回播放页面
+        return render_template(
+            'cloud115_player.html',
+            title=file_info.get('title', '未命名视频'),
+            file_id=file_id
+        )
+    except Exception as e:
+        app.logger.error(f"Error rendering 115 player page: {str(e)}", exc_info=True)
+        flash(f'加载播放器失败: {str(e)}', 'danger')
+        return redirect(url_for('cloud115_library'))
+
+@app.route('/cloud115/import_directory', methods=['POST'])
+def cloud115_import_directory_deprecated():
+    """已移除此方法，使用/api/cloud115/import_directory替代
+    
+    此方法的实现与/api/cloud115/import_directory重复，已移除以避免Flask路由冲突。
+    请使用/api/cloud115/import_directory路由。
+    """
+    return jsonify({
+        'success': False,
+        'message': '此接口已弃用，请使用/api/cloud115/import_directory'
+    })
+
+
+
+@app.route('/api/update_cloud115_video_id', methods=['POST'])
+def update_cloud115_video_id():
+    """更新115云盘文件的影片ID和标题"""
+    file_id = request.form.get('file_id')
+    video_id = request.form.get('video_id', '').strip()
+    title = request.form.get('title')  # 获取标题参数
+    
+    try:
+        # 检查数据
+        if not file_id:
+            return jsonify({'success': False, 'message': '缺少文件ID'}), 400
+        
+        file_id = int(file_id)
+        
+        # 更新数据库
+        if db.update_cloud115_video_id(file_id, video_id, title):
+            # 如果提供了影片ID，尝试获取影片信息
+            if video_id:
+                # 获取影片数据
+                movie_data = get_movie_data(video_id)
+                if movie_data:
+                    # 格式化电影数据
+                    formatted_movie = format_movie_data(movie_data)
+                    
+                    # 准备演员数据 (JSON格式)
+                    actors_data = []
+                    for actor in formatted_movie.get("actors", []):
+                        actors_data.append({
+                            "id": actor.get("id", ""),
+                            "name": actor.get("name", ""),
+                            "image_url": actor.get("image_url", "")
+                        })
+                    
+                    # 将演员数据序列化为JSON字符串
+                    actors_json = json.dumps(actors_data)
+                    
+                    # 获取封面图片URL
+                    cover_image = formatted_movie.get("image_url", "")
+                    
+                    # 获取电影标题和发布日期
+                    movie_title = formatted_movie.get("title", "")
+                    movie_date = formatted_movie.get("date", "")
+                    
+                    # 更新元数据
+                    db.update_cloud115_metadata(
+                        file_id,
+                        video_id=video_id,
+                        cover_image=cover_image,
+                        actors=actors_json
+                    )
+                    
+                    # 更新标题和日期 (如果没有提供标题，使用影片标题)
+                    if not title:
+                        db.update_cloud115_movie_info(
+                            file_id,
+                            title=movie_title,
+                            date=movie_date
+                        )
+                    else:
+                        # 如果有自定义标题，仅更新日期
+                        db.update_cloud115_movie_info(
+                            file_id,
+                            date=movie_date
+                        )
+            
+            return redirect(url_for('cloud115_library'))
+        else:
+            return render_template('error.html', 
+                                 error_title="更新错误", 
+                                 error_message="更新影片ID失败"), 500
+    except Exception as e:
+        logging.error(f"更新115云盘文件影片ID错误: {str(e)}")
+        return render_template('error.html', 
+                             error_title="更新错误", 
+                             error_message=f"发生错误: {str(e)}"), 500
+
+@app.route('/api/extract_cloud115_video_ids', methods=['POST'])
+def extract_cloud115_video_ids():
+    """从115云盘文件名中提取视频ID"""
+    try:
+        # 获取请求数据
+        data = request.json
+        category = data.get('category')
+        dictionary = data.get('dictionary')
+        
+        # 调用提取方法
+        result = cloud115_lib.extract_video_ids(category=category, dictionary=dictionary)
+        
+        return jsonify(result)
+    except Exception as e:
+        logging.error(f"提取115云盘文件影片ID错误: {str(e)}")
+        return jsonify({'success': {}, 'failed': [str(e)]}), 500
+
+@app.route('/cloud115/delete/<int:file_id>', methods=['POST'])
+def delete_cloud115_file(file_id):
+    """删除一个115云盘文件"""
+    # 获取文件信息（用于重定向）
+    file_info = db.get_cloud115_file(file_id)
+    category = file_info.get('category', '') if file_info else ''
+    
+    # 删除文件
+    result = cloud115_lib.delete_cloud115_file(file_id)
+    
+    # 重定向到库页面
+    if result:
+        return redirect(url_for('cloud115_library', category=category))
+    else:
+        return render_template('error.html', 
+                             error_title="删除失败", 
+                             error_message=f"删除ID为 {file_id} 的115云盘文件失败"), 500
+
+@app.route('/api/clear_cloud115_files', methods=['POST'])
+def clear_cloud115_files():
+    """删除所有115云盘记录"""
+    try:
+        # 删除所有文件
+        count = cloud115_lib.delete_all_files()
+        logging.info(f"已删除所有115云盘记录，共 {count} 个")
+        
+        return redirect(url_for('cloud115_library'))
+    except Exception as e:
+        logging.error(f"删除所有115云盘记录失败: {str(e)}")
+        return render_template('error.html', 
+                              error_title="删除失败", 
+                              error_message=f"删除所有115云盘记录失败: {str(e)}"), 500
+
+@app.route('/cloud115/delete_category/<category>', methods=['POST'])
+def delete_cloud115_category(category):
+    """删除指定分类的115云盘记录"""
+    try:
+        # 删除指定分类的文件
+        count = cloud115_lib.delete_files_by_category(category)
+        logging.info(f"已删除分类 '{category}' 的115云盘记录，共 {count} 个")
+        
+        return redirect(url_for('cloud115_library'))
+    except Exception as e:
+        logging.error(f"删除分类 '{category}' 的115云盘记录失败: {str(e)}")
+        return render_template('error.html', 
+                              error_title="删除失败", 
+                              error_message=f"删除分类 '{category}' 的115云盘记录失败: {str(e)}"), 500
+
+# 115云盘登录与授权相关API
+# 预设的115 APP ID
+CLOUD115_CLIENT_ID = "100196935"  # 请替换为实际的115 APP ID
+
+# 存储用户token信息的文件
+CLOUD115_TOKEN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'cloud115_token.json')
+
+def load_cloud115_token():
+    """加载115云盘Token信息"""
+    if os.path.exists(CLOUD115_TOKEN_FILE):
+        try:
+            with open(CLOUD115_TOKEN_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return None
+    return None
+
+def save_cloud115_token(token_data):
+    """保存115云盘Token信息"""
+    os.makedirs(os.path.dirname(CLOUD115_TOKEN_FILE), exist_ok=True)
+    with open(CLOUD115_TOKEN_FILE, 'w', encoding='utf-8') as f:
+        json.dump(token_data, f)
+
+def is_cloud115_token_valid():
+    """检查115云盘Token是否有效"""
+    token_data = load_cloud115_token()
+    if not token_data or 'access_token' not in token_data:
+        app.logger.debug("No access token available")
+        return False
+    
+    # 如果token过期时间小于当前时间，则认为token已过期
+    current_time = time.time()
+    if 'expires_at' in token_data and token_data['expires_at'] < current_time:
+        app.logger.debug(f"Token expired. Expiry: {token_data['expires_at']}, Current: {current_time}")
+        # 尝试使用refresh_token刷新
+        app.logger.info("Token expired, attempting to refresh")
+        refreshed = refresh_cloud115_token()
+        return refreshed
+    
+    # 如果距离过期时间小于1小时，预先刷新token
+    if 'expires_at' in token_data and token_data['expires_at'] - current_time < 3600:
+        app.logger.info("Token expiring soon, refreshing proactively")
+        refresh_cloud115_token()
+        
+    app.logger.debug("Token is valid")
+    return True
+
+def refresh_cloud115_token():
+    """刷新115云盘Token"""
+    try:
+        # 获取当前保存的token信息
+        token_data = load_cloud115_token()
+        if not token_data or 'refresh_token' not in token_data:
+            app.logger.warning("No refresh token available")
+            return False
+            
+        refresh_token = token_data['refresh_token']
+        app.logger.debug(f"Attempting to refresh token with refresh_token")
+        
+        # 构建请求参数
+        params = {
+            'refresh_token': refresh_token
+        }
+        
+        # 请求刷新token
+        response = requests.post(
+            'https://passportapi.115.com/open/refreshToken',
+            data=params,
+            headers={'Content-Type': 'application/x-www-form-urlencoded'}
+        )
+        
+        app.logger.debug(f"Refresh token response status: {response.status_code}")
+        
+        # 解析响应
+        try:
+            response_json = response.json()
+            app.logger.debug(f"Refresh token response: {response_json}")
+            
+            # 如果刷新成功，更新token信息
+            if response_json.get('state') == 1 and 'data' in response_json and 'access_token' in response_json['data']:
+                new_token_data = response_json['data']
+                
+                # 更新过期时间
+                if 'expires_in' in new_token_data:
+                    new_token_data['expires_at'] = time.time() + new_token_data['expires_in']
+                
+                # 保存新token
+                save_cloud115_token(new_token_data)
+                app.logger.info("Token refreshed successfully")
+                return True
+            else:
+                app.logger.warning(f"Failed to refresh token: {response_json}")
+                return False
+        except Exception as e:
+            app.logger.error(f"Error parsing refresh token response: {str(e)}", exc_info=True)
+            return False
+    except Exception as e:
+        app.logger.error(f"Error refreshing token: {str(e)}", exc_info=True)
+        return False
+
+@app.route('/api/cloud115/auth_device_code', methods=['POST'])
+def cloud115_auth_device_code():
+    """获取115云盘设备码和二维码"""
+    try:
+        data = request.get_json()
+        app.logger.debug(f"Received auth device code request with data: {data}")
+        
+        if not data or 'code_challenge' not in data or 'code_challenge_method' not in data:
+            app.logger.error("Missing required parameters for auth device code")
+            return jsonify({
+                'state': 0,
+                'code': 400,
+                'message': '参数错误'
+            })
+        
+        # 构建请求参数
+        params = {
+            'client_id': CLOUD115_CLIENT_ID,
+            'code_challenge': data['code_challenge'],
+            'code_challenge_method': data['code_challenge_method']
+        }
+        
+        app.logger.debug(f"Sending auth device code request with params: {params}")
+        
+        # 请求115授权服务器获取设备码
+        response = requests.post(
+            'https://passportapi.115.com/open/authDeviceCode',
+            data=params,
+            headers={'Content-Type': 'application/x-www-form-urlencoded'}
+        )
+        
+        response_json = response.json()
+        app.logger.debug(f"Auth device code response: {response_json}")
+        
+        # 返回115授权服务器的响应
+        return response_json
+    except Exception as e:
+        app.logger.error(f"获取115设备码错误: {str(e)}", exc_info=True)
+        return jsonify({
+            'state': 0,
+            'code': 500,
+            'message': f'获取设备码失败: {str(e)}'
+        })
+
+@app.route('/api/cloud115/poll_auth_status', methods=['GET'])
+def cloud115_poll_auth_status():
+    """轮询115云盘授权状态"""
+    try:
+        # 获取请求参数
+        uid = request.args.get('uid')
+        time_param = request.args.get('time')
+        sign = request.args.get('sign')
+        
+        app.logger.debug(f"Poll auth status request with params: uid={uid}, time={time_param}, sign={sign}")
+        
+        if not uid or not time_param or not sign:
+            app.logger.error("Missing required parameters for poll auth status")
+            return jsonify({
+                'state': 0,
+                'code': 400,
+                'message': '参数错误'
+            })
+        
+        # 请求115授权服务器获取授权状态
+        request_url = f'https://qrcodeapi.115.com/get/status/?uid={uid}&time={time_param}&sign={sign}'
+        app.logger.debug(f"Requesting auth status from URL: {request_url}")
+        
+        response = requests.get(request_url)
+        
+        # 记录返回值
+        response_json = response.json()
+        app.logger.debug(f"Poll auth status response: {response_json}")
+        
+        # 返回115授权服务器的响应
+        return response_json
+    except Exception as e:
+        app.logger.error(f"轮询115授权状态错误: {str(e)}", exc_info=True)
+        return jsonify({
+            'state': 0,
+            'code': 500,
+            'message': f'轮询授权状态失败: {str(e)}'
+        })
+
+@app.route('/api/cloud115/device_code_to_token', methods=['POST'])
+def cloud115_device_code_to_token():
+    """用设备码换取115云盘访问令牌"""
+    try:
+        data = request.get_json()
+        app.logger.debug(f"Device code to token request with data: {data}")
+        
+        if not data or 'uid' not in data or 'code_verifier' not in data:
+            app.logger.error("Missing required parameters for device code to token")
+            return jsonify({
+                'state': 0,
+                'code': 400,
+                'message': '参数错误'
+            })
+        
+        # 构建请求参数 - 根据官方API文档
+        params = {
+            'uid': data['uid'],
+            'code_verifier': data['code_verifier']
+        }
+        
+        app.logger.debug(f"Sending device code to token request with params: {params}")
+        
+        # 使用官方API文档中的正确URL
+        auth_url = 'https://passportapi.115.com/open/deviceCodeToToken'
+        app.logger.debug(f"Requesting token from URL: {auth_url}")
+        
+        response = requests.post(
+            auth_url,
+            data=params,
+            headers={'Content-Type': 'application/x-www-form-urlencoded'}
+        )
+        
+        # 输出响应状态和内容
+        app.logger.debug(f"Token response status: {response.status_code}")
+        app.logger.debug(f"Token response text: {response.text}")
+        
+        # 解析响应数据
+        try:
+            response_json = response.json()
+        except Exception as json_error:
+            app.logger.error(f"Failed to parse JSON response: {str(json_error)}")
+            app.logger.error(f"Response text: {response.text}")
+            return jsonify({
+                'state': 0,
+                'code': 500,
+                'message': f'解析响应失败: {str(json_error)}'
+            })
+            
+        app.logger.debug(f"Device code to token response: {response_json}")
+        
+        # 如果获取token成功，保存token信息
+        if response_json.get('state') == 1 and 'data' in response_json and 'access_token' in response_json['data']:
+            token_data = response_json['data']
+            # 计算过期时间
+            if 'expires_in' in token_data:
+                token_data['expires_at'] = time.time() + token_data['expires_in']
+            
+            # 保存token路径
+            token_file_path = CLOUD115_TOKEN_FILE
+            app.logger.debug(f"Saving token to file: {token_file_path}")
+            
+            # 确保目录存在
+            token_dir = os.path.dirname(token_file_path)
+            if not os.path.exists(token_dir):
+                app.logger.debug(f"Creating token directory: {token_dir}")
+                os.makedirs(token_dir, exist_ok=True)
+            
+            # 保存token
+            try:
+                save_cloud115_token(token_data)
+                app.logger.debug("Token saved successfully")
+            except Exception as save_error:
+                app.logger.error(f"Error saving token: {str(save_error)}", exc_info=True)
+        else:
+            app.logger.warning(f"Failed to get access token: {response_json}")
+        
+        # 返回115授权服务器的响应
+        return response_json
+    except Exception as e:
+        app.logger.error(f"获取115访问令牌错误: {str(e)}", exc_info=True)
+        return jsonify({
+            'state': 0,
+            'code': 500,
+            'message': f'获取访问令牌失败: {str(e)}'
+        })
+
+@app.route('/api/cloud115/check_auth_status', methods=['GET'])
+def cloud115_check_auth_status():
+    """检查115云盘登录状态"""
+    try:
+        is_valid = is_cloud115_token_valid()
+        
+        if is_valid:
+            return jsonify({
+                'state': 1,
+                'code': 0,
+                'message': '已登录',
+                'data': {
+                    'logged_in': True
+                }
+            })
+        else:
+            return jsonify({
+                'state': 1,
+                'code': 0,
+                'message': '未登录',
+                'data': {
+                    'logged_in': False
+                }
+            })
+    except Exception as e:
+        app.logger.error(f"检查115登录状态错误: {str(e)}")
+        return jsonify({
+            'state': 0,
+            'code': 500,
+            'message': f'检查登录状态失败: {str(e)}'
+        })
+
+@app.route('/api/cloud115/logout', methods=['POST'])
+def cloud115_logout():
+    """退出115云盘登录"""
+    try:
+        # 删除token文件
+        if os.path.exists(CLOUD115_TOKEN_FILE):
+            os.remove(CLOUD115_TOKEN_FILE)
+        
+        return jsonify({
+            'state': 1,
+            'code': 0,
+            'message': '已退出登录'
+        })
+    except Exception as e:
+        app.logger.error(f"退出115登录错误: {str(e)}")
+        return jsonify({
+            'state': 0,
+            'code': 500,
+            'message': f'退出登录失败: {str(e)}'
+        })
+
+def get_cloud115_valid_token():
+    """获取有效的115云盘access token
+    
+    返回:
+        str: 有效的access token，如果没有则返回None
+    """
+    # 检查token是否有效，如需要会自动刷新
+    if not is_cloud115_token_valid():
+        app.logger.warning("Failed to get valid 115 token")
+        return None
+        
+    # 返回token
+    token_data = load_cloud115_token()
+    if token_data and 'access_token' in token_data:
+        return token_data['access_token']
     
     return None
+    
+# 数据库辅助方法
+def add_cloud115_file(file_data):
+    """添加115云盘文件记录到数据库
+    
+    Args:
+        file_data: 文件数据字典，包含必要字段
+            - file_id: 115文件ID
+            - title: 文件标题
+            - path: 文件路径
+            - size: 文件大小
+            - category: 分类
+            
+    Returns:
+        int: 新添加的记录ID，失败则返回None
+    """
+    try:
+        # 确保必要字段存在
+        required_fields = ['file_id', 'title', 'path', 'size', 'category']
+        for field in required_fields:
+            if field not in file_data:
+                app.logger.error(f"添加115云盘文件记录失败：缺少必要字段 {field}")
+                return None
+        
+        # 准备数据
+        now = int(time.time())
+        category = file_data.get('category', '未分类')
+        
+        # 在115云盘中，file_id 不是 pickcode，使用专门的pickcode字段
+        pickcode = file_data['pick_code']
+        
+        # 构建数据库记录
+        db_record = {
+            'title': file_data['title'],
+            'filepath': file_data['path'],  # 使用路径作为filepath
+            'url': f"https://115.com/?ct=file&ac=view&pickcode={pickcode}",  # 构建URL
+            'thumbnail': file_data.get('thumbnail', ''),
+            'description': file_data.get('description', ''),
+            'category': category,
+            'file_id': file_data['file_id'],  # 115文件ID
+            'pickcode': pickcode,  # 明确存储pickcode
+            'size': file_data['size'],
+            'date_added': now,
+            'play_count': 0,
+            'last_played': 0
+        }
+        
+        # 保存到数据库
+        return db.save_cloud115_file(db_record)
+    except Exception as e:
+        app.logger.error(f"添加115云盘文件记录失败：{str(e)}", exc_info=True)
+        return None
+
+# 115云盘文件操作相关API
+
+@app.route('/api/cloud115/files', methods=['GET'])
+def cloud115_files():
+    """获取115云盘文件列表"""
+    try:
+        # 参数获取
+        cid = request.args.get('cid', '0')  # 默认为根目录
+        limit = request.args.get('limit', '1150')
+        offset = request.args.get('offset', '0')
+        
+        # 获取token
+        access_token = get_cloud115_valid_token()
+        if not access_token:
+            return jsonify({
+                'state': 0,
+                'code': 401,
+                'message': '未授权，请先登录115云盘'
+            })
+        
+        # 构建请求参数
+        params = {
+            'cid': cid,
+            'limit': limit,
+            'offset': offset,
+            'show_dir': 1,  # 显示目录
+            'aid': 1,  # 正常文件
+            'o': 'user_utime',  # 按修改时间排序
+            'asc': 0,  # 降序
+        }
+        
+        # 发送请求获取文件列表
+        response = requests.get(
+            'https://proapi.115.com/open/ufile/files',
+            params=params,
+            headers={
+                'Authorization': f'Bearer {access_token}'
+            }
+        )
+        
+        app.logger.debug(f"115 files response status: {response.status_code}")
+        
+        # 解析响应
+        try:
+            response_data = response.json()
+            app.logger.debug(f"115 files response: {response_data}")
+            
+            # 返回文件列表
+            return jsonify({
+                'state': 1,
+                'code': 0,
+                'message': '',
+                'data': response_data.get('data', [])
+            })
+        except Exception as e:
+            app.logger.error(f"Error parsing 115 files response: {str(e)}", exc_info=True)
+            return jsonify({
+                'state': 0,
+                'code': 500,
+                'message': f'解析文件列表失败: {str(e)}'
+            })
+    except Exception as e:
+        app.logger.error(f"Error getting 115 files: {str(e)}", exc_info=True)
+        return jsonify({
+            'state': 0,
+            'code': 500,
+            'message': f'获取文件列表失败: {str(e)}'
+        })
+
+@app.route('/api/cloud115/folder_info', methods=['GET'])
+def cloud115_folder_info():
+    """获取115云盘文件夹信息"""
+    try:
+        # 参数获取
+        file_id = request.args.get('file_id')
+        
+        if not file_id:
+            return jsonify({
+                'state': 0,
+                'code': 400,
+                'message': '缺少文件夹ID参数'
+            })
+        
+        # 获取token
+        access_token = get_cloud115_valid_token()
+        if not access_token:
+            return jsonify({
+                'state': 0,
+                'code': 401,
+                'message': '未授权，请先登录115云盘'
+            })
+        
+        # 发送请求获取文件夹信息
+        response = requests.get(
+            'https://proapi.115.com/open/folder/get_info',
+            params={'file_id': file_id},
+            headers={
+                'Authorization': f'Bearer {access_token}'
+            }
+        )
+        
+        app.logger.debug(f"115 folder info response status: {response.status_code}")
+        
+        # 解析响应
+        try:
+            response_data = response.json()
+            app.logger.debug(f"115 folder info response: {response_data}")
+            
+            # 返回文件夹信息
+            return jsonify({
+                'state': 1,
+                'code': 0,
+                'message': '',
+                'data': response_data.get('data', {})
+            })
+        except Exception as e:
+            app.logger.error(f"Error parsing 115 folder info response: {str(e)}", exc_info=True)
+            return jsonify({
+                'state': 0,
+                'code': 500,
+                'message': f'解析文件夹信息失败: {str(e)}'
+            })
+    except Exception as e:
+        app.logger.error(f"Error getting 115 folder info: {str(e)}", exc_info=True)
+        return jsonify({
+            'state': 0,
+            'code': 500,
+            'message': f'获取文件夹信息失败: {str(e)}'
+        })
+
+@app.route('/api/cloud115/import_directory', methods=['POST'])
+def cloud115_import_directory_api():
+    """导入115云盘目录中的视频文件"""
+    try:
+        data = request.get_json()
+        if not data or 'folder_id' not in data:
+            return jsonify({
+                'success': False,
+                'message': '缺少文件夹ID'
+            })
+        
+        folder_id = data['folder_id']
+        min_size_mb = data.get('min_size_mb', 50)  # 默认最小文件大小为50MB
+        category_type = data.get('category_type', 'movies')  # 默认分类为电影
+        
+        # 将MB转换为字节
+        min_size_bytes = min_size_mb * 1024 * 1024
+        
+        app.logger.debug(f"导入115目录，文件夹ID：{folder_id}，最小文件大小：{min_size_mb}MB, 导入类别：{category_type}")
+        
+        # 获取token
+        access_token = get_cloud115_valid_token()
+        if not access_token:
+            return jsonify({
+                'success': False,
+                'message': '未授权，请先登录115云盘'
+            })
+        
+        # 获取文件夹信息
+        folder_info_response = requests.get(
+            'https://proapi.115.com/open/folder/get_info',
+            params={'file_id': folder_id},
+            headers={
+                'Authorization': f'Bearer {access_token}'
+            }
+        )
+        
+        folder_info = folder_info_response.json().get('data', {})
+        folder_name = folder_info.get('file_name', '未命名文件夹')
+        
+        # 递归获取文件夹内所有视频文件
+        video_files = []
+        skipped_files = 0
+        
+        def get_videos_in_folder(folder_id, path=""):
+            """递归获取文件夹中的视频文件"""
+            nonlocal skipped_files
+            offset = 0
+            limit = 100
+            while True:
+                # 获取文件列表
+                files_response = requests.get(
+                    'https://proapi.115.com/open/ufile/files',
+                    params={
+                        'cid': folder_id,
+                        'limit': limit,
+                        'offset': offset,
+                        'show_dir': 1,
+                        'aid': 1
+                    },
+                    headers={
+                        'Authorization': f'Bearer {access_token}'
+                    }
+                )
+                
+                files_data = files_response.json()
+                files = files_data.get('data', [])
+                
+                if not files:
+                    break
+                
+                for file in files:
+                    current_path = f"{path}/{file['fn']}" if path else file['fn']
+                    
+                    if file['fc'] == '0':  # 文件夹
+                        # 递归处理子文件夹
+                        get_videos_in_folder(file['fid'], current_path)
+                    elif file['fc'] == '1':  # 文件
+                        # 检查是否为视频文件
+                        if file.get('isv') == 1 or file['ico'].lower() in ['mp4', 'mkv', 'avi', 'wmv', 'mov', 'flv', 'm4v', 'rmvb', 'rm']:
+                            # 检查文件大小是否大于最小值
+                            file_size = int(file['fs']) if 'fs' in file else 0
+                            
+                            if min_size_mb > 0 and file_size < min_size_bytes:
+                                skipped_files += 1
+                                app.logger.debug(f"跳过小文件：{file['fn']}，大小：{file_size/1024/1024:.2f}MB")
+                                continue
+                                
+                            # 获取文件详情，获取正确的pickcode
+                            file_details_response = requests.get(
+                                'https://proapi.115.com/open/folder/get_info',
+                                params={'file_id': file['fid']},
+                                headers={
+                                    'Authorization': f'Bearer {access_token}'
+                                }
+                            )
+                            
+                            file_details = file_details_response.json().get('data', {})
+                            pick_code = file_details.get('pick_code', '')
+                            
+                            video_files.append({
+                                'file_id': file['fid'],
+                                'title': file['fn'],
+                                'path': current_path,
+                                'size': file_size,
+                                'category': category_type, # 使用导入类别
+                                'thumbnail': file.get('thumb', ''),
+                                'pick_code': pick_code  # 添加pick_code字段
+                            })
+                
+                # 更新偏移量
+                offset += len(files)
+                if len(files) < limit:
+                    break
+        
+        # 开始收集视频文件
+        get_videos_in_folder(folder_id)
+        
+        # 导入视频文件到数据库
+        imported_count = 0
+        for video in video_files:
+            try:
+                # 添加到数据库
+                if add_cloud115_file(video):
+                    imported_count += 1
+            except Exception as e:
+                app.logger.error(f"Error importing video {video['title']}: {str(e)}", exc_info=True)
+        
+        return jsonify({
+            'success': True,
+            'message': f'成功导入{imported_count}个视频文件，跳过{skipped_files}个小于{min_size_mb}MB的文件',
+            'total': len(video_files),
+            'imported': imported_count,
+            'skipped': skipped_files
+        })
+        
+    except Exception as e:
+        app.logger.error(f"Error importing 115 directory: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': f'导入目录失败: {str(e)}'
+        })
+
+@app.route('/api/cloud115/video_play_url', methods=['GET'])
+def cloud115_video_play_url():
+    """获取115云盘视频播放地址"""
+    try:
+        # 获取参数
+        file_id = request.args.get('file_id')
+        if not file_id:
+            return jsonify({
+                'success': False,
+                'message': '缺少文件ID参数'
+            })
+        
+        # 获取数据库中的文件信息，获取pick_code
+        file_info = db.get_cloud115_file(file_id)
+        if not file_info:
+            return jsonify({
+                'success': False,
+                'message': '文件不存在'
+            })
+        
+        # 直接使用数据库中的pickcode字段
+        pick_code = file_info.get('pickcode')
+        
+        # 如果pickcode为空，尝试从URL中提取
+        if not pick_code:
+            # 从URL中提取pick_code
+            url = file_info.get('url', '')
+            import re
+            pick_code_match = re.search(r'pickcode=([^&]+)', url)
+            if pick_code_match:
+                pick_code = pick_code_match.group(1)
+        
+        # 如果还是找不到pickcode，尝试使用file_id
+        if not pick_code:
+            pick_code = file_info.get('file_id')
+        
+        if not pick_code:
+            return jsonify({
+                'success': False,
+                'message': '无法获取文件的pick_code'
+            })
+        
+        # 获取token
+        access_token = get_cloud115_valid_token()
+        if not access_token:
+            return jsonify({
+                'success': False,
+                'message': '未授权，请先登录115云盘'
+            })
+        
+        # 请求视频播放地址
+        response = requests.get(
+            'https://proapi.115.com/open/video/play',
+            params={'pick_code': pick_code},
+            headers={
+                'Authorization': f'Bearer {access_token}'
+            }
+        )
+        
+        app.logger.debug(f"115 video play response status: {response.status_code}")
+        
+        try:
+            response_data = response.json()
+            app.logger.debug(f"115 video play response: {response_data}")
+            
+            if response_data.get('state') and response_data.get('data') and 'video_url' in response_data.get('data', {}):
+                # 更新播放计数
+                db.update_cloud115_play_count(file_id)
+                
+                # 返回视频播放信息
+                return jsonify({
+                    'success': True,
+                    'data': response_data.get('data'),
+                    'title': file_info.get('title', '')
+                })
+            else:
+                error_msg = response_data.get('message') or '获取播放地址失败'
+                app.logger.error(f"Error getting 115 video URL: {error_msg}")
+                return jsonify({
+                    'success': False,
+                    'message': error_msg
+                })
+        except Exception as e:
+            app.logger.error(f"Error parsing 115 video play response: {str(e)}", exc_info=True)
+            return jsonify({
+                'success': False,
+                'message': f'解析播放地址失败: {str(e)}'
+            })
+    except Exception as e:
+        app.logger.error(f"Error getting 115 video play URL: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': f'获取播放地址失败: {str(e)}'
+        })
+
+@app.route('/find_cloud115_by_video_id/<video_id>', methods=['GET'])
+def find_cloud115_by_video_id(video_id):
+    """根据视频ID查找并播放115云盘文件"""
+    try:
+        # 获取所有云盘文件
+        cloud115_files = db.get_cloud115_files()
+        
+        # 查找匹配指定视频ID的文件
+        matching_files = [file for file in cloud115_files if file.get('video_id') == video_id]
+        
+        if matching_files:
+            # 找到匹配的文件，使用第一个匹配项
+            file_id = matching_files[0].get('id')
+            app.logger.info(f"为视频ID {video_id} 找到115云盘文件，重定向到播放器")
+            return redirect(url_for('cloud115_player', file_id=file_id))
+        else:
+            # 未找到匹配的文件，显示错误页面
+            app.logger.warning(f"未找到视频ID为 {video_id} 的115云盘文件")
+            return render_template('error.html', 
+                                  error_title="115云盘文件未找到", 
+                                  error_message=f"无法找到视频ID为 {video_id} 的115云盘文件，请确保您已将此影片添加到115云盘目录并导入。您可以在影片详情页面添加磁力链接到您的115云盘并再次导入该影片存储目录。")
+    except Exception as e:
+        app.logger.error(f"查找115云盘文件错误: {str(e)}", exc_info=True)
+        return render_template('error.html', 
+                              error_title="查找错误", 
+                              error_message=f"查找115云盘文件时出错: {str(e)}")
+
+@app.route('/api/cloud115/proxy')
+def cloud115_proxy_stream():
+    """专用于115云盘的视频流代理，处理HLS流和TS片段"""
+    stream_url = request.args.get('url')
+    logging.info(f"115云盘视频流代理请求: {stream_url}")
+    
+    if not stream_url:
+        return jsonify({"error": "Missing URL parameter"}), 400
+        
+    try:
+        # 解码URL并处理嵌套代理问题
+        original_url = urllib.parse.unquote(stream_url)
+        
+        # 递归解析嵌套的代理URL
+        while "/api/cloud115/proxy" in original_url or "/api/proxy/stream" in original_url:
+            parsed = urllib.parse.urlparse(original_url)
+            query = urllib.parse.parse_qs(parsed.query)
+            if 'url' in query and query['url']:
+                original_url = urllib.parse.unquote(query['url'][0])
+                logging.info(f"115云盘代理解嵌套URL: {original_url}")
+            else:
+                break
+        
+        # 最终解码后的URL
+        decoded_url = original_url
+        logging.info(f"115云盘最终代理URL: {decoded_url}")
+        
+        # 获取URL的基本路径（用于解析相对路径）
+        url_parts = urllib.parse.urlparse(decoded_url)
+        base_url = f"{url_parts.scheme}://{url_parts.netloc}{os.path.dirname(url_parts.path)}/"
+        base_domain = f"{url_parts.scheme}://{url_parts.netloc}"
+        
+        # 设置115云盘专用请求头
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "*/*",
+            "Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Origin": "https://115.com",
+            "Referer": "https://115.com/"
+        }
+        
+        # 传递一些重要的请求头
+        important_headers = ["Range", "If-Modified-Since", "If-None-Match", "If-Range", "Cache-Control"]
+        for header in important_headers:
+            if header.lower() in request.headers:
+                headers[header] = request.headers[header.lower()]
+        
+        # 检测是否为TS片段请求
+        is_ts_segment = decoded_url.endswith('.ts') or '.ts?' in decoded_url
+        
+        # 发送请求
+        response = requests.get(
+            decoded_url,
+            headers=headers,
+            stream=True,
+            timeout=10,
+            verify=False
+        )
+        
+        # 检查响应状态
+        if response.status_code >= 400:
+            logging.error(f"115云盘代理请求失败: HTTP {response.status_code}")
+            return jsonify({
+                "error": f"Remote server returned HTTP {response.status_code}",
+                "url": decoded_url
+            }), response.status_code
+            
+        # 获取内容类型
+        content_type = response.headers.get("Content-Type", "application/octet-stream")
+        
+        # 特殊处理M3U8文件，修改其中的相对URL为代理URL
+        if ("application/vnd.apple.mpegurl" in content_type or 
+            "application/x-mpegurl" in content_type or 
+            decoded_url.endswith(".m3u8") or 
+            ".m3u8?" in decoded_url):
+            
+            logging.info("检测到115云盘M3U8文件，进行处理")
+            content = response.text
+            processed_content = ""
+            
+            # 处理每一行
+            for line in content.splitlines():
+                # 处理注释和空行
+                if line.strip() == "" or line.startswith("#"):
+                    processed_content += line + "\n"
+                    continue
+                
+                # 对于有效的内容行（通常是视频片段路径）
+                # 处理URL
+                absolute_url = ""
+                if line.startswith("http"):
+                    # 已经是绝对URL
+                    absolute_url = line
+                elif line.startswith("/"):
+                    # 以斜杠开头的相对URL（相对于域名根目录）
+                    absolute_url = base_domain + line
+                else:
+                    # 常规相对URL，转换为绝对URL
+                    absolute_url = urllib.parse.urljoin(base_url, line)
+                
+                # 将URL转换为专用115代理URL
+                encoded_url = urllib.parse.quote(absolute_url)
+                proxy_url = f"/api/cloud115/proxy?url={encoded_url}"
+                processed_content += proxy_url + "\n"
+                logging.debug(f"115云盘M3U8处理: {line} -> {proxy_url}")
+            
+            # 创建响应
+            proxy_response = Response(
+                processed_content,
+                status=response.status_code
+            )
+            
+            # 设置内容类型
+            proxy_response.headers["Content-Type"] = "application/vnd.apple.mpegurl"
+            
+        else:
+            # 对于TS片段和其他二进制内容
+            # 创建响应 - 以块方式流式传输内容
+            proxy_response = Response(
+                stream_with_context(response.iter_content(chunk_size=8192)),
+                status=response.status_code
+            )
+            
+            # 设置内容类型
+            if is_ts_segment and "text" in content_type:
+                # 强制设置TS片段的内容类型
+                proxy_response.headers["Content-Type"] = "video/mp2t"
+            else:
+                proxy_response.headers["Content-Type"] = content_type
+        
+        # 设置CORS头
+        proxy_response.headers["Access-Control-Allow-Origin"] = "*"
+        proxy_response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        proxy_response.headers["Access-Control-Allow-Headers"] = "Origin, X-Requested-With, Content-Type, Accept, Range"
+        
+        # 复制其他重要的响应头
+        for header in ["Content-Length", "Content-Range", "Accept-Ranges", "Cache-Control", "Etag"]:
+            if header in response.headers:
+                proxy_response.headers[header] = response.headers[header]
+                    
+        logging.info(f"115云盘代理流成功: {content_type}")
+        return proxy_response
+        
+    except Exception as e:
+        logging.error(f"115云盘代理流失败: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/cloud115/sync_movie_info', methods=['POST'])
+def sync_cloud115_movie_info():
+    """同步所有115云盘文件的电影信息"""
+    try:
+        # 创建Cloud115Library实例并执行同步
+        from cloud115_library import Cloud115Library
+        cloud115_lib = Cloud115Library(db)
+        result = cloud115_lib.sync_cloud115_movie_info()
+        
+        if result["success"] > 0:
+            flash(f"成功获取了 {result['success']} 个115云盘文件的影片详情", "success")
+        
+        if result["failed"] > 0:
+            flash(f"{result['failed']} 个文件获取影片详情失败", "warning")
+            
+        return redirect(url_for('cloud115_library'))
+    except Exception as e:
+        app.logger.error(f"同步115云盘文件信息错误: {str(e)}")
+        flash(f"同步115云盘文件信息时出错: {str(e)}")
+        return redirect(url_for('cloud115_library'))
+
+@app.route('/api/cloud115/add_offline_download', methods=['POST'])
+def cloud115_add_offline_download():
+    """添加115云盘离线下载任务"""
+    try:
+        # 获取请求参数
+        data = request.get_json()
+        
+        if not data or 'urls' not in data:
+            return jsonify({
+                'success': False,
+                'message': '缺少必要参数：urls'
+            })
+        
+        urls = data.get('urls', '').strip()
+        wp_path_id = data.get('wp_path_id', '0')  # 默认保存到根目录
+        
+        if not urls:
+            return jsonify({
+                'success': False,
+                'message': '离线下载链接不能为空'
+            })
+        
+        # 获取token
+        access_token = get_cloud115_valid_token()
+        if not access_token:
+            return jsonify({
+                'success': False,
+                'message': '未授权，请先登录115云盘'
+            })
+        
+        # 构建请求参数
+        params = {
+            'urls': urls,
+            'wp_path_id': wp_path_id
+        }
+        
+        app.logger.debug(f"Adding 115 offline download task: {params}")
+        
+        # 发送请求添加离线下载任务
+        response = requests.post(
+            'https://proapi.115.com/open/offline/add_task_urls',
+            headers={
+                'Authorization': f'Bearer {access_token}',
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            data=params
+        )
+        
+        app.logger.debug(f"115 add offline download response status: {response.status_code}")
+        
+        # 解析响应
+        try:
+            response_data = response.json()
+            app.logger.debug(f"115 add offline download response: {response_data}")
+            
+            # 检查响应状态
+            if response_data.get('state') == 1:
+                return jsonify({
+                    'success': True,
+                    'message': '添加离线下载任务成功',
+                    'data': response_data.get('data', {})
+                })
+            else:
+                # 返回错误信息
+                error_message = response_data.get('message', '添加离线下载任务失败')
+                return jsonify({
+                    'success': False,
+                    'message': error_message
+                })
+        except Exception as e:
+            app.logger.error(f"Error parsing 115 add offline download response: {str(e)}", exc_info=True)
+            return jsonify({
+                'success': False,
+                'message': f'解析响应失败: {str(e)}'
+            })
+    except Exception as e:
+        app.logger.error(f"Error adding 115 offline download task: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': f'添加离线下载任务失败: {str(e)}'
+        })
+
+@app.route('/api/clear_all_data', methods=['POST'])
+def clear_all_data():
+    """API endpoint to clear all database tables"""
+    try:
+        logging.info("Clearing all database tables")
+        
+        # Ensure we have a valid database connection for this thread
+        db.ensure_connection()
+        conn = db.local.conn  # Now should work after ensure_connection is called
+        cursor = conn.cursor()
+        
+        # Get list of all tables in the database
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables = cursor.fetchall()
+        
+        # Delete data from each table
+        for table in tables:
+            table_name = table[0]
+            cursor.execute(f"DELETE FROM {table_name}")
+        
+        # Commit the changes
+        conn.commit()
+        
+        logging.info("All database tables cleared successfully")
+        return jsonify({"status": "success", "message": "All database data has been cleared"})
+    except Exception as e:
+        error_message = f"Failed to clear database data: {str(e)}"
+        logging.error(error_message)
+        return jsonify({"status": "error", "message": error_message}), 500
+
+@app.route('/api/clear_cached_images', methods=['POST'])
+def clear_cached_images():
+    """API endpoint to clear all cached images"""
+    try:
+        import shutil
+        
+        # Define the directories to clear
+        cache_dirs = ["buspic/covers", "buspic/actor"]
+        
+        # Add any movie-specific directories
+        for item in os.listdir("buspic"):
+            item_path = os.path.join("buspic", item)
+            if os.path.isdir(item_path) and item not in ["covers", "actor"]:
+                cache_dirs.append(item_path)
+        
+        # Clear each directory
+        cleared_files = 0
+        for directory in cache_dirs:
+            if os.path.exists(directory):
+                logging.info(f"Clearing cached images in {directory}")
+                for filename in os.listdir(directory):
+                    file_path = os.path.join(directory, filename)
+                    try:
+                        if os.path.isfile(file_path):
+                            os.unlink(file_path)
+                            cleared_files += 1
+                    except Exception as e:
+                        logging.error(f"Error removing {file_path}: {e}")
+        
+        logging.info(f"Cleared {cleared_files} cached image files")
+        return jsonify({"status": "success", "message": f"Cleared {cleared_files} cached image files"})
+    except Exception as e:
+        error_message = f"Failed to clear cached images: {str(e)}"
+        logging.error(error_message)
+        return jsonify({"status": "error", "message": error_message}), 500
+
+@app.route('/api/clear_logs', methods=['POST'])
+def clear_logs():
+    """API endpoint to clear all log files"""
+    try:
+        import os
+        
+        # Check if logs directory exists
+        if not os.path.exists('logs'):
+            return jsonify({"status": "success", "message": "No logs directory found"})
+        
+        # Clear log files
+        cleared_files = 0
+        for filename in os.listdir('logs'):
+            file_path = os.path.join('logs', filename)
+            try:
+                if os.path.isfile(file_path):
+                    # Special handling for webserver.log (the current log file)
+                    if filename == 'webserver.log':
+                        # Open and truncate the file instead of deleting it
+                        with open(file_path, 'w') as f:
+                            f.write("Log file cleared at " + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "\n")
+                    else:
+                        os.unlink(file_path)
+                    cleared_files += 1
+            except Exception as e:
+                logging.error(f"Error clearing log file {file_path}: {e}")
+        
+        logging.info(f"Cleared {cleared_files} log files")
+        return jsonify({"status": "success", "message": f"Cleared {cleared_files} log files"})
+    except Exception as e:
+        error_message = f"Failed to clear logs: {str(e)}"
+        logging.error(error_message)
+        return jsonify({"status": "error", "message": error_message}), 500
+
+@app.route('/api/strm/sync_category_movie_info', methods=['POST'])
+def sync_strm_category_movie_info():
+    """同步特定分类下的STRM文件的电影信息"""
+    try:
+        # 获取请求参数
+        data = request.get_json()
+        if not data:
+            return jsonify({"status": "error", "message": "缺少请求数据"}), 400
+            
+        category = data.get('category', '')
+        if not category:
+            return jsonify({"status": "error", "message": "缺少分类参数"}), 400
+            
+        # 创建StrmLibrary实例
+        from strm_library import StrmLibrary
+        strm_lib = StrmLibrary(db)
+        
+        # 只同步特定分类的STRM文件
+        result = strm_lib.sync_strm_movie_info(category)
+        
+        return jsonify({
+            "status": "success", 
+            "updated": result["success"],
+            "failed": result["failed"],
+            "message": f"成功获取了 {result['success']} 个「{category}」分类下的影片详情，失败 {result['failed']} 个"
+        })
+    except Exception as e:
+        error_message = f"同步STRM文件电影信息失败: {str(e)}"
+        logging.error(error_message)
+        return jsonify({"status": "error", "message": error_message}), 500
+
+@app.route('/api/strm/sync_all_movie_info', methods=['POST'])
+def sync_strm_all_movie_info():
+    """同步所有STRM文件的电影信息"""
+    try:
+        # 创建StrmLibrary实例
+        from strm_library import StrmLibrary
+        strm_lib = StrmLibrary(db)
+        
+        # 同步所有STRM文件
+        result = strm_lib.sync_strm_movie_info()
+        
+        return jsonify({
+            "status": "success", 
+            "updated": result["success"],
+            "failed": result["failed"],
+            "message": f"成功获取了 {result['success']} 个STRM文件的影片详情，失败 {result['failed']} 个"
+        })
+    except Exception as e:
+        error_message = f"同步STRM文件电影信息失败: {str(e)}"
+        logging.error(error_message)
+        return jsonify({"status": "error", "message": error_message}), 500
+
+@app.route('/api/cloud115/sync_category_movie_info', methods=['POST'])
+def sync_cloud115_category_movie_info():
+    """同步特定分类下的115云盘文件的电影信息"""
+    try:
+        # 获取请求参数
+        data = request.get_json()
+        if not data:
+            return jsonify({"status": "error", "message": "缺少请求数据"}), 400
+            
+        category = data.get('category', '')
+        if not category:
+            return jsonify({"status": "error", "message": "缺少分类参数"}), 400
+            
+        # 创建Cloud115Library实例
+        from cloud115_library import Cloud115Library
+        cloud115_lib = Cloud115Library(db)
+        
+        # 只同步特定分类的115云盘文件
+        result = cloud115_lib.sync_cloud115_movie_info(category)
+        
+        return jsonify({
+            "status": "success", 
+            "updated": result["success"],
+            "failed": result["failed"],
+            "message": f"成功获取了 {result['success']} 个「{category}」分类下的115云盘文件影片详情，失败 {result['failed']} 个"
+        })
+    except Exception as e:
+        error_message = f"同步115云盘文件电影信息失败: {str(e)}"
+        logging.error(error_message)
+        return jsonify({"status": "error", "message": error_message}), 500
+
+@app.route('/api/cloud115/sync_all_movie_info', methods=['POST'])
+def sync_cloud115_all_movie_info():
+    """同步所有115云盘文件的电影信息"""
+    try:
+        # 创建Cloud115Library实例
+        from cloud115_library import Cloud115Library
+        cloud115_lib = Cloud115Library(db)
+        
+        # 同步所有115云盘文件
+        result = cloud115_lib.sync_cloud115_movie_info()
+        
+        return jsonify({
+            "status": "success", 
+            "updated": result["success"],
+            "failed": result["failed"],
+            "message": f"成功获取了 {result['success']} 个115云盘文件的影片详情，失败 {result['failed']} 个"
+        })
+    except Exception as e:
+        error_message = f"同步115云盘文件电影信息失败: {str(e)}"
+        logging.error(error_message)
+        return jsonify({"status": "error", "message": error_message}), 500
 
 # Start the server
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8080, debug=False) 
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)), debug=True) 

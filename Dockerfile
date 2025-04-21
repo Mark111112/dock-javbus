@@ -26,6 +26,7 @@ COPY *.py .
 COPY config/ /app/config/
 COPY templates/ /app/templates/
 COPY static/ /app/static/
+COPY modules/ /app/modules/
 
 # 创建必要的目录
 RUN mkdir -p /app/buspic /app/data
@@ -34,11 +35,16 @@ RUN mkdir -p /app/buspic /app/data
 RUN cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
     echo 'Asia/Shanghai' > /etc/timezone
 
+# 安装额外的依赖 - chardet
+RUN pip install --no-cache-dir chardet
+
 # 暴露端口
 EXPOSE 8080
 
 # 设置环境变量
 ENV PYTHONUNBUFFERED=1
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
 
 # 启动命令 
 CMD ["python", "webserver.py"] 
