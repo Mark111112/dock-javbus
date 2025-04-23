@@ -43,8 +43,8 @@ EXPOSE 8080
 
 # 设置环境变量
 ENV PYTHONUNBUFFERED=1
-ENV LANG=C.UTF-8
-ENV LC_ALL=C.UTF-8
+ENV LANG=zh_CN.UTF-8
+ENV LC_ALL=zh_CN.UTF-8
 
 # 启动命令 
 CMD ["python", "webserver.py"] 

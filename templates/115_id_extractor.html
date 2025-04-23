@@ -84,9 +84,18 @@
                         
                         <div class="mb-3">
                             <div class="form-check">
-                                <input class="form-check-input" type="checkbox" id="previewOnly" name="preview_only" value="1" checked>
+                                <input class="form-check-input" type="checkbox" id="previewOnly" name="preview_only" value="1" {% if preview_only %}checked{% endif %}>
                                 <label class="form-check-label" for="previewOnly">
                                     Preview changes only (don't update database)
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="onlyMissing" name="only_missing" value="1" {% if selected_only_missing %}checked{% endif %}>
+                                <label class="form-check-label" for="onlyMissing">
+                                    Only extract video IDs for files without an existing video ID
                                 </label>
                             </div>
                         </div>
@@ -110,6 +119,7 @@
                     <form action="{{ url_for('extract_cloud115_ids') }}" method="post" class="mt-2">
                         <input type="hidden" name="category" value="{{ selected_category }}">
                         <input type="hidden" name="preview_only" value="0">
+                        <input type="hidden" name="only_missing" value="{% if selected_only_missing %}1{% else %}0{% endif %}">
                         <button type="submit" class="btn btn-warning">Apply These Changes</button>
                     </form>
                 </div>

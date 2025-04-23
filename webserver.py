@@ -1279,7 +1279,9 @@ def get_movie_data(movie_id):
     # Don't fetch when displaying the cloud115_library or cloud115_library_search pages
     should_fetch_from_api = ('movie_detail' in caller_function or 
                            'update_cloud115_video_id' in caller_function or
-                           'refresh_movie' in caller_function)
+                           'refresh_movie' in caller_function or
+                           'sync_cloud115_movie_info' in caller_function or
+                           'sync_strm_movie_info' in caller_function)
     
     # If not in database or data is incomplete, try to get from API only if we should fetch
     if is_data_incomplete and should_fetch_from_api:
@@ -2726,8 +2728,8 @@ def update_strm_video_id():
         
         # 获取电影信息
         try:
-            # 使用movieinfo模块获取电影信息
-            movie_data = movieinfo.get_movie_info(video_id)
+            # 使用get_movie_data函数获取电影信息
+            movie_data = get_movie_data(video_id)
             
             if movie_data:
                 # 格式化电影数据
@@ -2988,7 +2990,8 @@ def cloud115_id_extractor_page():
     
     return render_template('115_id_extractor.html', 
                           categories=categories, 
-                          dictionary=dictionary)
+                          dictionary=dictionary,
+                          selected_only_missing=False)
 
 # 添加一个兼容路由，与HTML文件中使用的url_for('cloud115_id_extractor')一致
 @app.route('/cloud115_id_extractor')
@@ -3021,6 +3024,7 @@ def extract_cloud115_ids():
     """执行115云盘视频ID提取"""
     category = request.form.get('category', '')
     preview_only = request.form.get('preview_only', '1') == '1'
+    only_missing = request.form.get('only_missing', '0') == '1'
     
     # 获取字典
     dictionary = []
@@ -3045,6 +3049,10 @@ def extract_cloud115_ids():
         # 获取文件
         cloud115_files = db.get_cloud115_files(category=category if category else None)
         
+        # 如果只处理没有video_id的文件
+        if only_missing:
+            cloud115_files = [f for f in cloud115_files if not f.get('video_id')]
+            
         if not cloud115_files:
             flash("未找到任何115云盘文件。", "warning")
             # 渲染结果页面
@@ -3055,7 +3063,8 @@ def extract_cloud115_ids():
                                   results=[],
                                   updated_count=0,
                                   preview_only=preview_only,
-                                  selected_category=category)
+                                  selected_category=category,
+                                  selected_only_missing=only_missing)
         
         # 处理文件
         processed_files = matcher.process_strm_files(cloud115_files)
@@ -3126,7 +3135,8 @@ def extract_cloud115_ids():
                           results=results,
                           updated_count=updated_count,
                           preview_only=preview_only,
-                          selected_category=category)
+                          selected_category=category,
+                          selected_only_missing=only_missing)
 
 @app.route('/cloud115/player/<int:file_id>', methods=['GET'])
 def cloud115_player(file_id):
@@ -3250,9 +3260,10 @@ def extract_cloud115_video_ids():
         data = request.json
         category = data.get('category')
         dictionary = data.get('dictionary')
+        only_missing = data.get('only_missing', False)
         
         # 调用提取方法
-        result = cloud115_lib.extract_video_ids(category=category, dictionary=dictionary)
+        result = cloud115_lib.extract_video_ids(category=category, dictionary=dictionary, only_missing=only_missing)
         
         return jsonify(result)
     except Exception as e:

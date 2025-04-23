@@ -250,12 +250,13 @@ class StrmLibrary:
         # 返回URL
         return file_info.get('url', '')
 
-    def extract_video_ids(self, category=None, dictionary=None):
+    def extract_video_ids(self, category=None, dictionary=None, only_missing=False):
         """从STRM文件中提取视频ID
         
         Args:
             category: 特定分类，默认为所有分类
             dictionary: 过滤字典，可以是文件路径或列表
+            only_missing: 是否仅处理没有 video_id 的条目
             
         Returns:
             tuple: (更新数量, 提取结果)
@@ -266,6 +267,9 @@ class StrmLibrary:
             
             # 获取所有STRM文件
             strm_files = self.db.get_strm_files(category=category)
+            # 如果只处理没有 video_id 的条目
+            if only_missing:
+                strm_files = [f for f in strm_files if not f.get('video_id')]
             
             if not strm_files:
                 logging.info(f"未找到STRM文件进行处理")
@@ -467,7 +471,7 @@ class StrmLibrary:
     def sync_strm_movie_info(self, category=None):
         """同步STRM文件的影片详情与电影数据库
         
-        从API获取影片详情并更新数据库中的影片信息
+        从API获取影片详情并更新数据库中的影片信息，每次处理10个请求
         
         Args:
             category: 可选，指定要同步的分类
@@ -481,88 +485,91 @@ class StrmLibrary:
             
             # 获取所有带有video_id的STRM文件（可选按分类过滤）
             strm_files = self.db.get_strm_files(category=category)
+            strm_files = [file for file in strm_files if file.get('video_id')]
+            
+            total_files = len(strm_files)
+            if total_files == 0:
+                logging.info(f"STRM库中没有找到带有video_id的文件")
+                return {"success": 0, "failed": 0}
+                
             success_count = 0
             failed_count = 0
             
-            # 导入movieinfo模块
-            import movieinfo
+            # 导入功能函数
+            from webserver import get_movie_data, format_movie_data, download_image
+            import time
             
-            for file in strm_files:
-                video_id = file.get('video_id')
-                if not video_id:
-                    logging.debug(f"跳过无video_id的文件: {file.get('id')} - {file.get('title')}")
-                    continue
+            # 批量处理，每批10个
+            batch_size = 10
+            for i in range(0, total_files, batch_size):
+                batch = strm_files[i:i+batch_size]
+                logging.info(f"处理第 {i+1}-{min(i+batch_size, total_files)}/{total_files} 批影片信息")
                 
-                try:
-                    # 从API获取影片详情
-                    logging.info(f"从API获取影片 {video_id} 的详情")
-                    movie_data = movieinfo.get_movie_info(video_id)
+                # 处理当前批次
+                batch_success = 0
+                for file in batch:
+                    video_id = file.get('video_id')
+                    if not video_id:
+                        continue
                     
-                    if movie_data:
-                        # 格式化影片数据并保存到数据库
-                        from webserver import format_movie_data
-                        formatted_data = format_movie_data(movie_data)
-                        self.db.save_movie(formatted_data)
+                    try:
+                        # 从API获取影片详情
+                        logging.info(f"从API获取影片 {video_id} 的详情")
+                        movie_data = get_movie_data(video_id)
                         
-                        # 下载封面图片
-                        cover_url = formatted_data.get('img')
-                        if cover_url:
-                            from webserver import download_image
-                            cover_path = os.path.join("buspic", "covers", f"{video_id}.jpg")
-                            download_image(cover_url, cover_path)
+                        if movie_data:
+                            # 格式化影片数据并保存到数据库
+                            formatted_data = format_movie_data(movie_data)
+                            self.db.save_movie(formatted_data)
                             
-                        # 获取摘要信息
-                        try:
-                            from webserver import fanza_scraper
-                            summary_data = fanza_scraper.get_movie_summary(video_id)
-                            if summary_data:
-                                if isinstance(summary_data, dict) and 'summary' in summary_data:
-                                    summary = summary_data['summary']
-                                else:
-                                    summary = summary_data
-                                
-                                # 更新影片数据中的摘要
-                                formatted_data["description"] = summary
-                                self.db.save_movie(formatted_data)
-                        except Exception as se:
-                            logging.error(f"获取影片 {video_id} 摘要信息时出错: {str(se)}")
-                        
-                        # 准备演员数据
-                        actors_data = []
-                        for actor in formatted_data.get('stars', []):
-                            actors_data.append({
-                                "id": actor.get('id', ''),
-                                "name": actor.get('name', ''),
-                                "image_url": actor.get('image', '')
-                            })
-                        
-                        # 将演员数据序列化为JSON字符串
-                        actors_json = json.dumps(actors_data)
-                        
-                        # 更新STRM文件的元数据
-                        file_id = file.get('id')
-                        self.db.update_strm_metadata(
-                            file_id,
-                            video_id=video_id,
-                            cover_image=formatted_data.get('img', ''),
-                            actors=actors_json
-                        )
-                        
-                        # 更新STRM文件的标题和日期
-                        self.db.update_strm_movie_info(
-                            file_id=file.get('id'),
-                            title=formatted_data.get('title', ''),
-                            date=formatted_data.get('date', '')
-                        )
-                        
-                        success_count += 1
-                        logging.info(f"成功更新影片 {video_id} 的详情")
-                    else:
+                            # 下载封面图片
+                            cover_url = formatted_data.get('img')
+                            if cover_url:
+                                cover_path = os.path.join("buspic", "covers", f"{video_id}.jpg")
+                                download_image(cover_url, cover_path)
+                            
+                            # 准备演员数据
+                            actors_data = []
+                            for actor in formatted_data.get('stars', []):
+                                actors_data.append({
+                                    "id": actor.get('id', ''),
+                                    "name": actor.get('name', ''),
+                                    "image_url": actor.get('image', '')
+                                })
+                            
+                            # 将演员数据序列化为JSON字符串
+                            actors_json = json.dumps(actors_data)
+                            
+                            # 更新STRM文件的元数据
+                            file_id = file.get('id')
+                            self.db.update_strm_metadata(
+                                file_id,
+                                video_id=video_id,
+                                cover_image=formatted_data.get('img', ''),
+                                actors=actors_json
+                            )
+                            
+                            # 更新STRM文件的标题和日期
+                            self.db.update_strm_movie_info(
+                                file_id=file.get('id'),
+                                title=formatted_data.get('title', ''),
+                                date=formatted_data.get('date', '')
+                            )
+                            
+                            success_count += 1
+                            batch_success += 1
+                            logging.info(f"成功更新影片 {video_id} 的详情")
+                        else:
+                            failed_count += 1
+                            logging.warning(f"无法获取影片 {video_id} 的详情")
+                    except Exception as e:
                         failed_count += 1
-                        logging.warning(f"无法获取影片 {video_id} 的详情")
-                except Exception as e:
-                    failed_count += 1
-                    logging.error(f"更新影片 {video_id} 详情时出错: {str(e)}")
+                        logging.error(f"更新影片 {video_id} 详情时出错: {str(e)}")
+                
+                # 如果处理了多个条目并且还有下一批，休息2秒钟避免API压力过大
+                if batch_success > 0 and i + batch_size < total_files:
+                    logging.info(f"批次处理完成，休息2秒后继续处理下一批")
+                    time.sleep(2)
             
             category_info = f"「{category}」分类的" if category else ""
             logging.info(f"STRM文件影片详情同步完成，成功: {success_count}，失败: {failed_count}，分类: {category_info}")
