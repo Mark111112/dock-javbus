@@ -182,7 +182,13 @@ class VideoIDMatcher:
                 if n_match:
                     # For IDs like N-1234, remove hyphen to N1234
                     video_id = f"N{n_match.group(1)}"
-                
+
+                # Special case for K-xxxx format, remove hyphen
+                k_match = re.search(r'^K-(\d+)$', video_id)
+                if k_match:
+                    # For IDs like K-1234, remove hyphen to K1234
+                    video_id = f"K{k_match.group(1)}"
+
                 return video_id
         
         # If no pattern matched, return empty string

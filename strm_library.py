@@ -510,61 +510,62 @@ class StrmLibrary:
                 for file in batch:
                     video_id = file.get('video_id')
                     if not video_id:
+                        logging.debug(f"跳过无video_id的文件: {file.get('id')} - {file.get('title')}")
                         continue
+                
+                try:
+                    # 从API获取影片详情
+                    logging.info(f"从API获取影片 {video_id} 的详情")
+                    movie_data = get_movie_data(video_id)
                     
-                    try:
-                        # 从API获取影片详情
-                        logging.info(f"从API获取影片 {video_id} 的详情")
-                        movie_data = get_movie_data(video_id)
+                    if movie_data:
+                        # 格式化影片数据并保存到数据库
+                        formatted_data = format_movie_data(movie_data)
+                        self.db.save_movie(formatted_data)
                         
-                        if movie_data:
-                            # 格式化影片数据并保存到数据库
-                            formatted_data = format_movie_data(movie_data)
-                            self.db.save_movie(formatted_data)
-                            
-                            # 下载封面图片
-                            cover_url = formatted_data.get('img')
-                            if cover_url:
-                                cover_path = os.path.join("buspic", "covers", f"{video_id}.jpg")
-                                download_image(cover_url, cover_path)
-                            
-                            # 准备演员数据
-                            actors_data = []
-                            for actor in formatted_data.get('stars', []):
-                                actors_data.append({
-                                    "id": actor.get('id', ''),
-                                    "name": actor.get('name', ''),
-                                    "image_url": actor.get('image', '')
-                                })
-                            
-                            # 将演员数据序列化为JSON字符串
-                            actors_json = json.dumps(actors_data)
-                            
-                            # 更新STRM文件的元数据
-                            file_id = file.get('id')
-                            self.db.update_strm_metadata(
-                                file_id,
-                                video_id=video_id,
-                                cover_image=formatted_data.get('img', ''),
-                                actors=actors_json
-                            )
-                            
-                            # 更新STRM文件的标题和日期
-                            self.db.update_strm_movie_info(
-                                file_id=file.get('id'),
-                                title=formatted_data.get('title', ''),
-                                date=formatted_data.get('date', '')
-                            )
-                            
-                            success_count += 1
-                            batch_success += 1
-                            logging.info(f"成功更新影片 {video_id} 的详情")
-                        else:
-                            failed_count += 1
-                            logging.warning(f"无法获取影片 {video_id} 的详情")
-                    except Exception as e:
+                        # 下载封面图片
+                        cover_url = formatted_data.get('img')
+                        if cover_url:
+                            cover_path = os.path.join("buspic", "covers", f"{video_id}.jpg")
+                            download_image(cover_url, cover_path)
+                        
+                        # 准备演员数据
+                        actors_data = []
+                        for actor in formatted_data.get('stars', []):
+                            actors_data.append({
+                                "id": actor.get('id', ''),
+                                "name": actor.get('name', ''),
+                                "image_url": actor.get('image', '')
+                            })
+                        
+                        # 将演员数据序列化为JSON字符串
+                        actors_json = json.dumps(actors_data)
+                        
+                        # 更新STRM文件的元数据
+                        file_id = file.get('id')
+                        self.db.update_strm_metadata(
+                            file_id,
+                            video_id=video_id,
+                            cover_image=formatted_data.get('img', ''),
+                            actors=actors_json
+                        )
+                        
+                        # 更新STRM文件的标题和日期
+                        self.db.update_strm_movie_info(
+                            file_id=file.get('id'),
+                            title=formatted_data.get('title', ''),
+                            date=formatted_data.get('date', '')
+                        )
+                        
+                        success_count += 1
+                        batch_success += 1
+                        logging.info(f"成功更新影片 {video_id} 的详情")
+                    else:
                         failed_count += 1
-                        logging.error(f"更新影片 {video_id} 详情时出错: {str(e)}")
+                        logging.warning(f"无法获取影片 {video_id} 的详情")
+                except Exception as e:
+                    failed_count += 1
+                    logging.error(f"更新影片 {video_id} 详情时出错: {str(e)}")
                 
                 # 如果处理了多个条目并且还有下一批，休息2秒钟避免API压力过大
                 if batch_success > 0 and i + batch_size < total_files:

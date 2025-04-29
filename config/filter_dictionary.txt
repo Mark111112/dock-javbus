@@ -7,6 +7,7 @@ FHD
 [FHD]
 1pondo-
 1Pon
+-1PON
 1Pondo
 1pon
 1pondo
@@ -38,3 +39,4 @@ xv9
 PP168
 chd1080
 -3D
+hd800.com

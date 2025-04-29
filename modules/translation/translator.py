@@ -198,33 +198,26 @@ class Translator:
             elif "siliconflow.cn" in self.api_url:
                 # SiliconFlow API格式
                 payload = {
+                    "stream": False,
                     "model": self.model,
                     "messages": [
                         {"role": "system", "content": f"你是一个专业的{self.source_lang}到{self.target_lang}翻译器。"},
                         {"role": "user", "content": prompt}
-                    ],
-                    "temperature": 0.3,
-                    "stream": False,
-                    "max_tokens": 1024,
-                    "top_p": 0.7,
-                    "top_k": 50,
-                    "response_format": {"type": "text"}
+                    ]
                 }
             else:
-                # 标准OpenAI兼容格式
+                # OpenAI/Claude等标准API格式
                 payload = {
                     "model": self.model,
                     "messages": [
                         {"role": "system", "content": f"你是一个专业的{self.source_lang}到{self.target_lang}翻译器。"},
                         {"role": "user", "content": prompt}
                     ],
-                    "stream": False,
-                    "temperature": 0.3
+                    "temperature": 0.3,
+                    "top_p": 0.9
                 }
-            
-            print(f"使用API: {api_url}, 模型: {self.model}")
-            print(f"请求头: {headers}")
-            print(f"请求数据: {payload}")
+                
+            print(f"发送翻译请求: API={api_url}, 模型={self.model}")
             
             # 发送请求
             response = requests.post(
@@ -234,67 +227,53 @@ class Translator:
                 timeout=60
             )
             
-            # 解析响应
             if response.status_code == 200:
                 result = response.json()
-                print(f"API响应: {result}")
                 
-                # 尝试从不同格式的响应中提取翻译文本
+                # 提取翻译结果 - 根据不同API格式解析
                 translated_text = ""
                 
-                # Ollama API格式
-                if is_ollama:
-                    if "response" in result:  # generate API 格式
-                        translated_text = result["response"].strip()
-                    elif "message" in result:  # chat API 格式
-                        if isinstance(result["message"], dict) and "content" in result["message"]:
-                            translated_text = result["message"]["content"].strip()
-                    
-                    # 如果响应为空但done_reason为load，表示模型正在加载
-                    if not translated_text and result.get("done_reason") == "load":
-                        error_msg = "模型正在加载中，请稍后再试"
-                        if self.translation_error_callback:
-                            self.translation_error_callback(movie_id, error_msg)
-                        return None
-                        
-                # OpenAI API格式
-                elif "choices" in result and len(result["choices"]) > 0:
-                    choice = result["choices"][0]
-                    if "message" in choice and "content" in choice["message"]:
-                        translated_text = choice["message"]["content"].strip()
-                    elif "text" in choice:  # 兼容旧版API
-                        translated_text = choice["text"].strip()
+                if "choices" in result:
+                    # OpenAI/Claude/SiliconFlow格式
+                    choices = result["choices"]
+                    if choices and len(choices) > 0:
+                        message = choices[0].get("message", {})
+                        if message:
+                            translated_text = message.get("content", "").strip()
+                elif "response" in result:
+                    # Ollama格式
+                    translated_text = result.get("response", "").strip()
                 
-                # 如果没有提取到翻译文本
-                if not translated_text:
-                    error_msg = "无法从API响应中提取翻译文本"
-                    if self.translation_error_callback:
-                        self.translation_error_callback(movie_id, error_msg)
-                    return None
-                
-                # 通过回调函数发送翻译结果
+                # 调用回调函数返回结果
                 if self.translation_ready_callback:
                     self.translation_ready_callback(movie_id, text, translated_text)
+                
                 return translated_text
             else:
-                error_msg = f"翻译API请求失败: HTTP {response.status_code}, {response.text}"
+                error_message = f"翻译请求失败: HTTP {response.status_code}"
                 if self.translation_error_callback:
-                    self.translation_error_callback(movie_id, error_msg)
+                    error_detail = ""
+                    try:
+                        error_detail = response.json()
+                    except:
+                        error_detail = response.text[:100]
+                    self.translation_error_callback(movie_id, f"{error_message} - {error_detail}")
                 return None
+                
         except Exception as e:
-            error_msg = f"翻译过程出错: {str(e)}"
+            error_message = f"翻译请求异常: {str(e)}"
             if self.translation_error_callback:
-                self.translation_error_callback(movie_id, error_msg)
+                self.translation_error_callback(movie_id, error_message)
             return None
     
     def translate_sync(self, text):
-        """同步翻译方法，直接返回翻译结果，适用于网页版
+        """同步翻译文本，直接返回翻译结果
         
         Args:
             text (str): 要翻译的文本
             
         Returns:
-            str: 翻译后的文本，失败返回None
+            str: 翻译结果
         """
         if not text or not text.strip():
             return ""
@@ -303,7 +282,7 @@ class Translator:
         is_ollama = "localhost:11434" in self.api_url or "192.168.1.133:11434" in self.api_url
         if not self.api_token and not is_ollama:
             print("翻译API Token未设置，请在设置中配置")
-            return None
+            return ""
             
         try:
             # 准备请求头
@@ -321,48 +300,43 @@ class Translator:
             api_url = self.api_url
             
             if is_ollama:
-                # Ollama API配置
-                ollama_url = self.api_url
-                if "/api/chat" in ollama_url:
-                    ollama_url = ollama_url.replace("/api/chat", "/api/generate")
-                elif not "/api/generate" in ollama_url:
-                    base_url = ollama_url
-                    if base_url.endswith("/"):
-                        base_url = base_url[:-1]
-                    if not "/api" in base_url:
-                        ollama_url = f"{base_url}/api/generate"
-                    else:
-                        ollama_url = f"{base_url}/generate"
-                
-                api_url = ollama_url
-                print(f"使用Ollama生成API: {ollama_url}")
-                
-                payload = {
-                    "model": self.model,
-                    "prompt": f"你是一个专业的{self.source_lang}到{self.target_lang}翻译器。\n{prompt}",
-                    "stream": False,
-                    "options": {
-                        "temperature": 0.3,
-                        "top_p": 0.9
+                if "/api/chat" in self.api_url:
+                    # 使用chat接口的格式
+                    payload = {
+                        "model": self.model,
+                        "messages": [
+                            {"role": "system", "content": f"你是一个专业的{self.source_lang}到{self.target_lang}翻译器。"},
+                            {"role": "user", "content": prompt}
+                        ],
+                        "stream": False,
+                        "options": {
+                            "temperature": 0.3,
+                            "top_p": 0.9
+                        }
                     }
-                }
+                else:
+                    # generate接口的格式
+                    payload = {
+                        "model": self.model,
+                        "prompt": f"你是一个专业的{self.source_lang}到{self.target_lang}翻译器。\n{prompt}",
+                        "stream": False,
+                        "options": {
+                            "temperature": 0.3,
+                            "top_p": 0.9
+                        }
+                    }
             elif "siliconflow.cn" in self.api_url:
                 # SiliconFlow API格式
                 payload = {
+                    "stream": False,
                     "model": self.model,
                     "messages": [
                         {"role": "system", "content": f"你是一个专业的{self.source_lang}到{self.target_lang}翻译器。"},
                         {"role": "user", "content": prompt}
-                    ],
-                    "temperature": 0.3,
-                    "stream": False,
-                    "max_tokens": 1024,
-                    "top_p": 0.7,
-                    "top_k": 50,
-                    "response_format": {"type": "text"}
+                    ]
                 }
             else:
-                # 标准OpenAI兼容格式
+                # OpenAI/Claude等标准API格式
                 payload = {
                     "model": self.model,
                     "messages": [
@@ -370,9 +344,9 @@ class Translator:
                         {"role": "user", "content": prompt}
                     ],
                     "temperature": 0.3,
-                    "stream": False
+                    "top_p": 0.9
                 }
-            
+                
             # 发送请求
             response = requests.post(
                 api_url,
@@ -381,47 +355,43 @@ class Translator:
                 timeout=60
             )
             
-            # 解析响应
             if response.status_code == 200:
                 result = response.json()
                 
-                # 尝试从不同格式的响应中提取翻译文本
+                # 提取翻译结果 - 根据不同API格式解析
                 translated_text = ""
                 
-                # Ollama API格式
-                if is_ollama:
-                    if "response" in result:
-                        translated_text = result["response"].strip()
-                    elif "message" in result:  # chat API 格式
-                        if isinstance(result["message"], dict) and "content" in result["message"]:
-                            translated_text = result["message"]["content"].strip()
-                    
-                    # 如果响应为空但done_reason为load，表示模型正在加载
-                    if not translated_text and result.get("done_reason") == "load":
-                        return None
-                        
-                # OpenAI API格式
-                elif "choices" in result and len(result["choices"]) > 0:
-                    choice = result["choices"][0]
-                    if "message" in choice and "content" in choice["message"]:
-                        translated_text = choice["message"]["content"].strip()
-                    elif "text" in choice:  # 兼容旧版API
-                        translated_text = choice["text"].strip()
+                if "choices" in result:
+                    # OpenAI/Claude/SiliconFlow格式
+                    choices = result["choices"]
+                    if choices and len(choices) > 0:
+                        message = choices[0].get("message", {})
+                        if message:
+                            translated_text = message.get("content", "").strip()
+                elif "response" in result:
+                    # Ollama格式
+                    translated_text = result.get("response", "").strip()
                 
                 return translated_text
             else:
-                print(f"翻译API请求失败: HTTP {response.status_code}, {response.text}")
-                return None
+                print(f"翻译请求失败: HTTP {response.status_code}")
+                try:
+                    print(response.json())
+                except:
+                    print(response.text[:100])
+                return ""
+                
         except Exception as e:
-            print(f"翻译过程出错: {str(e)}")
-            return None
+            print(f"翻译请求异常: {str(e)}")
+            return ""
 
-# 单例模式实现
-_translator_instance = None
 
 def get_translator():
-    """获取翻译器实例（单例模式）"""
-    global _translator_instance
-    if _translator_instance is None:
-        _translator_instance = Translator()
-    return _translator_instance
+    """获取翻译器实例（单例模式）
+    
+    Returns:
+        Translator: 翻译器实例
+    """
+    if not hasattr(get_translator, 'instance'):
+        get_translator.instance = Translator()
+    return get_translator.instance 

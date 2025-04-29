@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 
-{% block title %}{{ movie.id }}{% endblock %}
+{% block title %}{% if movie %}{{ movie.title }} - {% endif %}影片详情{% endblock %}
+
+{% block additional_head %}
+<link href="/static/css/movie.css" rel="stylesheet">
+{% endblock %}
 
 {% block content %}
 <div class="row">
@@ -195,7 +199,7 @@
                         <div class="spinner-border spinner-border-sm text-primary me-2" role="status">
                             <span class="visually-hidden">Loading...</span>
                         </div>
-                        <span>Loading summary from FANZA...</span>
+                        <span>Loading summary from Provider...</span>
                     </div>
                 </div>
                 <!-- Summary will be loaded here -->
@@ -264,7 +268,7 @@
                                     {% endif %}
                                 </td>
                                 <td>{{ magnet.size }}</td>
-                                <td>{{ magnet.date|default(magnet.shareDate) }}</td>
+                                <td>{{ magnet.date }}</td>
                                 <td>
                                     {% if magnet.is_hd or magnet.isHD %}
                                     <span class="badge bg-primary">HD</span>
@@ -283,6 +287,13 @@
                                             data-title="{% if magnet.title %}{{ magnet.title }}{% else %}{{ magnet.name }}{% endif %}"
                                             onclick="showAddTo115Modal(this)">
                                         <i class="bi bi-cloud-arrow-down"></i> 添加115离线
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-success add-to-library-btn"
+                                            data-magnet="{{ magnet.link }}"
+                                            data-title="{% if magnet.title %}{{ magnet.title }}{% else %}{{ magnet.name }}{% endif %}"
+                                            data-movie-id="{% if movie %}{{ movie.id }}{% endif %}"
+                                            onclick="addToLibrary(this)">
+                                        <i class="bi bi-collection"></i> 加入片库
                                     </button>
                                 </td>
                             </tr>
@@ -989,5 +1000,63 @@
             });
         }
     });
+
+    // 添加到片库的函数
+    window.addToLibrary = function(button) {
+        // 获取磁力链接和标题
+        const magnetLink = button.getAttribute('data-magnet');
+        const magnetTitle = button.getAttribute('data-title');
+        const movieId = button.getAttribute('data-movie-id');
+        
+        if (!magnetLink) {
+            alert('磁力链接无效');
+            return;
+        }
+        
+        // 显示加载状态
+        const originalHTML = button.innerHTML;
+        button.disabled = true;
+        button.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 处理中...';
+        
+        // 准备请求参数
+        const requestData = {
+            urls: magnetLink,
+            movie_info: {}
+        };
+        
+        // 如果有影片ID，添加到请求中
+        if (movieId) {
+            requestData.movie_info.movie_id = movieId;
+        }
+        
+        // 发送请求加入片库
+        fetch('/api/cloud115/add_to_library', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(requestData)
+        })
+        .then(response => response.json())
+        .then(data => {
+            // 恢复按钮状态
+            button.disabled = false;
+            button.innerHTML = originalHTML;
+            
+            if (data.success) {
+                // 添加成功
+                alert('已添加到离线下载队列，并设置后台自动加入片库！');
+            } else {
+                // 添加失败
+                alert('加入片库失败：' + (data.message || '未知错误'));
+            }
+        })
+        .catch(error => {
+            console.error('加入片库错误:', error);
+            button.disabled = false;
+            button.innerHTML = originalHTML;
+            alert('加入片库请求失败，请重试');
+        });
+    };
 </script>
 {% endblock %} 

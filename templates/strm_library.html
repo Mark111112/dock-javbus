@@ -540,6 +540,14 @@
                         </span>
                     </li>
                     {% endif %}
+                    
+                    <!-- Page Jump -->
+                    <li class="page-item ms-2">
+                        <div class="input-group input-group-sm">
+                            <input type="number" class="form-control" id="jumpToPage" min="1" max="{{ pagination.total_pages }}" placeholder="页码" style="width: 70px;">
+                            <button class="btn btn-outline-secondary" type="button" id="jumpToPageBtn">Go</button>
+                        </div>
+                    </li>
                 </ul>
             </nav>
             {% endif %}
@@ -934,6 +942,64 @@
                 this.innerHTML = '<i class="bi bi-collection-play"></i> 获取所有分类影片详情';
                 this.disabled = false;
             });
+        }
+    });
+    
+    // 页面跳转功能
+    document.addEventListener('DOMContentLoaded', function() {
+        const jumpBtn = document.getElementById('jumpToPageBtn');
+        const jumpInput = document.getElementById('jumpToPage');
+        
+        if (jumpBtn && jumpInput) {
+            // 按钮点击事件
+            jumpBtn.addEventListener('click', function() {
+                jumpToSpecificPage();
+            });
+            
+            // 输入框回车事件
+            jumpInput.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    jumpToSpecificPage();
+                }
+            });
+            
+            // 页面跳转函数
+            function jumpToSpecificPage() {
+                const pageNum = parseInt(jumpInput.value);
+                if (pageNum && pageNum >= 1 && pageNum <= parseInt(jumpInput.getAttribute('max'))) {
+                    // 获取当前URL中的排序参数
+                    const currentUrl = new URL(window.location.href);
+                    const currentSortBy = currentUrl.searchParams.get('sort_by') || '{{ sort_by }}';
+                    const currentSortOrder = currentUrl.searchParams.get('sort_order') || '{{ sort_order }}';
+                    
+                    // 构造基础URL
+                    let baseUrl;
+                    if ('{{ search_query }}') {
+                        baseUrl = "{{ url_for('strm_library_search', category=current_category, page=1, query=search_query) }}";
+                    } else {
+                        baseUrl = "{{ url_for('strm_library', category=current_category, page=1) }}";
+                    }
+                    
+                    // 设置所有参数
+                    const url = new URL(baseUrl, window.location.origin);
+                    url.searchParams.set('page', pageNum);
+                    
+                    // 确保保留排序参数
+                    if (currentSortBy) {
+                        url.searchParams.set('sort_by', currentSortBy);
+                    }
+                    if (currentSortOrder) {
+                        url.searchParams.set('sort_order', currentSortOrder);
+                    }
+                    
+                    // 跳转到新URL
+                    window.location.href = url.toString();
+                } else {
+                    // 输入无效，清空并提示
+                    jumpInput.value = '';
+                    jumpInput.placeholder = '1-' + jumpInput.getAttribute('max');
+                }
+            }
         }
     });
 </script>

@@ -9,6 +9,7 @@ import requests
 import base64
 import hashlib
 import secrets
+import threading
 
 # Add current directory to Python path to ensure modules can be imported
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -17,10 +18,10 @@ from flask import Flask, request, jsonify, render_template, redirect, url_for, s
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from javbus_db import JavbusDatabase
-from translator import get_translator
+from modules.translation.translator import get_translator
 import logging
 import traceback
-import movieinfo  # Import the movieinfo module
+import moviescraper  # Changed from movieinfo to moviescraper
 from datetime import datetime
 from strm_library import StrmLibrary  # Import the STRM library module
 from cloud115_library import Cloud115Library
@@ -121,9 +122,6 @@ logging.info(f"Using database file: {DB_FILE}")
 # Initialize translator
 translator = get_translator()
 
-# Create a FanzaScraper instance
-fanza_scraper = movieinfo.FanzaScraper()
-
 # Load configuration
 def load_config():
     """Load configuration file"""
@@ -131,72 +129,6 @@ def load_config():
         "api_url": "http://192.168.1.246:8922/api",
         "watch_url_prefix": "https://missav.ai",
         "base_url": "https://www.javbus.com",
-        "fanza_mappings": {
-            "abf": "118abf",
-            "abp": "118abp",
-            "atom": "1atom",
-            "bazx": "7bazx",
-            "bdd": "1BDD",
-            "dandy": "1Dandy",
-            "dph": "33dph",
-            "dphn": "33dphn",
-            "drtp": "1drpt",
-            "emth": "h_1638emth",
-            "fcp": "h_001fcp",
-            "fsdss": "1fsdss",
-            "fset": "1FSET",
-            "gar": "1GAR",
-            "gesu": "49gesu",
-            "glod": "196glod",
-            "gvg": "13gvg",
-            "gvh": "13gvh",
-            "hbad": "1HBAD",
-            "hodv": "41hodv",
-            "hunt": "1HUNT",
-            "hvad": "1HVAD",
-            "ibw": "504ibw",
-            "idol": "1IDOL",
-            "iene": "1IENE",
-            "iesp": "1IESP",
-            "ksd": "5421ksd",
-            "ktds": "h_094ktds",
-            "lol": "12lol",
-            "love": "h_491love",
-            "midv": "48midv",
-            "mjad": "h_402mjad",
-            "mxgs": "h_068mxgs",
-            "natr": "h_067natr",
-            "need": "h_198need",
-            "nhdt": "1NHDT",
-            "nhdta": "1NHDTA",
-            "nxg": "h_254nxg",
-            "okad": "84okad",
-            "open": "1open",
-            "ped": "24ped",
-            "piyo": "1piyo",
-            "r": "h_093r",
-            "rct": "1rct",
-            "rctd": "1rctd",
-            "sace": "1SACE",
-            "sama": "h_244sama",
-            "san": "h_796san",
-            "sdde": "1SDDE",
-            "sddm": "1SDDM",
-            "sdmt": "1SDMT",
-            "sma": "83sma",
-            "star": "1STAR",
-            "stars": "1stars",
-            "svdvd": "1SVDVD",
-            "sw": "h_635SW",
-            "t": "55t",
-            "tkbn": "h_254tkbn",
-            "vspdr": "1VSPDR",
-            "vspds": "1VSPDS",
-            "wnz": "3wnz"
-        },
-        "fanza_suffixes": {
-            "ibw": "z"
-        },
         "translation": {
             "api_url": "https://api.siliconflow.cn/v1/chat/completions",
             "source_lang": "日语",
@@ -840,24 +772,26 @@ def favorites():
 def refresh_movie(movie_id):
     """Force refresh movie data from API"""
     try:
-        # Get the movie data directly from API
-        response = requests.get(f"{CURRENT_API_URL}/movies/{movie_id}")
-        if response.status_code == 200:
-            movie_data = response.json()
-            # Save to database
-            db.save_movie(movie_data)
-            logging.info(f"Refreshed movie data for {movie_id}")
+        # 强制从数据库中删除电影数据，确保重新获取
+        db.delete_movie(movie_id)
+        logging.info(f"Deleted existing movie data for {movie_id} to force refresh")
+        
+        # 使用get_movie_data函数获取电影数据，它已经包含了API和爬虫的回退逻辑
+        movie_data = get_movie_data(movie_id)
+        
+        if movie_data:
+            logging.info(f"Successfully refreshed movie data for {movie_id}")
             return redirect(url_for('movie_detail', movie_id=movie_id))
         else:
-            logging.error(f"Failed to refresh movie data: HTTP {response.status_code}")
+            logging.error(f"Failed to refresh movie data for {movie_id}")
             return render_template('error.html', 
-                                  error_title="Refresh Failed", 
-                                  error_message=f"Failed to refresh movie data: HTTP {response.status_code}"), 400
+                                  error_title="刷新失败", 
+                                  error_message=f"无法获取影片 {movie_id} 的信息。"), 404
     except Exception as e:
         logging.error(f"Failed to refresh movie data: {str(e)}")
         return render_template('error.html', 
-                              error_title="Refresh Error", 
-                              error_message=f"An error occurred: {str(e)}"), 500
+                              error_title="刷新错误", 
+                              error_message=f"发生错误: {str(e)}"), 500
 
 # Routes: API endpoints
 @app.route('/api/check_connection', methods=['GET'])
@@ -1285,6 +1219,7 @@ def get_movie_data(movie_id):
     
     # If not in database or data is incomplete, try to get from API only if we should fetch
     if is_data_incomplete and should_fetch_from_api:
+        javbus_api_success = False
         try:
             logging.info(f"Fetching complete data for movie {movie_id} from API (is_likely_uncensored={is_likely_uncensored})")
             
@@ -1301,10 +1236,48 @@ def get_movie_data(movie_id):
                     logging.error(f"Failed to save movie data for {movie_id} to database")
                 else:
                     logging.info(f"Successfully retrieved and saved complete data for {movie_id}")
+                    javbus_api_success = True
             else:
                 logging.error(f"API returned status code {response.status_code} for movie {movie_id}")
         except Exception as e:
             logging.error(f"Failed to get movie data from API: {str(e)}")
+        
+        # If JavBus API failed to return data, try using moviescraper
+        if not javbus_api_success and not movie_data:
+            try:
+                logging.info(f"JavBus API failed for {movie_id}, attempting to use moviescraper")
+                # Try to get data using moviescraper
+                scraped_movie_info = moviescraper.get_movie_summary(movie_id)
+                
+                if scraped_movie_info:
+                    logging.info(f"Successfully retrieved movie data for {movie_id} using moviescraper ({scraped_movie_info.get('source', 'unknown')})")
+                    
+                    # Transform scraped data to match expected format
+                    movie_data = {
+                        "id": movie_id,
+                        "title": scraped_movie_info.get('title', movie_id),
+                        "date": scraped_movie_info.get('release_date', ''),
+                        "img": scraped_movie_info.get('img', ''),
+                        "description": scraped_movie_info.get('summary', ''),
+                        "duration": scraped_movie_info.get('duration', ''),
+                        "director": {"name": scraped_movie_info.get('director', '')},
+                        "publisher": {"name": scraped_movie_info.get('maker', scraped_movie_info.get('label', ''))},
+                        "series": {"name": scraped_movie_info.get('series', '')},
+                        "genres": [{"id": "", "name": genre} for genre in scraped_movie_info.get('genres', [])],
+                        "stars": [{"id": "", "name": actress} for actress in scraped_movie_info.get('actresses', [])],
+                        "data_source": f"moviescraper:{scraped_movie_info.get('source', 'unknown')}",
+                        "samples": scraped_movie_info.get('samples', []) if scraped_movie_info.get('samples') else [{"src": url, "thumbnail": url} for url in scraped_movie_info.get('thumbnails', [])],
+                        "product_code": scraped_movie_info.get('product_code', movie_id),
+                        "magnets": []
+                    }
+                    
+                    # Save to database
+                    if not db.save_movie(movie_data):
+                        logging.error(f"Failed to save scraped movie data for {movie_id} to database")
+                    else:
+                        logging.info(f"Successfully saved scraped movie data for {movie_id}")
+            except Exception as e:
+                logging.error(f"Failed to get movie data from moviescraper: {str(e)}")
     else:
         # If we got data from the database and we're in movie_detail function, log it
         if movie_data and 'movie_detail' in caller_function:
@@ -1452,26 +1425,35 @@ def format_movie_data(movie_data):
     # Format magnet links
     for magnet in movie_data.get("magnets", []):
         formatted_movie["magnet_links"].append({
-            "name": magnet.get("name", ""),
+            "name": magnet.get("title", ""),
             "size": magnet.get("size", ""),
             "link": magnet.get("link", ""),
-            "date": magnet.get("date", ""),
+            "date": magnet.get("shareDate", ""),
             "is_hd": magnet.get("isHD", False),
             "has_subtitle": magnet.get("hasSubtitle", False)
         })
     
     # Format sample images
     for i, sample in enumerate(movie_data.get("samples", [])):
-        # For samples without src (full-size image), use the thumbnail as both thumbnail and full image
-        sample_src = sample.get("src")
-        sample_thumbnail = sample.get("thumbnail", "")
-        
-        # If src is null or empty, use the thumbnail as the source
-        if not sample_src and sample_thumbnail:
-            sample_src = sample_thumbnail
-            can_enlarge = False  # Flag to indicate if image can be enlarged
+        # Handle different types of sample data formats:
+        # 1. Dictionary format from JavBus API: {"src": "url", "thumbnail": "url"} 
+        # 2. String format from scrapers: "url"
+        if isinstance(sample, dict):
+            # For samples without src (full-size image), use the thumbnail as both thumbnail and full image
+            sample_src = sample.get("src")
+            sample_thumbnail = sample.get("thumbnail", "")
+            
+            # If src is null or empty, use the thumbnail as the source
+            if not sample_src and sample_thumbnail:
+                sample_src = sample_thumbnail
+                can_enlarge = False  # Flag to indicate if image can be enlarged
+            else:
+                can_enlarge = bool(sample_src)  # Can enlarge only if we have a proper src
         else:
-            can_enlarge = bool(sample_src)  # Can enlarge only if we have a proper src
+            # Handle the case where sample is a string (direct URL)
+            sample_src = sample
+            sample_thumbnail = sample
+            can_enlarge = True  # Assume direct URLs can be enlarged
             
         formatted_movie["sample_images"].append({
             "index": i + 1,
@@ -1623,19 +1605,11 @@ def save_config_api():
             f.write(config_str)
         
         # Update current configuration
-        global CURRENT_CONFIG, CURRENT_API_URL, CURRENT_WATCH_URL_PREFIX, CURRENT_BASE_URL, fanza_scraper
+        global CURRENT_CONFIG, CURRENT_API_URL, CURRENT_WATCH_URL_PREFIX, CURRENT_BASE_URL
         CURRENT_CONFIG = config_data
         CURRENT_API_URL = config_data.get("api_url", "")
         CURRENT_WATCH_URL_PREFIX = config_data.get("watch_url_prefix", "https://missav.ai")
         CURRENT_BASE_URL = config_data.get("base_url", "https://www.javbus.com")
-        
-        # Reload fanza mappings in the existing FanzaScraper instance
-        fanza_mappings = config_data.get("fanza_mappings", {})
-        fanza_suffixes = config_data.get("fanza_suffixes", {})
-        fanza_scraper.prefix_mappings = fanza_mappings
-        fanza_scraper.suffix_mappings = fanza_suffixes
-        logging.info(f"Reloaded fanza mappings: {len(fanza_mappings)} entries")
-        logging.info(f"Reloaded fanza suffixes: {len(fanza_suffixes)} entries")
         
         logging.info(f"Configuration saved successfully")
         
@@ -1671,7 +1645,7 @@ def restart_application():
 
 @app.route('/api/get_movie_summary/<movie_id>', methods=['GET'])
 def get_movie_summary(movie_id):
-    """API endpoint to fetch movie summary from FANZA asynchronously"""
+    """API endpoint to fetch movie summary using moviescraper module asynchronously"""
     try:
         # Get movie data
         movie_data = get_movie_data(movie_id)
@@ -1686,46 +1660,47 @@ def get_movie_summary(movie_id):
                 "translated_summary": movie_data.get("translated_description", "")
             })
             
-        # Try to fetch summary from FANZA
-        logging.info(f"Fetching summary from FANZA for movie ID: {movie_id}")
+        # Try to fetch summary using moviescraper
+        logging.info(f"Fetching summary using moviescraper for movie ID: {movie_id}")
         
-        # Use the FanzaScraper to get the summary
-        # Note that get_movie_summary internally calls normalize_movie_id and uses it correctly
-        summary_data = fanza_scraper.get_movie_summary(movie_id)
+        # Use the new convenience function from moviescraper
+        movie_info = moviescraper.get_movie_summary(movie_id)
         
-        if summary_data:
-            # If the summary is a dictionary, extract just the 'summary' field
-            if isinstance(summary_data, dict) and 'summary' in summary_data:
-                summary = summary_data['summary']
-                logging.info(f"Found summary for {movie_id} from source: {summary_data.get('source', 'unknown')}")
-                logging.info(f"Summary URL: {summary_data.get('url', 'unknown')}")
-                logging.info(f"FANZA ID used: {summary_data.get('fanza_id', 'unknown')}")
-            else:
-                summary = summary_data
-                
-            logging.info(f"Found summary for {movie_id} from FANZA")
+        if movie_info and movie_info.get('summary'):
+            summary = movie_info.get('summary', '')
+            scraper_name = movie_info.get('source', 'unknown')
             
-            # Update movie data with the summary
+            logging.info(f"Found summary for {movie_id} from {scraper_name}")
+            
+            # Update movie data with summary and additional information
             movie_data["description"] = summary
+            movie_data["summary_source"] = f"moviescraper:{scraper_name}"
+            
+            # Add additional data from movie_info if available
+            if movie_info.get('title'):
+                movie_data["original_title"] = movie_info.get('title')
+            if movie_info.get('genres'):
+                movie_data["additional_genres"] = movie_info.get('genres')
+            if movie_info.get('actors') or movie_info.get('actresses'):
+                movie_data["additional_actors"] = movie_info.get('actors') or movie_info.get('actresses')
+            if movie_info.get('release_date'):
+                movie_data["original_date"] = movie_info.get('release_date')
+            
             # Save to database
             db.save_movie(movie_data)
             
             return jsonify({
                 "status": "success", 
                 "summary": summary,
-                "translated_summary": ""
+                "translated_summary": "",
+                "source": scraper_name
             })
         else:
-            # Get the normalized ID for logging purposes
-            try:
-                normalized_id = fanza_scraper.normalize_movie_id(movie_id)
-                logging.warning(f"Could not find summary for {movie_id} (normalized as {normalized_id})")
-            except:
-                logging.warning(f"Could not find summary for {movie_id}")
-                
-            return jsonify({"status": "error", "message": "Could not find summary"}), 404
+            logging.warning(f"No summary found for {movie_id}")
+            return jsonify({"status": "error", "message": "No summary found"}), 404
+            
     except Exception as e:
-        logging.error(f"Failed to get summary from FANZA: {str(e)}")
+        logging.error(f"Failed to get summary: {str(e)}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/api/proxy/stream')
@@ -3670,6 +3645,7 @@ def add_cloud115_file(file_data):
             - path: 文件路径
             - size: 文件大小
             - category: 分类
+            - video_id: 可选，影片ID
             
     Returns:
         int: 新添加的记录ID，失败则返回None
@@ -3702,7 +3678,8 @@ def add_cloud115_file(file_data):
             'size': file_data['size'],
             'date_added': now,
             'play_count': 0,
-            'last_played': 0
+            'last_played': 0,
+            'video_id': file_data.get('video_id')  # 添加video_id字段
         }
         
         # 保存到数据库
@@ -3881,13 +3858,19 @@ def cloud115_import_directory_api():
         folder_info = folder_info_response.json().get('data', {})
         folder_name = folder_info.get('file_name', '未命名文件夹')
         
+        # 获取数据库中已有的115云盘文件ID列表，用于去重
+        db.ensure_connection()
+        db.local.cursor.execute('SELECT file_id FROM cloud115_library')
+        existing_file_ids = {row['file_id'] for row in db.local.cursor.fetchall() if row['file_id']}
+        
         # 递归获取文件夹内所有视频文件
         video_files = []
         skipped_files = 0
+        skipped_existing_files = 0
         
         def get_videos_in_folder(folder_id, path=""):
             """递归获取文件夹中的视频文件"""
-            nonlocal skipped_files
+            nonlocal skipped_files, skipped_existing_files
             offset = 0
             limit = 100
             while True:
@@ -3927,6 +3910,12 @@ def cloud115_import_directory_api():
                             if min_size_mb > 0 and file_size < min_size_bytes:
                                 skipped_files += 1
                                 app.logger.debug(f"跳过小文件：{file['fn']}，大小：{file_size/1024/1024:.2f}MB")
+                                continue
+                                
+                            # 检查文件是否已存在于数据库中
+                            if file['fid'] in existing_file_ids:
+                                skipped_existing_files += 1
+                                app.logger.debug(f"跳过已存在文件：{file['fn']}，ID：{file['fid']}")
                                 continue
                                 
                             # 获取文件详情，获取正确的pickcode
@@ -3971,10 +3960,11 @@ def cloud115_import_directory_api():
         
         return jsonify({
             'success': True,
-            'message': f'成功导入{imported_count}个视频文件，跳过{skipped_files}个小于{min_size_mb}MB的文件',
+            'message': f'成功导入{imported_count}个视频文件，跳过{skipped_files}个小于{min_size_mb}MB的文件，跳过{skipped_existing_files}个已存在的文件',
             'total': len(video_files),
             'imported': imported_count,
-            'skipped': skipped_files
+            'skipped_size': skipped_files,
+            'skipped_existing': skipped_existing_files
         })
         
     except Exception as e:
@@ -4252,27 +4242,6 @@ def cloud115_proxy_stream():
     except Exception as e:
         logging.error(f"115云盘代理流失败: {str(e)}")
         return jsonify({"error": str(e)}), 500
-
-@app.route('/cloud115/sync_movie_info', methods=['POST'])
-def sync_cloud115_movie_info():
-    """同步所有115云盘文件的电影信息"""
-    try:
-        # 创建Cloud115Library实例并执行同步
-        from cloud115_library import Cloud115Library
-        cloud115_lib = Cloud115Library(db)
-        result = cloud115_lib.sync_cloud115_movie_info()
-        
-        if result["success"] > 0:
-            flash(f"成功获取了 {result['success']} 个115云盘文件的影片详情", "success")
-        
-        if result["failed"] > 0:
-            flash(f"{result['failed']} 个文件获取影片详情失败", "warning")
-            
-        return redirect(url_for('cloud115_library'))
-    except Exception as e:
-        app.logger.error(f"同步115云盘文件信息错误: {str(e)}")
-        flash(f"同步115云盘文件信息时出错: {str(e)}")
-        return redirect(url_for('cloud115_library'))
 
 @app.route('/api/cloud115/add_offline_download', methods=['POST'])
 def cloud115_add_offline_download():
@@ -4562,6 +4531,493 @@ def sync_cloud115_all_movie_info():
         logging.error(error_message)
         return jsonify({"status": "error", "message": error_message}), 500
 
+@app.route('/api/cloud115/add_to_library', methods=['POST'])
+def cloud115_add_to_library():
+    """添加离线下载到115云盘并加入片库"""
+    try:
+        # 获取请求参数
+        data = request.get_json()
+        
+        if not data or 'urls' not in data:
+            return jsonify({
+                'success': False,
+                'message': '缺少必要参数：urls'
+            })
+        
+        urls = data.get('urls', '').strip()
+        movie_info = data.get('movie_info', {})  # 可能包含影片ID等信息
+        
+        if not urls:
+            return jsonify({
+                'success': False,
+                'message': '离线下载链接不能为空'
+            })
+        
+        # 加载配置
+        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config', 'config.json')
+        config = {}
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+        except Exception as e:
+            app.logger.error(f"加载配置文件失败: {str(e)}")
+            
+        # 获取默认文件夹ID，如未配置则默认为根目录(0)
+        default_folder_id = "0"
+        if 'cloud115' in config and 'default_folder_id' in config['cloud115']:
+            default_folder_id = config['cloud115']['default_folder_id']
+        
+        # 获取库设置
+        library_settings = {
+            'category': 'other',
+            'min_file_size_mb': 50,
+            'default_delay_seconds': 8
+        }
+        if 'cloud115' in config and 'library_settings' in config['cloud115']:
+            library_settings.update(config['cloud115']['library_settings'])
+        
+        # 获取token
+        access_token = get_cloud115_valid_token()
+        if not access_token:
+            return jsonify({
+                'success': False,
+                'message': '未授权，请先登录115云盘'
+            })
+        
+        # 第一步：添加离线下载任务
+        app.logger.info(f"开始添加离线下载任务到文件夹 {default_folder_id}")
+        # 构建请求参数
+        params = {
+            'urls': urls,
+            'wp_path_id': default_folder_id
+        }
+        
+        # 发送请求添加离线下载任务
+        response = requests.post(
+            'https://proapi.115.com/open/offline/add_task_urls',
+            headers={
+                'Authorization': f'Bearer {access_token}',
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            data=params
+        )
+        
+        app.logger.debug(f"115 add offline download response status: {response.status_code}")
+        
+        # 解析响应
+        try:
+            response_data = response.json()
+            app.logger.debug(f"115 add offline download response: {response_data}")
+            
+            # 检查响应状态
+            if response_data.get('state') != 1:
+                error_message = response_data.get('message', '添加离线下载任务失败')
+                return jsonify({
+                    'success': False,
+                    'message': error_message
+                })
+                
+            # 获取任务信息
+            task_info = response_data.get('data', {})
+            app.logger.info(f"成功添加离线下载任务: {task_info}")
+            
+            # 第二步：等待一段时间后将文件添加到库
+            # 由于离线下载需要一定时间，我们先返回成功，后台异步处理添加到库的操作
+            # 实际应用中可能需要通过轮询或者回调来确认下载完成
+            
+            # 启动一个后台线程处理后续操作
+            task_thread = threading.Thread(
+                target=process_offline_download_to_library,
+                args=(urls, movie_info, library_settings, default_folder_id)
+            )
+            task_thread.daemon = True
+            task_thread.start()
+            
+            return jsonify({
+                'success': True,
+                'message': '已添加离线下载任务，正在处理中',
+                'data': {
+                    'task_info': task_info,
+                    'folder_id': default_folder_id
+                }
+            })
+            
+        except Exception as e:
+            app.logger.error(f"Error parsing 115 add offline download response: {str(e)}", exc_info=True)
+            return jsonify({
+                'success': False,
+                'message': f'解析响应失败: {str(e)}'
+            })
+    except Exception as e:
+        app.logger.error(f"Error adding to 115 library: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': f'加入片库失败: {str(e)}'
+        })
+
+def process_offline_download_to_library(urls, movie_info, library_settings, folder_id):
+    """后台处理离线下载添加到库的操作
+    
+    Args:
+        urls: 下载链接
+        movie_info: 影片信息字典
+        library_settings: 库设置
+        folder_id: 文件夹ID
+    """
+    try:
+        # 延迟一段时间等待下载任务创建和开始
+        delay_seconds = library_settings.get('default_delay_seconds', 8)
+        app.logger.info(f"等待 {delay_seconds} 秒后检查下载状态")
+        time.sleep(delay_seconds)
+        
+        # 获取token
+        access_token = get_cloud115_valid_token()
+        if not access_token:
+            app.logger.error("获取token失败，无法继续处理")
+            return
+        
+        # 获取文件夹内容，检查是否有新文件
+        # 注意：实际应用中，由于离线下载可能需要很长时间，这里的实现是简化的
+        # 更完善的方案应该是定期检查下载状态，或者使用115的回调机制
+        
+        # 再次延迟一段时间，等待离线下载完成
+        # 实际情况可能需要更长时间，这里只是示例
+        app.logger.info(f"再次等待 {delay_seconds*2} 秒，确保文件下载")
+        time.sleep(delay_seconds * 2)
+        
+        # 获取文件夹内容
+        params = {
+            'cid': folder_id,
+            'limit': '1150',
+            'offset': '0',
+            'show_dir': 1,  # 显示目录很重要
+            'aid': 1,
+            'o': 'upt',  # 按照更新时间排序
+            'asc': 0,  # 降序，最新的在前
+        }
+        
+        try:
+            response = requests.get(
+                'https://proapi.115.com/open/ufile/files',
+                params=params,
+                headers={
+                    'Authorization': f'Bearer {access_token}'
+                }
+            )
+            
+            if response.status_code != 200:
+                app.logger.error(f"获取文件列表失败: {response.status_code}")
+                return
+                
+            response_data = response.json()
+            app.logger.debug(f"115 files response: {response_data}")
+            
+            # 处理响应数据，兼容两种可能的格式
+            files = []
+            if isinstance(response_data, list):
+                # 如果响应直接是列表
+                files = response_data
+            elif isinstance(response_data, dict):
+                # 如果响应是字典（原先预期的格式）
+                if 'data' in response_data:
+                    data = response_data.get('data')
+                    if isinstance(data, list):
+                        files = data
+                    elif isinstance(data, dict) and 'data' in data:
+                        files = data.get('data', [])
+            
+            app.logger.info(f"获取到文件列表，共 {len(files)} 项")
+            
+            if not files:
+                app.logger.warning(f"未在文件夹 {folder_id} 中找到任何文件，可能下载尚未完成")
+                return
+            
+            # 首先，检查是否有最近创建的文件夹（可能是离线下载创建的）
+            recent_folders = []
+            now = time.time()
+            for file in files:
+                # 检查是否是文件夹
+                is_folder = False
+                if 'dir' in file and file.get('dir') == 1:
+                    is_folder = True
+                elif 'fc' in file and file.get('fc') == '0':
+                    is_folder = True
+                
+                if is_folder:
+                    # 获取文件夹创建/更新时间
+                    update_time = int(file.get('upt', file.get('uet', 0)))
+                    time_diff = now - update_time
+                    
+                    # 如果是最近5分钟内创建/更新的文件夹，很可能是新的离线下载
+                    if time_diff < 60:  # 1分钟 = 60秒
+                        folder_name = file.get('file_name', file.get('n', file.get('fn', '')))
+                        folder_id = file.get('file_id', file.get('fid', ''))
+                        app.logger.info(f"发现最近创建的文件夹: {folder_name}, ID: {folder_id}, 创建时间: {update_time}")
+                        recent_folders.append(file)
+            
+            # 如果找到了最近创建的文件夹，则先检查这些文件夹
+            processed_files = False
+            if recent_folders:
+                app.logger.info(f"找到 {len(recent_folders)} 个最近创建的文件夹，将优先处理")
+                
+                # 对于每个最近的文件夹，获取其内容并处理
+                for folder in recent_folders:
+                    folder_id = folder.get('file_id', folder.get('fid', ''))
+                    folder_name = folder.get('file_name', folder.get('n', folder.get('fn', '')))
+                    
+                    if not folder_id:
+                        app.logger.warning(f"无法获取文件夹ID，跳过此文件夹")
+                        continue
+                    
+                    app.logger.info(f"处理文件夹: {folder_name}, ID: {folder_id}")
+                    
+                    # 获取此文件夹中的文件
+                    folder_params = {
+                        'cid': folder_id,
+                        'limit': '1150',
+                        'offset': '0',
+                        'show_dir': 1,
+                        'aid': 1,
+                    }
+                    
+                    folder_response = requests.get(
+                        'https://proapi.115.com/open/ufile/files',
+                        params=folder_params,
+                        headers={
+                            'Authorization': f'Bearer {access_token}'
+                        }
+                    )
+                    
+                    if folder_response.status_code != 200:
+                        app.logger.error(f"获取文件夹 {folder_name} 内容失败: {folder_response.status_code}")
+                        continue
+                    
+                    folder_data = folder_response.json()
+                    folder_files = []
+                    
+                    if isinstance(folder_data, list):
+                        folder_files = folder_data
+                    elif isinstance(folder_data, dict):
+                        if 'data' in folder_data:
+                            data = folder_data.get('data')
+                            if isinstance(data, list):
+                                folder_files = data
+                            elif isinstance(data, dict) and 'data' in data:
+                                folder_files = data.get('data', [])
+                    
+                    app.logger.info(f"文件夹 {folder_name} 中共有 {len(folder_files)} 个文件")
+                    
+                    # 如果该文件夹内也存在子文件夹，递归处理一层
+                    subfolders = []
+                    actual_files = []
+                    
+                    for item in folder_files:
+                        is_dir = False
+                        if 'dir' in item and item.get('dir') == 1:
+                            is_dir = True
+                        elif 'fc' in item and item.get('fc') == '0':
+                            is_dir = True
+                        
+                        if is_dir:
+                            subfolders.append(item)
+                        else:
+                            actual_files.append(item)
+                    
+                    if subfolders and len(actual_files) == 0:
+                        app.logger.info(f"文件夹 {folder_name} 中存在 {len(subfolders)} 个子文件夹，但没有直接文件，将处理子文件夹")
+                        
+                        for subfolder in subfolders:
+                            subfolder_id = subfolder.get('file_id', subfolder.get('fid', ''))
+                            subfolder_name = subfolder.get('file_name', subfolder.get('n', subfolder.get('fn', '')))
+                            
+                            app.logger.info(f"处理子文件夹: {subfolder_name}, ID: {subfolder_id}")
+                            
+                            subfolder_params = {
+                                'cid': subfolder_id,
+                                'limit': '1150',
+                                'offset': '0',
+                                'show_dir': 0,
+                                'aid': 1,
+                            }
+                            
+                            subfolder_response = requests.get(
+                                'https://proapi.115.com/open/ufile/files',
+                                params=subfolder_params,
+                                headers={
+                                    'Authorization': f'Bearer {access_token}'
+                                }
+                            )
+                            
+                            if subfolder_response.status_code != 200:
+                                app.logger.error(f"获取子文件夹 {subfolder_name} 内容失败: {subfolder_response.status_code}")
+                                continue
+                            
+                            subfolder_data = subfolder_response.json()
+                            subfolder_files = []
+                            
+                            if isinstance(subfolder_data, list):
+                                subfolder_files = subfolder_data
+                            elif isinstance(subfolder_data, dict):
+                                if 'data' in subfolder_data:
+                                    data = subfolder_data.get('data')
+                                    if isinstance(data, list):
+                                        subfolder_files = data
+                                    elif isinstance(data, dict) and 'data' in data:
+                                        subfolder_files = data.get('data', [])
+                            
+                            app.logger.info(f"子文件夹 {subfolder_name} 中共有 {len(subfolder_files)} 个文件")
+                            actual_files.extend(subfolder_files)
+                    
+                    if actual_files:
+                        # 过滤出可能的视频文件
+                        min_file_size = library_settings.get('min_file_size_mb', 50) * 1024 * 1024  # 转换为字节
+                        category = library_settings.get('category', 'other')
+                        
+                        valid_files = process_files_for_library(actual_files, min_file_size)
+                        
+                        if valid_files:
+                            processed = process_valid_files_to_library(valid_files, category, access_token, movie_info)
+                            if processed:
+                                processed_files = True
+            
+            # 如果没有处理到任何文件，则回退到原来的直接查找文件的方法
+            if not processed_files:
+                app.logger.info("未从新创建的文件夹中处理到文件，尝试直接从原始文件夹中查找")
+                
+                # 过滤出可能的视频文件
+                min_file_size = library_settings.get('min_file_size_mb', 50) * 1024 * 1024  # 转换为字节
+                category = library_settings.get('category', 'other')
+                
+                valid_files = process_files_for_library(files, min_file_size)
+                
+                if valid_files:
+                    process_valid_files_to_library(valid_files, category, access_token, movie_info)
+                else:
+                    app.logger.warning("未找到符合条件的视频文件")
+            
+        except Exception as e:
+            app.logger.error(f"获取和处理文件列表时出错: {str(e)}", exc_info=True)
+            
+    except Exception as e:
+        app.logger.error(f"后台处理离线下载添加到库时出错: {str(e)}", exc_info=True)
+
+def process_files_for_library(files, min_file_size):
+    """处理文件列表，找出符合条件的视频文件
+    
+    Args:
+        files: 文件列表
+        min_file_size: 最小文件大小（字节）
+        
+    Returns:
+        list: 符合条件的视频文件列表
+    """
+    valid_files = []
+    for file in files:
+        try:
+            # 判断是否是文件而非文件夹
+            is_folder = False
+            if 'dir' in file and file.get('dir') == 1:
+                is_folder = True
+            elif 'fc' in file and file.get('fc') == '0':
+                is_folder = True
+            
+            if not is_folder:
+                # 检查文件大小和类型
+                file_size = int(file.get('size', file.get('fs', 0)))
+                file_name = file.get('file_name', file.get('n', file.get('fn', '')))
+                file_ext = os.path.splitext(file_name)[1].lower()
+                
+                # 如果是视频文件且大小足够
+                if file_size >= min_file_size and file_ext in ['.mp4', '.mkv', '.avi', '.wmv', '.mov', '.flv', '.ts', '.rmvb', '.rm']:
+                    valid_files.append(file)
+                    app.logger.debug(f"找到有效视频文件: {file_name}, 大小: {file_size} 字节")
+        except Exception as e:
+            app.logger.error(f"处理文件时出错: {str(e)}")
+            continue
+    
+    app.logger.info(f"找到 {len(valid_files)} 个有效视频文件")
+    return valid_files
+
+def process_valid_files_to_library(valid_files, category, access_token, movie_info):
+    """处理有效视频文件，添加到115库
+    
+    Args:
+        valid_files: 有效视频文件列表
+        category: 分类
+        access_token: 115 API访问令牌
+        movie_info: 影片信息
+        
+    Returns:
+        bool: 是否成功处理文件
+    """
+    if not valid_files:
+        return False
+    
+    processed_count = 0
+    for file in valid_files:
+        try:
+            # 提取文件信息，兼容不同的字段名
+            file_name = file.get('file_name', file.get('n', file.get('fn', '')))
+            pick_code = file.get('pick_code', file.get('pc', ''))
+            file_id = file.get('file_id', file.get('fid', ''))
+            file_size = int(file.get('size', file.get('fs', 0)))
+            
+            if not pick_code or not file_id:
+                app.logger.error(f"文件 {file_name} 缺少必要的pick_code或file_id")
+                continue
+            
+            app.logger.info(f"开始处理文件: {file_name}, ID: {file_id}, PickCode: {pick_code}")
+            
+            # 构造正确的115文件URL格式
+            file_url = f"https://115.com/?ct=file&ac=view&pickcode={pick_code}"
+            app.logger.info(f"使用标准115文件URL: {file_url}")
+            
+            # 准备文件数据
+            file_data = {
+                'file_id': file_id,
+                'title': file_name,
+                'path': file_name,  # 使用文件名作为path
+                'size': file_size,
+                'category': category,
+                'pick_code': pick_code,  # 添加pick_code字段
+                'url': file_url,
+                'thumbnail': file.get('thumb', ''),
+                'description': f"pick_code:{pick_code},size:{file_size}",
+                'video_id': movie_info.get('movie_id') if movie_info else None
+                
+            }
+            
+            # 使用add_cloud115_file添加文件
+            result = add_cloud115_file(file_data)
+            
+            if not result:
+                app.logger.error(f"添加文件 {file_name} 到115云盘库失败")
+                continue
+            
+            app.logger.info(f"成功添加文件 {file_name} 到115云盘库")
+            processed_count += 1
+            
+        except Exception as e:
+            app.logger.error(f"处理文件 {file_name if 'file_name' in locals() else 'unknown'} 时出错: {str(e)}")
+        
+        # 添加延迟，避免API请求过于频繁
+        time.sleep(1)
+    
+    app.logger.info(f"所有文件处理完成，共处理了 {processed_count} 个文件")
+    return processed_count > 0
+
+# extract_movie_id_from_filename 函数已移除，现在直接使用movie_info中的movie_id
+
 # Start the server
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)), debug=True) 
+    # Initialize libraries only once when the app starts
+    strm_lib = StrmLibrary(db)
+    cloud115_lib = Cloud115Library(db)
+    
+    # # Create placeholder image for missing covers if it doesn't exist
+    # no_cover_path = os.path.join("static", "images", "no-cover.jpg")
+    # if not os.path.exists(no_cover_path):
+    #     try:
+    #         os.makedirs(os.path.dirname(no_cover_path), exist_ok=True)
+    #         with open(no_cover_path, 'wb') as f:
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)), debug=False) 

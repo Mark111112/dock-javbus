@@ -400,7 +400,7 @@ class Cloud115Library:
                     video_id = file.get('video_id')
                     if not video_id:
                         continue
-                    
+                        
                     try:
                         # 从API获取影片详情
                         logging.info(f"从API获取影片 {video_id} 的详情")
@@ -409,21 +409,21 @@ class Cloud115Library:
                         if movie_data:
                             # 格式化影片数据并保存到数据库
                             formatted_data = format_movie_data(movie_data)
-                            self.db.save_movie(formatted_data)
+                            self.db.save_movie(movie_data)
                             
                             # 下载封面图片
-                            cover_url = formatted_data.get('img')
+                            cover_url = formatted_data.get('image_url')
                             if cover_url:
                                 cover_path = os.path.join("buspic", "covers", f"{video_id}.jpg")
                                 download_image(cover_url, cover_path)
                             
                             # 准备演员数据
                             actors_data = []
-                            for actor in formatted_data.get('stars', []):
+                            for actor in formatted_data.get('actors', []):
                                 actors_data.append({
                                     "id": actor.get('id', ''),
                                     "name": actor.get('name', ''),
-                                    "image_url": actor.get('image', '')
+                                    "image_url": actor.get('image_url', '')
                                 })
                             
                             # 将演员数据序列化为JSON字符串
@@ -434,7 +434,7 @@ class Cloud115Library:
                             self.db.update_cloud115_metadata(
                                 file_id,
                                 video_id=video_id,
-                                cover_image=formatted_data.get('img', ''),
+                                cover_image=formatted_data.get('image_url', ''),
                                 actors=actors_json
                             )
                             

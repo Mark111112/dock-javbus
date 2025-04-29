@@ -273,6 +273,37 @@ class JavbusDatabase:
             print(f"获取影片信息错误: {e}")
             return None
     
+    def delete_movie(self, movie_id):
+        """从数据库中删除影片信息及相关关联
+        
+        Args:
+            movie_id: 要删除的影片ID
+            
+        Returns:
+            bool: 删除成功返回True，否则返回False
+        """
+        self.ensure_connection()
+        try:
+            # 先删除star_movie表中的关联
+            self.local.cursor.execute('DELETE FROM star_movie WHERE movie_id = ?', (movie_id,))
+            
+            # 再删除movies表中的影片记录
+            self.local.cursor.execute('DELETE FROM movies WHERE id = ?', (movie_id,))
+            
+            # 提交事务
+            self.local.conn.commit()
+            
+            # 检查是否有记录被删除
+            if self.local.cursor.rowcount > 0:
+                print(f"成功删除影片: {movie_id}")
+                return True
+            else:
+                print(f"未找到影片记录: {movie_id}")
+                return True  # 如果不存在记录，也认为是成功的
+        except sqlite3.Error as e:
+            print(f"删除影片信息错误: {e}")
+            return False
+    
     def search_stars(self, keyword, max_age=7):
         """搜索演员，返回匹配的演员列表"""
         self.ensure_connection()
@@ -1182,7 +1213,8 @@ class JavbusDatabase:
                     description = ?,
                     category = ?,
                     file_id = ?,
-                    pickcode = ?
+                    pickcode = ?,
+                    video_id = ?
                 WHERE id = ?
                 ''', (
                     file_data.get('title', ''),
@@ -1192,6 +1224,7 @@ class JavbusDatabase:
                     file_data.get('category', 'other'),
                     file_data.get('file_id', ''),
                     pickcode,
+                    file_data.get('video_id'),
                     result['id']
                 ))
                 file_id = result['id']
@@ -1199,8 +1232,8 @@ class JavbusDatabase:
                 # 插入新记录
                 self.local.cursor.execute('''
                 INSERT INTO cloud115_library 
-                (title, filepath, url, thumbnail, description, category, date_added, file_id, pickcode)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (title, filepath, url, thumbnail, description, category, date_added, file_id, pickcode, video_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     file_data.get('title', ''),
                     file_data.get('filepath', ''),
@@ -1210,7 +1243,8 @@ class JavbusDatabase:
                     file_data.get('category', 'other'),
                     now,
                     file_data.get('file_id', ''),
-                    pickcode
+                    pickcode,
+                    file_data.get('video_id')
                 ))
                 file_id = self.local.cursor.lastrowid
             
@@ -1362,7 +1396,7 @@ class JavbusDatabase:
             print(f"更新115云盘文件视频ID错误: {e}")
             return False
             
-    def update_cloud115_metadata(self, file_id, video_id=None, cover_image=None, actors=None):
+    def update_cloud115_metadata(self, file_id, video_id=None, cover_image=None, actors=None, file_id_115=None, pick_code=None, file_size=None):
         """更新115云盘文件元数据"""
         self.ensure_connection()
         try:
@@ -1381,6 +1415,21 @@ class JavbusDatabase:
             if actors is not None:
                 update_parts.append("actors = ?")
                 params.append(json.dumps(actors, ensure_ascii=False) if isinstance(actors, (list, dict)) else actors)
+            
+            # 增加支持115云盘特有字段
+            if file_id_115 is not None:
+                update_parts.append("file_id = ?")
+                params.append(file_id_115)
+            
+            if pick_code is not None:
+                update_parts.append("pickcode = ?")
+                params.append(pick_code)
+            
+            if file_size is not None:
+                update_parts.append("description = CASE WHEN description IS NULL THEN ? ELSE description || ', size:' || ? END")
+                size_info = f"size:{file_size}"
+                params.append(size_info)
+                params.append(file_size)
             
             if not update_parts:
                 return False  # 没有要更新的内容
