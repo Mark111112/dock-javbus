@@ -1,8 +1,8 @@
-# BUS115影片管理系统
+# BUS115影片库管理系统
 
 ## 项目简介
 
-这是一个基于Python Flask开发的JAV影片管理系统，提供了视频搜索、元数据管理、在线播放、115网盘集成、STRM文件库等功能。
+这是一个基于Python Flask开发的JAV影片管理系统，提供了视频搜索、元数据管理、在线播放、115网盘集成、Jellyfin媒体库集成和STRM文件库等功能。
 
 ## 主要功能
 
@@ -18,7 +18,7 @@
 - 支持在线HLS流播放
 - 在线网站清洁播放（强力！）、网站播放
 - STR片库在线播放
-- 115片库在线播放（强力！）
+- 115和Jellyfin片库在线转码播放（强力！）
 - 多清晰度切换
 
 ### 3. 115网盘/Jellyfin影片库
@@ -187,11 +187,11 @@ docker-compose up -d
 
 MIT License
 
-# BUS115 Video Management System
+# BUS115 Video Lib Management System
 
 ## Project Overview
 
-A JAV video management system developed with Python Flask, offering video search, metadata management, online playback, 115 Cloud integration, STRM file library, and more.
+A JAV video management system developed with Python Flask, offering video search, metadata management, online playback, 115 Cloud integration, Jellyfin Media Lib integration, STRM file library, and more.
 
 ## Core Features
 
@@ -207,7 +207,7 @@ A JAV video management system developed with Python Flask, offering video search
 - Online HLS streaming
 - Clean ad-free playback from source websites (Powerful!)
 - STRM library streaming
-- 115 Cloud video streaming (Powerful!)
+- 115 and Jellyfin Cloud video streaming (Powerful!)
 - Multi-quality switching
 
 ### 3. 115 Cloud & Jellyfin Integration
