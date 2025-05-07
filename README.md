@@ -21,17 +21,16 @@
 - 115片库在线播放（强力！）
 - 多清晰度切换
 
-### 3. 115网盘影片库
+### 3. 115网盘/Jellyfin影片库
 
 - 云盘文件浏览与管理
 - 视频文件识别与关联
 - 数据库方式对影片库的管理
 - 扫码登录功能(115API实现，无须cookies)
-- 在线播放云盘视频
+- **增加导入Jellyfin影片库功能，和115影片库完美融合，你的一体化终极影片库！**
+- **在线播放云盘视频（包括115和Jellyfin，自动转码hls推流）**
 - **浏览搜索影片一键离线下载并加入片库播放** （强力！）
-  - 自动添加到默认目录
-  - 自动添加到115网盘影片库
-  - 自动提取影片ID并关联元数据
+  - 自动添加到默认目录添加到115网盘影片库、自动提取影片ID并关联元数据
   - 一键后10秒即可播放！
 
 ### 4. STRM文件影片库
@@ -79,22 +78,39 @@
 
 ```json
 {
-  "api_url": "API服务器地址", //必须通过javbus-api获得有效API
-  "watch_url_prefix": "视频播放前缀", //missav.ai
-  "base_url": "数据源基础URL", //默认为javbus.com，也可以使用不用科学的其他地址
-   "translation": {
-    "api_url": "翻译API地址", //本地ollama url或OPEN AI兼容API url
-    "source_lang": "源语言",
-    "target_lang": "目标语言",
-    "api_token": "API密钥", //如果使用非ollama的API
-    "model": "翻译模型"
+S  "api_url": "API server address", //Requires valid API from javbus-api
+  "watch_url_prefix": "Video playback prefix", //e.g., missav.ai
+  "base_url": "Data source URL", //Defaults to javbus.com
+  "translation": {
+    "api_url": "Translation API URL", //Ollama/OpenAI-compatible endpoint
+    "source_lang": "Source language",
+    "target_lang": "Target language",
+    "api_token": "API key", //Required for non-Ollama APIs
+    "model": "Translation model"
   },
   "cloud115": {
-    "default_folder_id": "0", //可通过115浏览器确认目标目录的id
+    "default_folder_id": "0", //Target directory ID (viewable via 115)
     "library_settings": {
       "category": "other",
-      "min_file_size_mb": 50, //设为200基本可以过滤广告视频
-      "default_delay_seconds": 5 //考虑离线所需的时间，可以尝试调整，减少等待
+      "min_file_size_mb": 50, //Set to 200 to filter small ad videos
+      "default_delay_seconds": 5 //Adjust accordingly to reduce idle time
+    }
+  },
+  "jellyfin": {
+    "server_url": "Your Jellyfin server URL", //e.g., http://192.168.1.100:8096
+    "username": "Your Jellyfin username",
+    "password": "Your Jellyfin password",
+    "api_key": "Your Jellyfin API key",
+    "client_name": "BusPre",
+    "client_id": "buspre-web-player",
+    "device_name": "Web Browser",
+    "device_id": "buspre-web-player-01",
+    "transcoding": {
+      "enable_auto_transcoding": true,
+      "max_streaming_bitrate": 20000000,
+      "preferred_video_codec": "h264",
+      "preferred_audio_codec": "aac",
+      "container": "ts"
     }
   }
 }
@@ -110,6 +126,19 @@
   - `category`: 文件分类，可选值为"movies"、"tv"或"other"
   - `min_file_size_mb`: 最小文件大小(MB)，小于此大小的文件将被忽略
   - `default_delay_seconds`: 添加离线下载后等待的时间(秒)
+
+### Jellyfin Configuration
+
+- `server_url`: Your Jellyfin server URL (required for transcoding)
+- `username`: Jellyfin account username
+- `password`: Jellyfin account password
+- `api_key`: API key generated from Jellyfin dashboard
+- `transcoding`: Settings for automatic transcoding of unsupported formats
+  - `enable_auto_transcoding`: Toggle for auto-transcoding feature
+  - `max_streaming_bitrate`: Maximum bitrate for transcoded streams
+  - `preferred_video_codec`: Preferred video codec for transcoding (h264 recommended)
+  - `preferred_audio_codec`: Preferred audio codec for transcoding
+  - `container`: Container format for transcoded streams
 
 ## 使用方法
 
@@ -134,7 +163,7 @@
 
 ```bash
 docker run -d -p 9080:8080 \
-  -e API_URL = your_api_url \
+  -e API_URL=your_api_url \
   -v ./data:/app/data \
   -v ./buspic:/app/buspic \
   -v ./config:/app/confc \
@@ -157,8 +186,6 @@ docker-compose up -d
 ## License
 
 MIT License
-
-
 
 # BUS115 Video Management System
 
@@ -183,18 +210,19 @@ A JAV video management system developed with Python Flask, offering video search
 - 115 Cloud video streaming (Powerful!)
 - Multi-quality switching
 
-### 3. 115 Cloud Integration
+### 3. 115 Cloud & Jellyfin Integration
 
 - Cloud storage browsing and management
 - Video file recognition and metadata association
 - Database-driven library management
 - QR code login (via 115 API, no cookies required)
-- Online cloud video playback
+- ​**​Jellyfin library import feature for seamless integration with 115 Cloud library - your ultimate unified video library!​**​
 - ​**​One-click offline download & library integration​**​ (Powerful!)
   - Auto-saves to default directory
   - Auto-adds to 115 Cloud library
   - Auto-extracts video ID for metadata association
   - Ready to play in 10 seconds!
+- ​**​Online cloud video playback (supports 115 Cloud & Jellyfin, auto HLS transcoding)​**
 
 ### 4. STRM File Library
 
@@ -239,8 +267,6 @@ A JAV video management system developed with Python Flask, offering video search
 
 System settings are stored in `config/config.json`:
 
-
-
 ```json
 {
   "api_url": "API server address", //Requires valid API from javbus-api
@@ -260,6 +286,23 @@ System settings are stored in `config/config.json`:
       "min_file_size_mb": 50, //Set to 200 to filter small ad videos
       "default_delay_seconds": 5 //Adjust accordingly to reduce idle time
     }
+  },
+  "jellyfin": {
+    "server_url": "Your Jellyfin server URL", //e.g., http://192.168.1.100:8096
+    "username": "Your Jellyfin username",
+    "password": "Your Jellyfin password",
+    "api_key": "Your Jellyfin API key",
+    "client_name": "BusPre",
+    "client_id": "buspre-web-player",
+    "device_name": "Web Browser",
+    "device_id": "buspre-web-player-01",
+    "transcoding": {
+      "enable_auto_transcoding": true,
+      "max_streaming_bitrate": 20000000,
+      "preferred_video_codec": "h264",
+      "preferred_audio_codec": "aac",
+      "container": "ts"
+    }
   }
 }
 ```
@@ -268,9 +311,22 @@ System settings are stored in `config/config.json`:
 
 - `default_folder_id`: Default directory for downloads (use "0" for root)
 - `library_settings`:
-  - `category`: File type (`movies`, `tv`, or `other`)
+  - `category`: File type (`movies`, `tv`, or `other`)
   - `min_file_size_mb`: Minimum file size (MB) to filter small files
   - `default_delay_seconds`: Wait time after triggering downloads
+
+### Jellyfin Configuration
+
+- `server_url`: Your Jellyfin server URL (required for transcoding)
+- `username`: Jellyfin account username
+- `password`: Jellyfin account password
+- `api_key`: API key generated from Jellyfin dashboard
+- `transcoding`: Settings for automatic transcoding of unsupported formats
+  - `enable_auto_transcoding`: Toggle for auto-transcoding feature
+  - `max_streaming_bitrate`: Maximum bitrate for transcoded streams
+  - `preferred_video_codec`: Preferred video codec for transcoding (h264 recommended)
+  - `preferred_audio_codec`: Preferred audio codec for transcoding
+  - `container`: Container format for transcoded streams
 
 ## Usage
 

@@ -64,6 +64,33 @@
                         <i class="bi bi-cloud-arrow-down"></i> 115 Player
                     </a>
                     
+                    <!-- Jellyfin Player button -->
+                    <a href="/jellyfin_player/{{ movie.id }}" class="btn btn-outline-secondary" style="background-color: #e6f7ff; border-color: #0ca5e9; color: #0ca5e9;">
+                        <i class="bi bi-play-circle"></i> Jellyfin Player
+                    </a>
+                    
+                    <!-- 115 Library Files section -->
+                    <div class="mt-3" id="cloud115-files-container" style="display: none;">
+                        <div id="cloud115-files-list" class="d-flex flex-wrap gap-2 mt-2">
+                            <!-- Files will be loaded here dynamically -->
+                            <div class="spinner-border spinner-border-sm text-secondary" id="cloud115-files-loading" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <small class="text-muted" id="cloud115-files-loading-text">Loading files from 115 library...</small>
+                        </div>
+                    </div>
+                    
+                    <!-- Jellyfin Library Files section -->
+                    <div class="mt-3" id="jellyfin-files-container" style="display: none;">
+                        <div id="jellyfin-files-list" class="d-flex flex-wrap gap-2 mt-2">
+                            <!-- Files will be loaded here dynamically -->
+                            <div class="spinner-border spinner-border-sm text-secondary" id="jellyfin-files-loading" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <small class="text-muted" id="jellyfin-files-loading-text">Loading files from Jellyfin library...</small>
+                        </div>
+                    </div>
+                    
                     {% if movie.genres and movie.genres|length > 0 %}
                     <div class="mt-3">
                         <strong>Genres:</strong>
@@ -430,6 +457,121 @@
 
 {% block scripts %}
 <script>
+    // Fetch and display 115 library files for the current movie ID
+    document.addEventListener('DOMContentLoaded', function() {
+        // Check if we have a movie ID
+        const movieId = "{{ movie.id }}";
+        if (movieId) {
+            fetchCloud115Files(movieId);
+            fetchJellyfinFiles(movieId);
+        }
+    });
+    
+    function fetchCloud115Files(movieId) {
+        const container = document.getElementById('cloud115-files-container');
+        const filesList = document.getElementById('cloud115-files-list');
+        const loading = document.getElementById('cloud115-files-loading');
+        const loadingText = document.getElementById('cloud115-files-loading-text');
+        
+        // Show container with loading indicator
+        container.style.display = 'block';
+        
+        // Fetch 115 library files for the movie ID
+        fetch(`/api/cloud115/find_files_by_movie_id/${movieId}`)
+            .then(response => response.json())
+            .then(data => {
+                // Hide loading indicators
+                loading.style.display = 'none';
+                loadingText.style.display = 'none';
+                
+                if (data.success && data.files && data.files.length > 0) {
+                    // Files found, create buttons for each
+                    data.files.forEach(file => {
+                        // Format file size
+                        let sizeDisplay = file.size || "N/A";
+                        
+                        // Create button
+                        const button = document.createElement('button');
+                        button.className = 'btn btn-sm btn-outline-secondary';
+                        button.style.backgroundColor = '#f8f0ff';
+                        button.style.borderColor = '#6f42c1';
+                        button.style.color = '#6f42c1';
+                        button.innerHTML = `<i class="bi bi-file-play"></i> ${file.name} ${sizeDisplay}`;
+                        button.title = `Play ${file.name}`;
+                        
+                        // Add click event to play the file
+                        button.addEventListener('click', () => {
+                            window.open(`/cloud115/player/${file.file_id}`, '_blank');
+                        });
+                        
+                        // Add to container
+                        filesList.appendChild(button);
+                    });
+                } else {
+                    // No files found - hide the container completely
+                    container.style.display = 'none';
+                }
+            })
+            .catch(error => {
+                console.error('Error loading 115 library files:', error);
+                // Hide container on error
+                container.style.display = 'none';
+            });
+    }
+    
+    function fetchJellyfinFiles(movieId) {
+        const container = document.getElementById('jellyfin-files-container');
+        const filesList = document.getElementById('jellyfin-files-list');
+        const loading = document.getElementById('jellyfin-files-loading');
+        const loadingText = document.getElementById('jellyfin-files-loading-text');
+        
+        // Show container with loading indicator
+        container.style.display = 'block';
+        
+        // Fetch Jellyfin library files for the movie ID
+        fetch(`/api/jellyfin/find_files_by_movie_id/${movieId}`)
+            .then(response => response.json())
+            .then(data => {
+                // Hide loading indicators
+                loading.style.display = 'none';
+                loadingText.style.display = 'none';
+                
+                if (data.success && data.files && data.files.length > 0) {
+                    // Files found, create buttons for each
+                    data.files.forEach(file => {
+                        // Extract filename from path
+                        const pathParts = file.path.split('/');
+                        const fileName = pathParts[pathParts.length - 1];
+                        
+                        // Create button
+                        const button = document.createElement('button');
+                        button.className = 'btn btn-sm btn-outline-secondary';
+                        button.style.backgroundColor = '#e6f7ff';
+                        button.style.borderColor = '#0ca5e9';
+                        button.style.color = '#0ca5e9';
+                        button.innerHTML = `<i class="bi bi-file-play"></i> ${fileName}`;
+                        button.title = `Play ${fileName}`;
+                        
+                        // Add click event to play the file
+                        button.addEventListener('click', () => {
+                            window.open(`/jellyfin_player/file/${file.id}`, '_blank');
+                        });
+                        
+                        // Add to container
+                        filesList.appendChild(button);
+                    });
+                } else {
+                    // No files found - hide the container completely
+                    container.style.display = 'none';
+                }
+            })
+            .catch(error => {
+                console.error('Error loading Jellyfin library files:', error);
+                // Hide container on error
+                container.style.display = 'none';
+            });
+    }
+    
     {% if not has_summary %}
     // Fetch summary asynchronously on page load
     document.addEventListener('DOMContentLoaded', function() {

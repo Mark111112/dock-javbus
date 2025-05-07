@@ -10,6 +10,9 @@ import base64
 import hashlib
 import secrets
 import threading
+import sqlite3
+import copy
+from jellyfin_apiclient_python import JellyfinClient
 
 # Add current directory to Python path to ensure modules can be imported
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -25,6 +28,7 @@ import moviescraper  # Changed from movieinfo to moviescraper
 from datetime import datetime
 from strm_library import StrmLibrary  # Import the STRM library module
 from cloud115_library import Cloud115Library
+from jellyfin_library import JellyfinLibrary  # Import the Jellyfin library module
 # 导入视频播放器适配器
 try:
     import video_player_adapter
@@ -135,6 +139,31 @@ def load_config():
             "target_lang": "中文",
             "api_token": "",
             "model": "THUDM/glm-4-9b-chat"
+        },
+        "cloud115": {
+            "default_folder_id": "",
+            "library_settings": {
+                "category": "other",
+                "min_file_size_mb": 200,
+                "default_delay_seconds": 5
+            }
+        },
+        "jellyfin": {
+            "server_url": "",
+            "username": "",
+            "password": "",
+            "api_key": "",
+            "client_name": "BusPre",
+            "client_id": "buspre-web-player",
+            "device_name": "Web Browser",
+            "device_id": "buspre-web-player-01",
+            "transcoding": {
+                "enable_auto_transcoding": True,
+                "max_streaming_bitrate": 20000000,
+                "preferred_video_codec": "h264",
+                "preferred_audio_codec": "aac",
+                "container": "ts"
+            }
         }
     }
     try:
@@ -1970,6 +1999,9 @@ def get_movie_image_url(movie_id):
 # Initialize STRM library
 strm_lib = StrmLibrary(db)
 
+# Initialize Jellyfin library
+jellyfin_lib = JellyfinLibrary(db_file=DB_FILE)
+
 @app.route('/strm')
 def strm_library_route():
     """Show STRM library page"""
@@ -2794,27 +2826,120 @@ def cloud115_library_search():
     
     # Items per page
     per_page = 24
-    offset = (page - 1) * per_page
     
-    # Get search results with sorting applied at database level
+    # Step 1: Get all records from both tables
+    # Get cloud115 files matching search query
     cloud115_files = db.search_cloud115_files(
         query, 
         category=category if category else None, 
-        limit=per_page, 
-        offset=offset,
         sort_by=sort_by,
         sort_order=sort_order
     )
     
-    # Get all categories for the selector
-    categories = db.get_cloud115_categories()
+    # Add source flag to cloud115 files
+    for file in cloud115_files:
+        file['is_cloud115'] = True
+        file['is_jellyfin'] = False
+    
+    # Get jellyfin movies matching search query
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    # Create SQL query for jellyfin movies with search
+    search_terms = f"%{query}%"
+    if category:
+        cursor.execute("""
+            SELECT * FROM jelmovie 
+            WHERE (title LIKE ? OR video_id LIKE ?) AND library_name = ?
+        """, (search_terms, search_terms, category))
+    else:
+        cursor.execute("""
+            SELECT * FROM jelmovie 
+            WHERE title LIKE ? OR video_id LIKE ?
+        """, (search_terms, search_terms))
+    
+    jellyfin_movies = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    
+    # Add source flag to jellyfin movies
+    for movie in jellyfin_movies:
+        movie['is_cloud115'] = False
+        movie['is_jellyfin'] = True
+    
+    # Step 2: Merge and deduplicate records by video_id
+    all_files = []
+    video_id_map = {}
+    
+    # Process cloud115 files first
+    for file in cloud115_files:
+        video_id = file.get('video_id')
+        if video_id:
+            if video_id not in video_id_map:
+                video_id_map[video_id] = file
+            else:
+                # If already exists, just update the flags
+                video_id_map[video_id]['is_cloud115'] = True
+        else:
+            # Files without video_id go directly to the list
+            all_files.append(file)
+    
+    # Process jellyfin movies
+    for movie in jellyfin_movies:
+        video_id = movie.get('video_id')
+        if video_id:
+            if video_id in video_id_map:
+                # Update existing record
+                existing = video_id_map[video_id]
+                existing['is_jellyfin'] = True
+                existing['jellyfin_id'] = movie.get('id')
+                existing['item_id'] = movie.get('item_id')
+                existing['library_name'] = movie.get('library_name')
+                # Don't override other fields if we already have a cloud115 record
+            else:
+                # New record
+                video_id_map[video_id] = movie
+        else:
+            # Movies without video_id go directly to the list
+            all_files.append(movie)
+    
+    # Add all deduplicated video_id records to the list
+    all_files.extend(video_id_map.values())
+    
+    # Step 3: Sort the merged list
+    if sort_by == 'added_time':
+        all_files.sort(key=lambda x: x.get('date_added', 0), reverse=(sort_order == 'desc'))
+    elif sort_by == 'video_id':
+        all_files.sort(key=lambda x: x.get('video_id', ''), reverse=(sort_order == 'desc'))
+    elif sort_by == 'title':
+        all_files.sort(key=lambda x: x.get('title', ''), reverse=(sort_order == 'desc'))
+    elif sort_by == 'date':
+        all_files.sort(key=lambda x: x.get('date', ''), reverse=(sort_order == 'desc'))
+    
+    # Step 4: Randomize if requested
+    if sort_order == 'random':
+        import random
+        random.shuffle(all_files)
+    
+    # Step 5: Apply pagination
+    total_count = len(all_files)
+    offset = (page - 1) * per_page
+    cloud115_files = all_files[offset:offset + per_page]
+    
+    # Get all categories (combine from both sources)
+    cloud115_categories = db.get_cloud115_categories()
+    
+    # Get jellyfin library names
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT DISTINCT library_name FROM jelmovie")
+    jellyfin_categories = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    
+    # Combine categories without duplicates
+    categories = list(set(cloud115_categories + jellyfin_categories))
     
     # Calculate pagination
-    if category:
-        total_count = len(db.search_cloud115_files(query, category=category))
-    else:
-        total_count = len(db.search_cloud115_files(query))
-    
     total_pages = (total_count + per_page - 1) // per_page  # Ceiling division
     
     # Generate page numbers
@@ -2868,26 +2993,112 @@ def cloud115_library():
     
     # Items per page
     per_page = 24
-    offset = (page - 1) * per_page
     
-    # Get cloud115 files with sorting applied at database level
+    # Step 1: Get all records from both tables
+    # Get all cloud115 files 
     cloud115_files = db.get_cloud115_files(
         category=category if category else None, 
-        limit=per_page, 
-        offset=offset,
         sort_by=sort_by,
         sort_order=sort_order
     )
     
-    # Get all categories for the selector
-    categories = db.get_cloud115_categories()
+    # Add source flag to cloud115 files
+    for file in cloud115_files:
+        file['is_cloud115'] = True
+        file['is_jellyfin'] = False
+    
+    # Get all jellyfin movies
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    # Create SQL query for jellyfin movies
+    if category:
+        cursor.execute("SELECT * FROM jelmovie WHERE library_name = ?", (category,))
+    else:
+        cursor.execute("SELECT * FROM jelmovie")
+    
+    jellyfin_movies = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    
+    # Add source flag to jellyfin movies
+    for movie in jellyfin_movies:
+        movie['is_cloud115'] = False
+        movie['is_jellyfin'] = True
+    
+    # Step 2: Merge and deduplicate records by video_id
+    all_files = []
+    video_id_map = {}
+    
+    # Process cloud115 files first
+    for file in cloud115_files:
+        video_id = file.get('video_id')
+        if video_id:
+            if video_id not in video_id_map:
+                video_id_map[video_id] = file
+            else:
+                # If already exists, just update the flags
+                video_id_map[video_id]['is_cloud115'] = True
+        else:
+            # Files without video_id go directly to the list
+            all_files.append(file)
+    
+    # Process jellyfin movies
+    for movie in jellyfin_movies:
+        video_id = movie.get('video_id')
+        if video_id:
+            if video_id in video_id_map:
+                # Update existing record
+                existing = video_id_map[video_id]
+                existing['is_jellyfin'] = True
+                existing['jellyfin_id'] = movie.get('id')
+                existing['item_id'] = movie.get('item_id')
+                existing['library_name'] = movie.get('library_name')
+                # Don't override other fields if we already have a cloud115 record
+            else:
+                # New record
+                video_id_map[video_id] = movie
+        else:
+            # Movies without video_id go directly to the list
+            all_files.append(movie)
+    
+    # Add all deduplicated video_id records to the list
+    all_files.extend(video_id_map.values())
+    
+    # Step 3: Sort the merged list
+    if sort_by == 'added_time':
+        all_files.sort(key=lambda x: x.get('date_added', 0), reverse=(sort_order == 'desc'))
+    elif sort_by == 'video_id':
+        all_files.sort(key=lambda x: x.get('video_id', ''), reverse=(sort_order == 'desc'))
+    elif sort_by == 'title':
+        all_files.sort(key=lambda x: x.get('title', ''), reverse=(sort_order == 'desc'))
+    elif sort_by == 'date':
+        all_files.sort(key=lambda x: x.get('date', ''), reverse=(sort_order == 'desc'))
+    
+    # Step 4: Randomize if requested
+    if sort_order == 'random':
+        import random
+        random.shuffle(all_files)
+    
+    # Step 5: Apply pagination
+    total_count = len(all_files)
+    offset = (page - 1) * per_page
+    cloud115_files = all_files[offset:offset + per_page]
+    
+    # Get all categories (combine from both sources)
+    cloud115_categories = db.get_cloud115_categories()
+    
+    # Get jellyfin library names
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT DISTINCT library_name FROM jelmovie")
+    jellyfin_categories = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    
+    # Combine categories without duplicates
+    categories = list(set(cloud115_categories + jellyfin_categories))
     
     # Calculate pagination
-    if category:
-        total_count = len(db.get_cloud115_files(category=category))
-    else:
-        total_count = len(db.get_cloud115_files())
-    
     total_pages = (total_count + per_page - 1) // per_page  # Ceiling division
     
     # Generate page numbers
@@ -4491,18 +4702,25 @@ def sync_cloud115_category_movie_info():
         if not category:
             return jsonify({"status": "error", "message": "缺少分类参数"}), 400
             
+        # 获取是否只处理没有详情的影片
+        only_without_details = data.get('only_without_details', False)
+            
         # 创建Cloud115Library实例
         from cloud115_library import Cloud115Library
         cloud115_lib = Cloud115Library(db)
         
         # 只同步特定分类的115云盘文件
-        result = cloud115_lib.sync_cloud115_movie_info(category)
+        result = cloud115_lib.sync_cloud115_movie_info(category, only_without_details)
+        
+        message = f"成功获取了 {result['success']} 个「{category}」分类下的115云盘文件影片详情，失败 {result['failed']} 个"
+        if only_without_details:
+            message = f"成功获取了 {result['success']} 个「{category}」分类下没有详情的115云盘文件影片详情，失败 {result['failed']} 个"
         
         return jsonify({
             "status": "success", 
             "updated": result["success"],
             "failed": result["failed"],
-            "message": f"成功获取了 {result['success']} 个「{category}」分类下的115云盘文件影片详情，失败 {result['failed']} 个"
+            "message": message
         })
     except Exception as e:
         error_message = f"同步115云盘文件电影信息失败: {str(e)}"
@@ -4513,18 +4731,26 @@ def sync_cloud115_category_movie_info():
 def sync_cloud115_all_movie_info():
     """同步所有115云盘文件的电影信息"""
     try:
+        # 获取是否只处理没有详情的影片
+        data = request.get_json() or {}
+        only_without_details = data.get('only_without_details', False)
+        
         # 创建Cloud115Library实例
         from cloud115_library import Cloud115Library
         cloud115_lib = Cloud115Library(db)
         
         # 同步所有115云盘文件
-        result = cloud115_lib.sync_cloud115_movie_info()
+        result = cloud115_lib.sync_cloud115_movie_info(None, only_without_details)
+        
+        message = f"成功获取了 {result['success']} 个115云盘文件的影片详情，失败 {result['failed']} 个"
+        if only_without_details:
+            message = f"成功获取了 {result['success']} 个没有详情的115云盘文件影片详情，失败 {result['failed']} 个"
         
         return jsonify({
             "status": "success", 
             "updated": result["success"],
             "failed": result["failed"],
-            "message": f"成功获取了 {result['success']} 个115云盘文件的影片详情，失败 {result['failed']} 个"
+            "message": message
         })
     except Exception as e:
         error_message = f"同步115云盘文件电影信息失败: {str(e)}"
@@ -4748,7 +4974,7 @@ def process_offline_download_to_library(urls, movie_info, library_settings, fold
                     update_time = int(file.get('upt', file.get('uet', 0)))
                     time_diff = now - update_time
                     
-                    # 如果是最近5分钟内创建/更新的文件夹，很可能是新的离线下载
+                    # 如果是最近1分钟内创建/更新的文件夹，很可能是新的离线下载
                     if time_diff < 60:  # 1分钟 = 60秒
                         folder_name = file.get('file_name', file.get('n', file.get('fn', '')))
                         folder_id = file.get('file_id', file.get('fid', ''))
@@ -5008,11 +5234,873 @@ def process_valid_files_to_library(valid_files, category, access_token, movie_in
 
 # extract_movie_id_from_filename 函数已移除，现在直接使用movie_info中的movie_id
 
+@app.route('/api/cloud115/find_files_by_movie_id/<movie_id>', methods=['GET'])
+def list_cloud115_files_by_movie_id(movie_id):
+    """查找115云盘中与指定视频ID匹配的所有文件"""
+    try:
+        app.logger.info(f"正在查找视频ID为 {movie_id} 的115云盘文件")
+        
+        # 获取所有云盘文件
+        cloud115_files = db.get_cloud115_files()
+        
+        # 查找匹配指定视频ID的所有文件
+        matching_files = [file for file in cloud115_files if file.get('video_id') == movie_id]
+        
+        if matching_files:
+            # 找到匹配的文件，返回文件列表
+            app.logger.info(f"为视频ID {movie_id} 找到 {len(matching_files)} 个115云盘文件")
+            
+            # 整理文件信息，确保包含pickcode
+            files_with_details = []
+            for file in matching_files:
+                # 获取文件大小，优先使用size字段
+                file_size = file.get('size', 0)
+                
+                # 如果size字段为0或不存在，尝试从description中提取
+                if not file_size and file.get('description'):
+                    description = file.get('description', '')
+                    size_match = re.search(r'size:(\d+)', description)
+                    if size_match:
+                        file_size = int(size_match.group(1))
+                
+                # 从filepath中提取文件名
+                filepath = file.get('filepath', '')
+                filename = filepath
+                
+                # 处理不同的路径情况
+                if '/' in filepath:
+                    # 对于包含路径的情况，取最后一部分
+                    filename = filepath.split('/')[-1]
+                elif '\\' in filepath:
+                    # 处理Windows风格的路径
+                    filename = filepath.split('\\')[-1]
+                
+                files_with_details.append({
+                    'file_id': file.get('id'),
+                    'name': filename,  # 使用处理后的文件名
+                    'size': file_size,  # 从description提取的大小
+                    'pickcode': file.get('pickcode', ''),
+                    'category': file.get('category', ''),
+                    'path': file.get('filepath', '')
+                })
+                
+            return jsonify({
+                'success': True,
+                'files': files_with_details
+            })
+        else:
+            # 未找到匹配的文件
+            app.logger.warning(f"未找到视频ID为 {movie_id} 的115云盘文件")
+            return jsonify({
+                'success': False,
+                'message': f"未找到视频ID为 {movie_id} 的115云盘文件"
+            })
+    except Exception as e:
+        app.logger.error(f"查找115云盘文件错误: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': f"查找115云盘文件时出错: {str(e)}"
+        }), 500
+
+def convert_human_size_to_bytes(size_str):
+    """将人类可读的文件大小字符串（如'1.44GB'）转换为字节数整数"""
+    try:
+        if not size_str or not isinstance(size_str, str):
+            return 0
+            
+        # 移除所有空格
+        size_str = size_str.strip()
+        
+        # 匹配数字和单位
+        import re
+        match = re.match(r'^([\d\.]+)\s*([KMGTP]?B?)$', size_str, re.IGNORECASE)
+        if not match:
+            return 0
+            
+        num, unit = match.groups()
+        num = float(num)
+        unit = unit.upper()
+        
+        # 转换单位到字节数
+        multipliers = {
+            'B': 1,
+            '': 1,
+            'KB': 1024,
+            'K': 1024,
+            'MB': 1024**2,
+            'M': 1024**2,
+            'GB': 1024**3,
+            'G': 1024**3,
+            'TB': 1024**4,
+            'T': 1024**4,
+            'PB': 1024**5,
+            'P': 1024**5
+        }
+        
+        if unit in multipliers:
+            return int(num * multipliers[unit])
+        return 0
+    except Exception as e:
+        app.logger.error(f"转换文件大小 '{size_str}' 时出错: {str(e)}")
+        return 0
+
+@app.route('/api/cloud115/update_all_file_sizes', methods=['POST'])
+def update_all_cloud115_file_sizes():
+    """更新所有115云盘文件的大小信息"""
+    try:
+        # 获取所有云盘文件
+        cloud115_files = db.get_cloud115_files()
+        total_files = len(cloud115_files)
+        updated_count = 0
+        
+        # 获取有效的token
+        access_token = get_cloud115_valid_token()
+        if not access_token:
+            return jsonify({
+                'success': False,
+                'message': '无法获取有效的115访问令牌'
+            }), 401
+        
+        app.logger.info(f"开始更新 {total_files} 个115云盘文件的大小信息")
+        
+        for file in cloud115_files:
+            try:
+                pickcode = file.get('pickcode')
+                file_id = file.get('file_id')
+                
+                if not pickcode and not file_id:
+                    app.logger.warning(f"跳过文件 {file.get('filepath')} - 没有pickcode和file_id")
+                    continue
+                
+                file_size_str = ""
+                
+                # 首先尝试使用pickcode获取文件信息（这是最准确的方法）
+                if pickcode:
+                    try:
+                        api_url = "https://proapi.115.com/open/file/info"
+                        params = {
+                            'pick_code': pickcode
+                        }
+                        headers = {
+                            'Authorization': f'Bearer {access_token}'
+                        }
+                        
+                        response = requests.get(api_url, params=params, headers=headers, timeout=10)
+                        
+                        if response.status_code == 200:
+                            try:
+                                file_info = response.json()
+                                app.logger.debug(f"使用pickcode获取到的文件信息: {file_info}")
+                                
+                                if file_info.get('state') and isinstance(file_info.get('data'), dict):
+                                    file_size_str = file_info['data'].get('size', '')
+                                    if file_size_str:
+                                        app.logger.info(f"从pickcode API获取到文件 {file.get('filepath')} 的大小: {file_size_str}")
+                            except ValueError as e:
+                                app.logger.error(f"解析文件 {file.get('filepath')} 的API响应时出错: {str(e)}, 响应内容: {response.text[:100]}")
+                    except Exception as e:
+                        app.logger.error(f"使用pickcode获取文件 {file.get('filepath')} 的大小时出错: {str(e)}")
+                
+                # 如果使用pickcode不成功，尝试使用file_id
+                if not file_size_str and file_id:
+                    try:
+                        api_url = "https://proapi.115.com/open/folder/get_info"
+                        params = {
+                            'file_id': file_id
+                        }
+                        headers = {
+                            'Authorization': f'Bearer {access_token}'
+                        }
+                        
+                        response = requests.get(api_url, params=params, headers=headers, timeout=10)
+                        
+                        if response.status_code == 200:
+                            try:
+                                data = response.json()
+                                app.logger.debug(f"使用file_id获取到的文件信息: {data}")
+                                
+                                if data.get('state') and isinstance(data.get('data'), dict):
+                                    file_size_str = data['data'].get('size', '')
+                                    if file_size_str:
+                                        app.logger.info(f"从file_id API获取到文件 {file.get('filepath')} 的大小: {file_size_str}")
+                            except ValueError as e:
+                                app.logger.error(f"解析文件 {file.get('filepath')} 的API响应时出错: {str(e)}, 响应内容: {response.text[:100]}")
+                    except Exception as e:
+                        app.logger.error(f"使用file_id获取文件 {file.get('filepath')} 的大小时出错: {str(e)}")
+                
+                # 记录日志，如果获取文件大小失败
+                if not file_size_str:
+                    app.logger.warning(f"无法获取文件 {file.get('filepath')} 的大小")
+                
+                # 更新数据库
+                db.local.cursor.execute('''
+                UPDATE cloud115_library SET size = ? WHERE id = ?
+                ''', (file_size_str, file.get('id')))
+                
+                if file_size_str:
+                    updated_count += 1
+                    app.logger.debug(f"已更新文件 {file.get('filepath')} 的大小为 {file_size_str}")
+                
+                # 添加延迟，避免API请求过于频繁
+                time.sleep(0.5)
+                
+            except requests.exceptions.RequestException as e:
+                app.logger.error(f"请求文件 {file.get('filepath')} 信息时网络错误: {str(e)}")
+                time.sleep(1)  # 网络错误时增加等待时间
+                continue
+            except Exception as e:
+                app.logger.error(f"更新文件 {file.get('filepath')} 大小时出错: {str(e)}")
+                continue
+        
+        # 提交更改
+        db.local.conn.commit()
+        
+        app.logger.info(f"文件大小更新完成，共更新了 {updated_count}/{total_files} 个文件")
+        
+        return jsonify({
+            'success': True,
+            'message': f'成功更新了 {updated_count}/{total_files} 个文件的大小信息'
+        })
+        
+    except Exception as e:
+        app.logger.error(f"更新文件大小信息出错: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': f"更新文件大小信息时出错: {str(e)}"
+        }), 500
+
+# Jellyfin Library routes
+@app.route('/jellyfin')
+def jellyfin_library_route():
+    """Show Jellyfin library page"""
+    return redirect(url_for('jellyfin_library'))
+
+@app.route('/jellyfin/library')
+def jellyfin_library():
+    """Display Jellyfin libraries"""
+    # 获取已导入的库列表
+    libraries = jellyfin_lib.get_imported_libraries()
+    
+    return render_template('jellyfin_library.html', 
+                          libraries=libraries,
+                          page_title="Jellyfin 影片库")
+
+@app.route('/jellyfin/movies')
+def jellyfin_movies():
+    """Display movies from a Jellyfin library"""
+    library_id = request.args.get('library_id')
+    page = int(request.args.get('page', 1))
+    search = request.args.get('search', '')
+    
+    # 每页显示的数量
+    per_page = 40
+    start = (page - 1) * per_page
+    
+    # 获取电影列表
+    result = jellyfin_lib.get_library_movies(
+        library_id=library_id,
+        start=start,
+        limit=per_page,
+        search_term=search
+    )
+    
+    movies = result.get('items', [])
+    total_count = result.get('total_count', 0)
+    
+    # 计算总页数
+    total_pages = (total_count + per_page - 1) // per_page
+    
+    # 获取库名称
+    library_name = ""
+    if library_id:
+        libraries = jellyfin_lib.get_imported_libraries()
+        for lib in libraries:
+            if lib.get('id') == library_id:
+                library_name = lib.get('name', '')
+                break
+    
+    return render_template('jellyfin_movies.html',
+                          movies=movies,
+                          library_id=library_id,
+                          library_name=library_name,
+                          page=page,
+                          total_pages=total_pages,
+                          search=search,
+                          page_title=f"Jellyfin - {library_name}" if library_name else "Jellyfin 影片")
+
+@app.route('/jellyfin/player/<item_id>')
+def jellyfin_player(item_id):
+    """Play a movie from Jellyfin"""
+    # 从数据库获取影片信息
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM jelmovie WHERE item_id = ?", (item_id,))
+    movie = cursor.fetchone()
+    conn.close()
+    
+    if not movie:
+        flash("影片不存在或已被删除")
+        return redirect(url_for('jellyfin_library'))
+    
+    # 更新播放计数
+    jellyfin_lib.update_play_count(movie['item_id'])
+    
+    # 将行对象转换为字典
+    movie_dict = dict(movie)
+    
+    # 解析演员JSON
+    if movie_dict.get('actors'):
+        try:
+            movie_dict['actors'] = json.loads(movie_dict['actors'])
+        except:
+            movie_dict['actors'] = []
+    
+    # 获取视频ID相关的影片信息
+    video_id = movie_dict.get('video_id', '')
+    movie_info = None
+    
+    if video_id:
+        movie_info = get_movie_data(video_id)
+    
+    return render_template('jellyfin_player.html',
+                          movie=movie_dict,
+                          movie_info=movie_info,
+                          page_title=movie_dict.get('title', '影片播放'))
+
+@app.route('/api/jellyfin/connect', methods=['POST'])
+def jellyfin_connect():
+    """Connect to a Jellyfin server"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"status": "error", "message": "缺少必要参数"}), 400
+        
+        server_url = data.get('server_url', '')
+        username = data.get('username', '')
+        password = data.get('password', '')
+        api_key = data.get('api_key', '')
+        
+        if not server_url:
+            return jsonify({"status": "error", "message": "服务器URL不能为空"}), 400
+        
+        # 设置身份验证方式
+        if api_key:
+            # 使用API密钥连接
+            result = jellyfin_lib.connect_to_server(server_url, api_key=api_key)
+        elif username and password:
+            # 使用用户名和密码连接
+            result = jellyfin_lib.connect_to_server(server_url, username=username, password=password)
+        else:
+            return jsonify({"status": "error", "message": "必须提供API密钥或用户名和密码"}), 400
+        
+        if result:
+            return jsonify({"status": "success", "message": "连接成功"})
+        else:
+            return jsonify({"status": "error", "message": "连接失败，请检查服务器URL和凭据"}), 400
+            
+    except Exception as e:
+        error_message = f"连接Jellyfin服务器失败: {str(e)}"
+        logging.error(error_message)
+        return jsonify({"status": "error", "message": error_message}), 500
+
+@app.route('/api/jellyfin/libraries', methods=['GET'])
+def jellyfin_libraries():
+    """Get Jellyfin libraries"""
+    try:
+        # 检查是否已连接
+        if not jellyfin_lib.client:
+            # 尝试使用保存的凭据重新连接
+            # 你可能需要从某处加载保存的凭据
+            return jsonify({"status": "error", "message": "未连接到Jellyfin服务器"}), 400
+        
+        libraries = jellyfin_lib.get_libraries()
+        return jsonify({
+            "status": "success", 
+            "libraries": libraries
+        })
+            
+    except Exception as e:
+        error_message = f"获取Jellyfin库列表失败: {str(e)}"
+        logging.error(error_message)
+        return jsonify({"status": "error", "message": error_message}), 500
+
+@app.route('/api/jellyfin/import_library', methods=['POST'])
+def jellyfin_import_library():
+    """Import a Jellyfin library"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"status": "error", "message": "缺少必要参数"}), 400
+        
+        library_id = data.get('library_id', '')
+        library_name = data.get('library_name', '')
+        
+        if not library_id or not library_name:
+            return jsonify({"status": "error", "message": "库ID和名称不能为空"}), 400
+        
+        # 检查是否已连接
+        if not jellyfin_lib.client:
+            return jsonify({"status": "error", "message": "未连接到Jellyfin服务器"}), 400
+        
+        # 导入库
+        result = jellyfin_lib.import_library(library_id, library_name)
+        
+        return jsonify({
+            "status": "success", 
+            "message": f"导入完成，共导入 {result['imported']} 个项目，失败 {result['failed']} 个",
+            "result": result
+        })
+            
+    except Exception as e:
+        error_message = f"导入Jellyfin库失败: {str(e)}"
+        logging.error(error_message)
+        return jsonify({"status": "error", "message": error_message}), 500
+
+@app.route('/api/jellyfin/delete_library', methods=['POST'])
+def jellyfin_delete_library():
+    """Delete an imported Jellyfin library"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"status": "error", "message": "缺少必要参数"}), 400
+        
+        library_id = data.get('library_id', '')
+        
+        if not library_id:
+            return jsonify({"status": "error", "message": "库ID不能为空"}), 400
+        
+        # 删除库
+        deleted_count = jellyfin_lib.delete_library(library_id)
+        
+        return jsonify({
+            "status": "success", 
+            "message": f"删除完成，共删除 {deleted_count} 个项目",
+            "deleted_count": deleted_count
+        })
+            
+    except Exception as e:
+        error_message = f"删除Jellyfin库失败: {str(e)}"
+        logging.error(error_message)
+        return jsonify({"status": "error", "message": error_message}), 500
+
+
+
+@app.route('/api/jellyfin/find_files_by_movie_id/<movie_id>', methods=['GET'])
+def api_jellyfin_find_files_by_movie_id(movie_id):
+    """查找指定电影ID的Jellyfin文件
+    
+    Args:
+        movie_id: 电影ID (video_id)
+        
+    Returns:
+        JSON: 包含文件列表的JSON响应
+    """
+    try:
+        # 初始化Jellyfin库
+        jellyfin_lib = JellyfinLibrary(db_file=DB_FILE)
+        
+        # 查找文件
+        files = jellyfin_lib.find_files_by_movie_id(movie_id)
+        
+        # 构造响应
+        if files and len(files) > 0:
+            return jsonify({
+                "success": True,
+                "files": files
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "message": f"No Jellyfin files found for movie ID {movie_id}",
+                "files": []
+            })
+    except Exception as e:
+        app.logger.error(f"Error finding Jellyfin files by movie ID: {e}")
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "files": []
+        })
+
+@app.route('/jellyfin_player/file/<file_id>')
+def jellyfin_file_player(file_id):
+    """从Jellyfin库播放特定文件
+    
+    Args:
+        file_id: jelmovie表中的文件ID
+    """
+    try:
+        # 从数据库获取文件信息
+        conn = sqlite3.connect(DB_FILE)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT * FROM jelmovie WHERE id = ?", (file_id,))
+        file = cursor.fetchone()
+        conn.close()
+        
+        if not file:
+            flash("文件不存在或已被删除")
+            return redirect(url_for('jellyfin_library'))
+        
+        # 更新播放计数
+        jellyfin_lib.update_play_count(file['item_id'])
+        
+        # 将行对象转换为字典
+        file_dict = dict(file)
+        
+        # 解析演员JSON
+        if file_dict.get('actors'):
+            try:
+                file_dict['actors'] = json.loads(file_dict['actors'])
+            except:
+                file_dict['actors'] = []
+        
+        # 获取视频ID相关的影片信息
+        video_id = file_dict.get('video_id', '')
+        movie_info = None
+        
+        if video_id:
+            movie_info = get_movie_data(video_id)
+        
+        return render_template('jellyfin_player.html',
+                             movie=file_dict,
+                             movie_info=movie_info,
+                             page_title=file_dict.get('title', 'Jellyfin播放器'))
+    
+    except Exception as e:
+        app.logger.error(f"Error playing Jellyfin file: {e}")
+        flash(f"播放文件时发生错误: {str(e)}")
+        return redirect(url_for('jellyfin_library'))
+
+@app.route('/jellyfin_player/<movie_id>')
+def jellyfin_movie_player(movie_id):
+    """为特定电影ID查找Jellyfin文件并播放
+    
+    Args:
+        movie_id: 电影ID (video_id)
+    """
+    try:
+        # 初始化Jellyfin库
+        jellyfin_lib = JellyfinLibrary(db_file=DB_FILE)
+        
+        # 查找电影的Jellyfin文件
+        files = jellyfin_lib.find_files_by_movie_id(movie_id)
+        
+        if not files or len(files) == 0:
+            flash(f"未找到电影ID为 {movie_id} 的Jellyfin文件")
+            return redirect(url_for('movie_detail', movie_id=movie_id))
+        
+        # 如果找到多个文件，显示文件列表让用户选择
+        if len(files) > 1:
+            # 获取影片信息
+            movie_info = get_movie_data(movie_id)
+            return render_template('jellyfin_file_selector.html',
+                                 files=files,
+                                 movie_id=movie_id,
+                                 movie_info=movie_info,
+                                 page_title=f"选择Jellyfin文件 - {movie_id}")
+        
+        # 如果只有一个文件，直接播放
+        file_id = files[0]['id']
+        return redirect(url_for('jellyfin_file_player', file_id=file_id))
+        
+    except Exception as e:
+        app.logger.error(f"Error finding Jellyfin files for movie: {e}")
+        flash(f"查找电影文件时发生错误: {str(e)}")
+        return redirect(url_for('movie_detail', movie_id=movie_id))
+
+@app.route('/api/config/jellyfin', methods=['GET'])
+def get_jellyfin_config():
+    """Get Jellyfin configuration from config.json
+    
+    Returns:
+        JSON: Jellyfin configuration with sensitive information removed
+    """
+    try:
+        # Load config from file
+        with open('config/config.json', 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        
+        # Return only Jellyfin configuration
+        if 'jellyfin' in config:
+            # Create a copy to avoid modifying the original
+            jellyfin_config = copy.deepcopy(config['jellyfin'])
+            
+            # Remove sensitive information from the response
+            if 'password' in jellyfin_config:
+                jellyfin_config['password'] = ''
+            
+            return jsonify(jellyfin_config)
+        else:
+            return jsonify({"status": "error", "message": "Jellyfin configuration not found"}), 404
+    except Exception as e:
+        error_message = f"获取Jellyfin配置失败: {str(e)}"
+        logging.error(error_message)
+        return jsonify({"status": "error", "message": error_message}), 500
+
+@app.route('/api/jellyfin/authenticate', methods=['POST'])
+def jellyfin_authenticate():
+    """Authenticate with Jellyfin server and return access token
+    
+    Returns:
+        JSON: Authentication result with access token
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"status": "error", "message": "缺少必要参数"}), 400
+        
+        server_url = data.get('server_url', '')
+        username = data.get('username', '')
+        password = data.get('password', '')
+        api_key = data.get('api_key', '')
+        
+        # Check if we have server URL and auth information
+        if not server_url:
+            return jsonify({"status": "error", "message": "服务器URL不能为空"}), 400
+        
+        # Initialize Jellyfin client
+        client = JellyfinClient()
+        client.config.app('BusPre', '1.0.0', 'Web Player', 'buspre-web-player-01')
+        client.config.data["auth.ssl"] = server_url.startswith('https')
+        
+        # Try authentication in this order: 
+        # 1. User-provided API key
+        # 2. User-provided username/password
+        # 3. Config file API key
+        # 4. Config file username/password
+        
+        # 1. Try API key from request
+        if api_key:
+            try:
+                client.authenticate({
+                    "Servers": [{
+                        "AccessToken": api_key,
+                        "address": server_url
+                    }]
+                }, discover=False)
+                
+                # Get user info
+                user_info = client.jellyfin.get_user()
+                
+                return jsonify({
+                    "status": "success",
+                    "access_token": api_key,
+                    "user_id": user_info.get('Id', ''),
+                    "server_id": '',  # Not needed for API key auth
+                    "auth_method": "api_key"
+                })
+            except Exception as e:
+                logging.error(f"API Key认证失败: {str(e)}")
+                # Continue to next method
+        
+        # 2. Try username/password from request
+        if username and password:
+            try:
+                # Connect to server
+                client.auth.connect_to_address(server_url)
+                
+                # Login with username and password
+                result = client.auth.login(server_url, username, password)
+                if result:
+                    # Get credentials
+                    credentials = client.auth.credentials.get_credentials()
+                    if not credentials:
+                        return jsonify({"status": "error", "message": "无法获取认证凭据"}), 500
+                    
+                    # Get server info
+                    server = None
+                    if "Servers" in credentials and len(credentials["Servers"]) > 0:
+                        server = credentials["Servers"][0]
+                    
+                    if not server or "AccessToken" not in server:
+                        return jsonify({"status": "error", "message": "获取的凭据无效"}), 500
+                    
+                    # Return token and user information
+                    return jsonify({
+                        "status": "success",
+                        "access_token": server["AccessToken"],
+                        "user_id": server.get("UserId", ""),
+                        "server_id": server.get("Id", ""),
+                        "auth_method": "username_password"
+                    })
+            except Exception as e:
+                logging.error(f"用户名/密码认证失败: {str(e)}")
+                # Continue to next method
+        
+        # 3 & 4. Try config file settings
+        try:
+            with open('config/config.json', 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            
+            if 'jellyfin' in config:
+                jellyfin_config = config['jellyfin']
+                
+                # 3. Try API key from config
+                if jellyfin_config.get('api_key'):
+                    try:
+                        # Create new client instance
+                        client = JellyfinClient()
+                        client.config.app('BusPre', '1.0.0', 'Web Player', 'buspre-web-player-01')
+                        client.config.data["auth.ssl"] = server_url.startswith('https')
+                        
+                        client.authenticate({
+                            "Servers": [{
+                                "AccessToken": jellyfin_config['api_key'],
+                                "address": server_url
+                            }]
+                        }, discover=False)
+                        
+                        # Get user info
+                        user_info = client.jellyfin.get_user()
+                        
+                        return jsonify({
+                            "status": "success",
+                            "access_token": jellyfin_config['api_key'],
+                            "user_id": user_info.get('Id', ''),
+                            "server_id": '',
+                            "auth_method": "config_api_key"
+                        })
+                    except Exception as e:
+                        logging.error(f"配置文件API Key认证失败: {str(e)}")
+                        # Continue to next method
+                
+                # 4. Try username/password from config
+                if jellyfin_config.get('username') and jellyfin_config.get('password'):
+                    try:
+                        # Create new client instance
+                        client = JellyfinClient()
+                        client.config.app('BusPre', '1.0.0', 'Web Player', 'buspre-web-player-01')
+                        client.config.data["auth.ssl"] = server_url.startswith('https')
+                        
+                        # Connect to server
+                        client.auth.connect_to_address(server_url)
+                        
+                        # Login with username and password
+                        result = client.auth.login(
+                            server_url, 
+                            jellyfin_config['username'], 
+                            jellyfin_config['password']
+                        )
+                        
+                        if result:
+                            # Get credentials
+                            credentials = client.auth.credentials.get_credentials()
+                            if not credentials:
+                                return jsonify({"status": "error", "message": "配置文件中的用户名/密码凭据无效"}), 500
+                            
+                            # Get server info
+                            server = None
+                            if "Servers" in credentials and len(credentials["Servers"]) > 0:
+                                server = credentials["Servers"][0]
+                            
+                            if not server or "AccessToken" not in server:
+                                return jsonify({"status": "error", "message": "配置文件中的用户名/密码获取的凭据无效"}), 500
+                            
+                            # Return token and user information
+                            return jsonify({
+                                "status": "success",
+                                "access_token": server["AccessToken"],
+                                "user_id": server.get("UserId", ""),
+                                "server_id": server.get("Id", ""),
+                                "auth_method": "config_username_password"
+                            })
+                    except Exception as e:
+                        logging.error(f"配置文件用户名/密码认证失败: {str(e)}")
+                        # Fall through to error message
+        except Exception as config_error:
+            logging.error(f"读取配置文件失败: {str(config_error)}")
+        
+        # If all authentication methods failed
+        return jsonify({
+            "status": "error", 
+            "message": "认证失败，请提供有效的API Key或用户名/密码"
+        }), 401
+            
+    except Exception as e:
+        error_message = f"Jellyfin认证失败: {str(e)}"
+        logging.error(error_message)
+        return jsonify({"status": "error", "message": error_message}), 500
+
+@app.route('/api/jellyfin/playback_info', methods=['POST'])
+def jellyfin_playback_info():
+    """Get Jellyfin playback information for a media item
+    
+    Returns:
+        JSON: Playback information including transcoding URLs
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"status": "error", "message": "缺少必要参数"}), 400
+        
+        item_id = data.get('item_id')
+        token = data.get('token')
+        server_url = data.get('server_url')
+        device_profile = data.get('device_profile')
+        start_time_ticks = data.get('start_time_ticks', 0)
+        user_id = data.get('user_id', '')
+        
+        if not all([item_id, token, server_url]):
+            return jsonify({"status": "error", "message": "必须提供item_id、token和server_url"}), 400
+        
+        # Initialize client with authentication token
+        client = JellyfinClient()
+        client.config.app('BusPre', '1.0.0', 'Web Player', 'buspre-web-player-01')
+        client.config.data["auth.ssl"] = server_url.startswith('https')
+        
+        # Authenticate using provided token
+        server_address = server_url
+        if server_address.endswith('/'):
+            server_address = server_address[:-1]
+            
+        # Determine if we are using API key (shorter) or access token
+        is_api_key = len(token) < 64  # API keys are typically shorter than user access tokens
+        
+        if is_api_key:
+            # API key authentication - simpler
+            logging.info("使用API Key进行认证")
+            client.authenticate({
+                "Servers": [{
+                    "AccessToken": token,
+                    "address": server_address
+                }]
+            }, discover=False)
+        else:
+            # Access token authentication - requires more fields
+            logging.info("使用访问令牌进行认证")
+            client.authenticate({
+                "Servers": [{
+                    "AccessToken": token,
+                    "UserId": user_id,
+                    "address": server_address
+                }]
+            }, discover=False)
+        
+        # Get playback info with provided device profile for transcoding
+        playback_info = client.jellyfin.get_play_info(
+            item_id=item_id,
+            profile=device_profile,
+            start_time_ticks=start_time_ticks,
+            is_playback=True
+        )
+        
+        return jsonify(playback_info)
+        
+    except Exception as e:
+        error_message = f"获取Jellyfin播放信息失败: {str(e)}"
+        logging.error(error_message)
+        return jsonify({"status": "error", "message": error_message}), 500
+
 # Start the server
 if __name__ == '__main__':
     # Initialize libraries only once when the app starts
     strm_lib = StrmLibrary(db)
     cloud115_lib = Cloud115Library(db)
+    jellyfin_lib = JellyfinLibrary(db_file=DB_FILE)
     
     # # Create placeholder image for missing covers if it doesn't exist
     # no_cover_path = os.path.join("static", "images", "no-cover.jpg")

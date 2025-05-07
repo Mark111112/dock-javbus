@@ -1,0 +1,701 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page_title | default("影片播放") }}{% endblock %}
+
+{% block head %}
+<!-- Video.js CSS -->
+<link href="https://vjs.zencdn.net/7.20.3/video-js.css" rel="stylesheet" />
+<!-- HLS.js support for video.js -->
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+<style>
+    #player-container {
+        position: relative;
+    }
+    
+    #loading-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0,0,0,0.7);
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        z-index: 100;
+        color: white;
+    }
+    
+    #status-message {
+        margin-top: 10px;
+    }
+    
+    #error-container {
+        display: none;
+        padding: 15px;
+        margin-top: 15px;
+        border-radius: 4px;
+        background-color: #f8d7da;
+        color: #721c24;
+        border: 1px solid #f5c6cb;
+    }
+    
+    .video-js {
+        width: 100%;
+        height: 0;
+        padding-top: 56.25%; /* 16:9 ratio */
+    }
+    
+    .transcode-controls {
+        margin-top: 10px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <!-- Video player column -->
+        <div class="col-lg-9">
+            <div class="card mb-4">
+                <div class="card-body p-0">
+                    <!-- Video player container with loading overlay -->
+                    <div id="player-container">
+                    <video
+                        id="jellyfin-player"
+                        class="video-js vjs-big-play-centered vjs-fluid"
+                        controls
+                        preload="auto"
+                            {% if movie.video_id %}
+                            poster="{{ url_for('serve_image', filename='covers/' + movie.video_id + '.jpg') }}"
+                            {% else %}
+                        poster="{{ movie.cover_image }}"
+                            {% endif %}
+                        data-setup="{}"
+                    >
+                            <source src="{{ movie.play_url }}" type="video/mp4" id="main-source" />
+                        <p class="vjs-no-js">
+                            To view this video please enable JavaScript, and consider upgrading to a
+                            web browser that
+                            <a href="https://videojs.com/html5-video-support/" target="_blank">supports HTML5 video</a>
+                        </p>
+                    </video>
+                        
+                        <div id="loading-overlay" style="display: none;">
+                            <div class="spinner-border text-light" role="status">
+                                <span class="visually-hidden">加载中...</span>
+                            </div>
+                            <div id="status-message">正在准备媒体...</div>
+                        </div>
+                    </div>
+                    
+                    <div id="error-container"></div>
+                    
+                    <div class="transcode-controls p-2 bg-light">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <span id="playback-info" class="text-muted"></span>
+                            </div>
+                            <div>
+                                <button id="force-transcode-btn" class="btn btn-sm btn-outline-primary">强制转码</button>
+                                <button id="direct-play-btn" class="btn btn-sm btn-outline-secondary">直接播放</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Movie title and info -->
+            <div class="card mb-4">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h3 class="card-title mb-0">
+                            {% if movie.video_id %}
+                            <span class="badge bg-success">{{ movie.video_id }}</span>
+                            {% endif %}
+                            {{ movie.title }}
+                        </h3>
+                        
+                        <div class="btn-group">
+                            <a href="potplayer://{{ movie.play_url }}" class="btn btn-outline-primary">
+                                <i class="fas fa-play-circle"></i> Potplayer播放
+                            </a>
+                            {% if movie.video_id %}
+                            <a href="{{ url_for('movie_detail', movie_id=movie.video_id) }}" class="btn btn-outline-info">
+                                <i class="fas fa-info-circle"></i> 详情
+                            </a>
+                            {% endif %}
+                        </div>
+                    </div>
+                    
+                    <div class="row">
+                        {% if movie.date or movie.actors %}
+                        <div class="col-md-6">
+                            <table class="table">
+                                <tbody>
+                                    {% if movie.date %}
+                                    <tr>
+                                        <th scope="row" style="width: 120px;">日期</th>
+                                        <td>{{ movie.date }}</td>
+                                    </tr>
+                                    {% endif %}
+                                    
+                                    {% if movie.actors and movie.actors|length > 0 %}
+                                    <tr>
+                                        <th scope="row">演员</th>
+                                        <td>
+                                            {% for actor in movie.actors %}
+                                                {{ actor }}{% if not loop.last %}, {% endif %}
+                                            {% endfor %}
+                                        </td>
+                                    </tr>
+                                    {% endif %}
+                                </tbody>
+                            </table>
+                        </div>
+                        {% endif %}
+                        
+                        <div class="col-md-6">
+                            <table class="table">
+                                <tbody>
+                                    <tr>
+                                        <th scope="row" style="width: 120px;">Jellyfin 库</th>
+                                        <td>{{ movie.library_name }}</td>
+                                    </tr>
+                                    <tr>
+                                        <th scope="row">文件路径</th>
+                                        <td class="text-truncate" style="max-width: 300px;" title="{{ movie.path }}">
+                                            {{ movie.path }}
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Movie details column -->
+        <div class="col-lg-3">
+            {% if movie_info %}
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0">影片详情</h5>
+                </div>
+                <div class="card-body">
+                    {% if movie.cover_image %}
+                    <img src="{{ movie.cover_image }}" class="img-fluid mb-3" alt="{{ movie_info.title }}">
+                    {% elif movie_info.img %}
+                    <img src="{{ movie_info.img }}" class="img-fluid mb-3" alt="{{ movie.title }}">
+                    {% endif %}
+                    
+                    <h5>{{ movie_info.title }}</h5>
+                    
+                    {% if movie_info.date %}
+                    <p class="text-muted">
+                        <i class="fas fa-calendar-alt"></i> {{ movie_info.date }}
+                    </p>
+                    {% endif %}
+                    
+                    {% if movie_info.stars and movie_info.stars|length > 0 %}
+                    <h6 class="mt-3">演员</h6>
+                    <div class="row row-cols-2 g-2 mb-3">
+                        {% for star in movie_info.stars %}
+                        <div class="col">
+                            <a href="{{ url_for('actor_detail', actor_id=star.id) }}" class="text-decoration-none">
+                                <div class="d-flex align-items-center">
+                                    {% if star.avatar %}
+                                    <img src="{{ star.avatar }}" class="rounded-circle me-2" width="40" height="40" alt="{{ star.name }}">
+                                    {% else %}
+                                    <div class="rounded-circle bg-secondary me-2 d-flex align-items-center justify-content-center" style="width: 40px; height: 40px;">
+                                        <i class="fas fa-user text-white"></i>
+                                    </div>
+                                    {% endif %}
+                                    <span>{{ star.name }}</span>
+                                </div>
+                            </a>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                    
+                    {% if movie_info.genre and movie_info.genre|length > 0 %}
+                    <h6>类别</h6>
+                    <div class="mb-3">
+                        {% for genre in movie_info.genre %}
+                        <span class="badge bg-secondary me-1 mb-1">{{ genre }}</span>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% else %}
+            <div class="card mb-4">
+                <div class="card-body">
+                    {% if movie.video_id %}
+                    <p class="mb-0">影片信息未找到，请 <a href="{{ url_for('movie_detail', movie_id=movie.video_id) }}">点击此处</a> 查看详情。</p>
+                    {% else %}
+                    <p class="mb-0">未提取到影片ID，无法显示详细信息。</p>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<!-- Video.js JS -->
+<script src="https://vjs.zencdn.net/7.20.3/video.min.js"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Constants and configuration
+        const itemId = "{{ movie.item_id }}";
+        const playUrl = "{{ movie.play_url }}";
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const statusMessage = document.getElementById('status-message');
+        const errorContainer = document.getElementById('error-container');
+        const playbackInfo = document.getElementById('playback-info');
+        const forceTranscodeBtn = document.getElementById('force-transcode-btn');
+        const directPlayBtn = document.getElementById('direct-play-btn');
+        const mainSource = document.getElementById('main-source');
+        
+        let player;
+        let savedTime = localStorage.getItem('jellyfin_' + itemId);
+        let isTranscodingEnabled = false;
+        let jellyfinConfig;
+        
+        // Extract item_id and api_key from play_url if available
+        let extractedItemId = itemId;
+        let extractedApiKey = '';
+        
+        if (playUrl) {
+            try {
+                const url = new URL(playUrl);
+                const pathParts = url.pathname.split('/');
+                if (pathParts.length >= 3) {
+                    extractedItemId = pathParts[2];
+                }
+                extractedApiKey = url.searchParams.get('api_key') || '';
+            } catch (e) {
+                console.warn('Failed to parse play_url:', e);
+            }
+        }
+        
+        // Get Jellyfin configuration
+        async function getJellyfinConfig() {
+            try {
+                const response = await fetch('/api/config/jellyfin');
+                if (!response.ok) throw new Error('Failed to load Jellyfin configuration');
+                return await response.json();
+            } catch (error) {
+                showError('无法加载Jellyfin配置: ' + error.message);
+                return null;
+            }
+        }
+        
+        // Initialize video player
+        function initializePlayer(src, type, autoStart) {
+            // If player already exists, dispose it
+            if (player) {
+                player.dispose();
+            }
+            
+            // Create new player
+            player = videojs('jellyfin-player', {
+            fluid: true,
+            controls: true,
+                autoplay: autoStart,
+            preload: 'auto',
+            playbackRates: [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
+        });
+        
+        // Save current playback time periodically
+            player.on('timeupdate', function() {
+                localStorage.setItem('jellyfin_' + itemId, player.currentTime());
+            });
+            
+            // Remove saved time when video ends
+            player.on('ended', function() {
+                localStorage.removeItem('jellyfin_' + itemId);
+            });
+            
+            // Setup error handling
+            player.on('error', function(e) {
+                console.error('Video.js error:', player.error());
+                
+                // Check if we should try transcoding
+                if (!isTranscodingEnabled && jellyfinConfig && jellyfinConfig.transcoding && jellyfinConfig.transcoding.enable_auto_transcoding) {
+                    // Automatically switch to transcoding on error if enabled
+                    showMessage('播放失败，正在尝试使用转码...');
+                    setupTranscodedStream();
+                } else {
+                    showError('视频播放错误: ' + (player.error() ? player.error().message : '未知错误'));
+                }
+            });
+            
+            // If we have a saved position, restore it
+            if (savedTime && !isNaN(parseFloat(savedTime))) {
+                player.ready(function() {
+                    player.currentTime(parseFloat(savedTime));
+                });
+            }
+            
+            updatePlaybackInfo(!isTranscodingEnabled ? '直接播放' : '转码播放');
+        }
+        
+        // Show error message
+        function showError(message) {
+            errorContainer.innerHTML = `<i class="fas fa-exclamation-triangle"></i> ${message}`;
+            errorContainer.style.display = 'block';
+            hideLoading();
+        }
+        
+        // Show loading overlay with message
+        function showLoading(message) {
+            statusMessage.textContent = message || '加载中...';
+            loadingOverlay.style.display = 'flex';
+        }
+        
+        // Hide loading overlay
+        function hideLoading() {
+            loadingOverlay.style.display = 'none';
+        }
+        
+        // Show status message
+        function showMessage(message) {
+            statusMessage.textContent = message;
+        }
+        
+        // Update playback info text
+        function updatePlaybackInfo(mode) {
+            playbackInfo.textContent = `播放模式: ${mode}`;
+        }
+        
+        // Get device profile for transcoding
+        function getDeviceProfile() {
+            return {
+                Name: "Html5",
+                MaxStreamingBitrate: jellyfinConfig.transcoding.max_streaming_bitrate || 20000000,
+                MusicStreamingTranscodingBitrate: 192000,
+                TimelineOffsetSeconds: 5,
+                TranscodingProfiles: [
+                    {
+                        Type: "Video",
+                        Container: jellyfinConfig.transcoding.container || "ts",
+                        Protocol: "hls",
+                        AudioCodec: jellyfinConfig.transcoding.preferred_audio_codec || "aac",
+                        VideoCodec: jellyfinConfig.transcoding.preferred_video_codec || "h264",
+                        MaxAudioChannels: "6"
+                    }
+                ],
+                CodecProfiles: [],
+                ContainerProfiles: [],
+                DirectPlayProfiles: [
+                    {
+                        Type: "Video",
+                        Container: "mp4,m4v",
+                        AudioCodec: "aac,mp3,ac3,eac3,flac,alac",
+                        VideoCodec: "h264,hevc,vp9",
+                        Protocol: "http"
+                    }
+                ],
+                ResponseProfiles: [],
+                SubtitleProfiles: []
+            };
+        }
+        
+        // Authenticate with Jellyfin server
+        async function authenticateJellyfin() {
+            showLoading('正在连接到Jellyfin服务器...');
+            
+            try {
+                const response = await fetch('/api/jellyfin/authenticate', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        server_url: jellyfinConfig.server_url,
+                        username: jellyfinConfig.username,
+                        password: jellyfinConfig.password
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error('认证失败: ' + response.statusText);
+                }
+                
+                const data = await response.json();
+                return data;
+            } catch (error) {
+                showError('Jellyfin认证失败: ' + error.message);
+                return null;
+            }
+        }
+        
+        // Get transcoded stream URL
+        async function getTranscodedStreamUrl() {
+            showLoading('正在准备转码流...');
+            
+            try {
+                // Get authentication credentials
+                const authInfo = await authenticateJellyfin();
+                if (!authInfo || !authInfo.access_token) {
+                    throw new Error('未获取到认证令牌');
+                }
+                
+                // 提取item ID，优先使用从play_url中提取的ID
+                const realItemId = extractedItemId || itemId;
+                
+                // 构建设备配置文件
+                const deviceProfile = getDeviceProfile();
+                
+                // 直接使用Jellyfin的PlaybackInfo API
+                const server = jellyfinConfig.server_url.endsWith('/') 
+                    ? jellyfinConfig.server_url.slice(0, -1) 
+                    : jellyfinConfig.server_url;
+                
+                // 构建请求参数
+                const apiKey = extractedApiKey || authInfo.access_token;
+                const userId = authInfo.user_id || '';
+                const startTimeTicks = savedTime ? Math.floor(parseFloat(savedTime) * 10000000) : 0;
+                
+                const queryParams = new URLSearchParams({
+                    UserId: userId,
+                    StartTimeTicks: startTimeTicks,
+                    IsPlayback: 'true',
+                    AutoOpenLiveStream: 'true',
+                    MediaSourceId: realItemId, 
+                    MaxStreamingBitrate: deviceProfile.MaxStreamingBitrate || 20000000
+                });
+                
+                // 构建PlaybackInfo请求URL
+                const playbackInfoUrl = `${server}/Items/${realItemId}/PlaybackInfo?${queryParams.toString()}`;
+                
+                console.log('Requesting PlaybackInfo:', playbackInfoUrl);
+                
+                // 发送请求
+                const playbackResponse = await fetch(playbackInfoUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Emby-Authorization': `MediaBrowser Client="BusPre", Device="Web", DeviceId="buspre-web-player-01", Version="1.0.0", Token="${apiKey}"`
+                    },
+                    body: JSON.stringify({ DeviceProfile: deviceProfile })
+                });
+                
+                if (!playbackResponse.ok) {
+                    throw new Error(`获取播放信息失败: ${playbackResponse.status} ${playbackResponse.statusText}`);
+                }
+                
+                const playbackInfo = await playbackResponse.json();
+                console.log('PlaybackInfo response:', playbackInfo);
+                
+                // 检查是否有MediaSources
+                if (!playbackInfo.MediaSources || playbackInfo.MediaSources.length === 0) {
+                    throw new Error('未找到可用的媒体源');
+                }
+                
+                // 获取第一个媒体源
+                const mediaSource = playbackInfo.MediaSources[0];
+                
+                // 检查是否支持转码并有转码URL
+                if (!mediaSource.SupportsTranscoding || !mediaSource.TranscodingUrl) {
+                    throw new Error('该媒体不支持转码或未提供转码URL');
+                }
+                
+                // 获取转码URL
+                let transcodingUrl = mediaSource.TranscodingUrl;
+                
+                // 如果是相对URL，添加服务器地址
+                if (transcodingUrl.startsWith('/')) {
+                    transcodingUrl = `${server}${transcodingUrl}`;
+                }
+                
+                console.log('Using transcoding URL:', transcodingUrl);
+                
+                return transcodingUrl;
+            } catch (error) {
+                showError('获取转码URL失败: ' + error.message);
+                console.error('Failed to get transcoding URL:', error);
+                return null;
+            }
+        }
+        
+        // Setup transcoded stream
+        async function setupTranscodedStream() {
+            isTranscodingEnabled = true;
+            showLoading('正在准备转码流...');
+            
+            try {
+                const streamUrl = await getTranscodedStreamUrl();
+                if (!streamUrl) {
+                    throw new Error('无法获取转码流URL');
+                }
+                
+                console.log('Starting HLS playback with URL:', streamUrl);
+                
+                // Initialize player with HLS stream
+                mainSource.src = streamUrl;
+                mainSource.type = 'application/x-mpegURL';
+                
+                // We need to wait until player is ready
+                initializePlayer(streamUrl, 'application/x-mpegURL', true);
+                
+                // Setup HLS.js if needed
+                if (Hls.isSupported() && player) {
+                    const hls = new Hls({
+                        maxBufferLength: 30,
+                        maxMaxBufferLength: 600,
+                        // 高级配置以提高稳定性
+                        enableWorker: true,
+                        lowLatencyMode: false,
+                        fragLoadingTimeOut: 60000,   // 片段加载超时时间
+                        manifestLoadingTimeOut: 60000, // manifest加载超时时间
+                        levelLoadingTimeOut: 60000,   // 级别加载超时时间
+                        fragLoadingMaxRetry: 6,       // 片段加载最大重试次数
+                        manifestLoadingMaxRetry: 6,   // manifest加载最大重试次数
+                        levelLoadingMaxRetry: 6       // 级别加载最大重试次数
+                    });
+                    
+                    hls.loadSource(streamUrl);
+                    hls.attachMedia(player.tech().el());
+                    
+                    hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                        console.log('HLS manifest parsed, starting playback');
+                        player.play().catch(e => console.error('Autoplay failed:', e));
+                    });
+                    
+                    hls.on(Hls.Events.LEVEL_LOADED, function(event, data) {
+                        console.log('HLS level loaded:', data.level);
+                    });
+                    
+                    hls.on(Hls.Events.ERROR, function(event, data) {
+                        console.error('HLS error:', data);
+                        if (data.fatal) {
+                            switch(data.type) {
+                                case Hls.ErrorTypes.NETWORK_ERROR:
+                                    // 尝试恢复网络错误
+                                    console.log("Fatal network error, trying to recover");
+                                    hls.startLoad();
+                                    break;
+                                case Hls.ErrorTypes.MEDIA_ERROR:
+                                    // 尝试恢复媒体错误
+                                    console.log("Fatal media error, trying to recover");
+                                    hls.recoverMediaError();
+                                    break;
+                                default:
+                                    // 无法恢复的错误
+                                    console.log("Fatal error, cannot recover");
+                                    showError('HLS流加载失败: ' + data.type + ' - ' + data.details);
+                                    break;
+                            }
+                        }
+                    });
+                } else if (videoElement.canPlayType('application/vnd.apple.mpegurl')) {
+                    // 原生HLS支持（如Safari）
+                    console.log('Using native HLS support');
+                    videoElement.src = streamUrl;
+                } else {
+                    showError('您的浏览器不支持HLS流，请尝试使用更现代的浏览器。');
+                }
+                
+                hideLoading();
+                updatePlaybackInfo('转码播放 (HLS)');
+            } catch (error) {
+                showError('设置转码流失败: ' + error.message);
+                console.error('Setup transcoded stream failed:', error);
+            }
+        }
+        
+        // Setup direct play
+        function setupDirectPlay() {
+            isTranscodingEnabled = false;
+            showLoading('正在准备直接播放...');
+            
+            // Use the original direct play URL
+            const directPlayUrl = "{{ movie.play_url }}";
+            mainSource.src = directPlayUrl;
+            mainSource.type = 'video/mp4';
+            
+            // Initialize player with direct play
+            initializePlayer(directPlayUrl, 'video/mp4', true);
+            hideLoading();
+        }
+        
+        // Check media format compatibility
+        async function checkMediaCompatibility() {
+            showLoading('正在检查媒体兼容性...');
+            
+            try {
+                // Get file extension from URL or path
+                const filePath = "{{ movie.path }}".toLowerCase();
+                const playUrl = "{{ movie.play_url }}".toLowerCase();
+                
+                let fileExtension = '';
+                if (filePath.lastIndexOf('.') !== -1) {
+                    fileExtension = filePath.substr(filePath.lastIndexOf('.') + 1);
+                } else if (playUrl.lastIndexOf('.') !== -1) {
+                    fileExtension = playUrl.substr(playUrl.lastIndexOf('.') + 1);
+                }
+                
+                // List of formats that typically need transcoding
+                const problematicFormats = ['avi', 'wmv', 'mkv', 'flv', 'mov', 'divx', 'vob', 'rmvb', 'mts', 'm2ts'];
+                
+                // If we have a problematic format and transcoding is enabled in config
+                if (problematicFormats.includes(fileExtension) && 
+                    jellyfinConfig && 
+                    jellyfinConfig.transcoding && 
+                    jellyfinConfig.transcoding.enable_auto_transcoding) {
+                    console.log(`Detected potentially incompatible format: ${fileExtension}, using transcoding`);
+                    await setupTranscodedStream();
+                } else {
+                    // Try direct play first
+                    console.log(`Using direct play for format: ${fileExtension || 'unknown'}`);
+                    setupDirectPlay();
+                }
+            } catch (error) {
+                console.error('Error checking media compatibility:', error);
+                // Fall back to direct play on error
+                setupDirectPlay();
+            }
+        }
+        
+        // Main initialization
+        async function initialize() {
+            try {
+                // Load Jellyfin configuration
+                jellyfinConfig = await getJellyfinConfig();
+                
+                if (!jellyfinConfig) {
+                    // If we can't get config, fall back to direct play
+                    setupDirectPlay();
+                    return;
+                }
+                
+                // Check media compatibility and set up appropriate playback
+                await checkMediaCompatibility();
+            } catch (error) {
+                console.error('Initialization error:', error);
+                showError('初始化播放器失败: ' + error.message);
+                // Fall back to direct play on error
+                setupDirectPlay();
+            }
+        }
+        
+        // Button click handlers
+        forceTranscodeBtn.addEventListener('click', async function() {
+            await setupTranscodedStream();
+        });
+        
+        directPlayBtn.addEventListener('click', function() {
+            setupDirectPlay();
+        });
+        
+        // Start initialization
+        initialize();
+    });
+</script>
+{% endblock %} 

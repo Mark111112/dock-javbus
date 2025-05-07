@@ -1,0 +1,411 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page_title | default("Jellyfin 影片库") }}{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h1>Jellyfin 影片库</h1>
+    
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5>连接到 Jellyfin 服务器</h5>
+                </div>
+                <div class="card-body">
+                    <form id="jellyfin-connect-form">
+                        <div class="mb-3">
+                            <label for="server_url" class="form-label">服务器 URL</label>
+                            <input type="text" class="form-control" id="server_url" placeholder="例如: http://192.168.1.100:8096" required>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">认证方式</label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="auth_method" id="auth_method_credentials" value="credentials" checked>
+                                <label class="form-check-label" for="auth_method_credentials">
+                                    用户名和密码
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="auth_method" id="auth_method_api_key" value="api_key">
+                                <label class="form-check-label" for="auth_method_api_key">
+                                    API 密钥
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <div id="credentials_auth" class="auth-method">
+                            <div class="mb-3">
+                                <label for="username" class="form-label">用户名</label>
+                                <input type="text" class="form-control" id="username">
+                            </div>
+                            <div class="mb-3">
+                                <label for="password" class="form-label">密码</label>
+                                <input type="password" class="form-control" id="password">
+                            </div>
+                        </div>
+                        
+                        <div id="api_key_auth" class="auth-method" style="display: none;">
+                            <div class="mb-3">
+                                <label for="api_key" class="form-label">API 密钥</label>
+                                <input type="text" class="form-control" id="api_key">
+                            </div>
+                        </div>
+                        
+                        <button type="submit" class="btn btn-primary">连接</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div id="library-selection" class="row mb-4" style="display: none;">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5>选择要导入的 Jellyfin 库</h5>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info">
+                        选择要导入的 Jellyfin 媒体库。导入过程中将自动提取影片ID。
+                    </div>
+                    <div id="libraries-list" class="list-group mb-3">
+                        <!-- Libraries will be added here dynamically -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5>已导入的 Jellyfin 库</h5>
+                </div>
+                <div class="card-body">
+                    {% if libraries %}
+                        <div class="table-responsive">
+                            <table class="table table-striped table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>库名称</th>
+                                        <th>服务器</th>
+                                        <th>项目数量</th>
+                                        <th>上次更新</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for library in libraries %}
+                                    <tr>
+                                        <td>{{ library.name }}</td>
+                                        <td>{{ library.server }}</td>
+                                        <td>{{ library.item_count }}</td>
+                                        <td>{{ library.last_updated | timestamp_to_date }}</td>
+                                        <td>
+                                            <div class="btn-group" role="group">
+                                                <a href="{{ url_for('jellyfin_movies', library_id=library.id) }}" class="btn btn-sm btn-primary">
+                                                    <i class="fas fa-film"></i> 浏览
+                                                </a>
+                                                <button 
+                                                    type="button" 
+                                                    class="btn btn-sm btn-danger delete-library" 
+                                                    data-library-id="{{ library.id }}"
+                                                    data-library-name="{{ library.name }}">
+                                                    <i class="fas fa-trash"></i> 删除
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <div class="alert alert-info">
+                            尚未导入 Jellyfin 库。请连接到 Jellyfin 服务器并导入媒体库。
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Confirm delete library -->
+<div class="modal fade" id="deleteLibraryModal" tabindex="-1" aria-labelledby="deleteLibraryModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="deleteLibraryModalLabel">确认删除</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                确定要删除库 <span id="delete-library-name" class="fw-bold"></span> 吗？这将删除所有导入的影片信息。
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-danger" id="confirm-delete-library">删除</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Import library progress -->
+<div class="modal fade" id="importProgressModal" tabindex="-1" aria-labelledby="importProgressModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="importProgressModalLabel">导入进度</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>正在导入库 <span id="import-library-name" class="fw-bold"></span>，请稍候...</p>
+                <div class="progress">
+                    <div id="import-progress-bar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 100%"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Authentication method toggle
+        const authMethodRadios = document.querySelectorAll('input[name="auth_method"]');
+        const credentialsAuth = document.getElementById('credentials_auth');
+        const apiKeyAuth = document.getElementById('api_key_auth');
+        
+        authMethodRadios.forEach(radio => {
+            radio.addEventListener('change', function() {
+                if (this.value === 'credentials') {
+                    credentialsAuth.style.display = 'block';
+                    apiKeyAuth.style.display = 'none';
+                } else {
+                    credentialsAuth.style.display = 'none';
+                    apiKeyAuth.style.display = 'block';
+                }
+            });
+        });
+        
+        // Connect to Jellyfin server
+        const connectForm = document.getElementById('jellyfin-connect-form');
+        connectForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const serverUrl = document.getElementById('server_url').value.trim();
+            const authMethod = document.querySelector('input[name="auth_method"]:checked').value;
+            
+            let payload = {
+                server_url: serverUrl
+            };
+            
+            if (authMethod === 'credentials') {
+                const username = document.getElementById('username').value.trim();
+                const password = document.getElementById('password').value;
+                
+                if (!username || !password) {
+                    alert('请输入用户名和密码');
+                    return;
+                }
+                
+                payload.username = username;
+                payload.password = password;
+            } else {
+                const apiKey = document.getElementById('api_key').value.trim();
+                
+                if (!apiKey) {
+                    alert('请输入 API 密钥');
+                    return;
+                }
+                
+                payload.api_key = apiKey;
+            }
+            
+            // Show loading indicator
+            const submitBtn = connectForm.querySelector('button[type="submit"]');
+            const originalBtnText = submitBtn.innerHTML;
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 连接中...';
+            
+            // Connect to server
+            fetch('/api/jellyfin/connect', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    // Connection successful, retrieve libraries
+                    fetchJellyfinLibraries();
+                } else {
+                    // Connection failed
+                    alert('连接失败: ' + data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('连接错误: ' + error.message);
+            })
+            .finally(() => {
+                // Restore button
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = originalBtnText;
+            });
+        });
+        
+        // Fetch Jellyfin libraries
+        function fetchJellyfinLibraries() {
+            fetch('/api/jellyfin/libraries')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        // Show libraries
+                        const librariesList = document.getElementById('libraries-list');
+                        librariesList.innerHTML = '';
+                        
+                        if (data.libraries && data.libraries.length > 0) {
+                            data.libraries.forEach(library => {
+                                const libraryItem = document.createElement('a');
+                                libraryItem.href = '#';
+                                libraryItem.className = 'list-group-item list-group-item-action';
+                                libraryItem.dataset.libraryId = library.id;
+                                libraryItem.dataset.libraryName = library.name;
+                                
+                                libraryItem.innerHTML = `
+                                    <div class="d-flex w-100 justify-content-between">
+                                        <h5 class="mb-1">${library.name}</h5>
+                                        <small>${library.type || '未知类型'}</small>
+                                    </div>
+                                    <p class="mb-1">项目数量: ${library.item_count}</p>
+                                    <button class="btn btn-primary btn-sm mt-2 import-library">导入此库</button>
+                                `;
+                                
+                                librariesList.appendChild(libraryItem);
+                            });
+                            
+                            // Add import event listeners
+                            document.querySelectorAll('.import-library').forEach(btn => {
+                                btn.addEventListener('click', function(e) {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    const libraryItem = this.closest('.list-group-item');
+                                    const libraryId = libraryItem.dataset.libraryId;
+                                    const libraryName = libraryItem.dataset.libraryName;
+                                    importJellyfinLibrary(libraryId, libraryName);
+                                });
+                            });
+                            
+                            // Show library selection section
+                            document.getElementById('library-selection').style.display = 'block';
+                        } else {
+                            // No libraries found
+                            librariesList.innerHTML = '<div class="alert alert-warning">没有找到可用的媒体库</div>';
+                            document.getElementById('library-selection').style.display = 'block';
+                        }
+                    } else {
+                        // Failed to fetch libraries
+                        alert('获取库列表失败: ' + data.message);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('获取库列表错误: ' + error.message);
+                });
+        }
+        
+        // Import Jellyfin library
+        function importJellyfinLibrary(libraryId, libraryName) {
+            // Show import progress modal
+            const importProgressModal = new bootstrap.Modal(document.getElementById('importProgressModal'));
+            document.getElementById('import-library-name').textContent = libraryName;
+            importProgressModal.show();
+            
+            fetch('/api/jellyfin/import_library', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    library_id: libraryId,
+                    library_name: libraryName
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                importProgressModal.hide();
+                
+                if (data.status === 'success') {
+                    // Import successful
+                    alert(data.message);
+                    // Reload page to show updated libraries
+                    window.location.reload();
+                } else {
+                    // Import failed
+                    alert('导入失败: ' + data.message);
+                }
+            })
+            .catch(error => {
+                importProgressModal.hide();
+                console.error('Error:', error);
+                alert('导入错误: ' + error.message);
+            });
+        }
+        
+        // Delete library functionality
+        let libraryToDelete = null;
+        const deleteModal = new bootstrap.Modal(document.getElementById('deleteLibraryModal'));
+        
+        document.querySelectorAll('.delete-library').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const libraryId = this.dataset.libraryId;
+                const libraryName = this.dataset.libraryName;
+                
+                document.getElementById('delete-library-name').textContent = libraryName;
+                libraryToDelete = libraryId;
+                deleteModal.show();
+            });
+        });
+        
+        document.getElementById('confirm-delete-library').addEventListener('click', function() {
+            if (!libraryToDelete) return;
+            
+            fetch('/api/jellyfin/delete_library', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    library_id: libraryToDelete
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                deleteModal.hide();
+                
+                if (data.status === 'success') {
+                    // Delete successful
+                    alert(data.message);
+                    // Reload page to show updated libraries
+                    window.location.reload();
+                } else {
+                    // Delete failed
+                    alert('删除失败: ' + data.message);
+                }
+            })
+            .catch(error => {
+                deleteModal.hide();
+                console.error('Error:', error);
+                alert('删除错误: ' + error.message);
+            });
+        });
+    });
+</script>
+{% endblock %} 

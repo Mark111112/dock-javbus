@@ -66,7 +66,7 @@
                                 <li><strong>api_url</strong>: URL for translation API (OpenAI-compatible API)
                                     <ul>
                                         <li>For OpenAI: "https://api.openai.com/v1/chat/completions"</li>
-                                        <li>For SiliconFlow: "https://api.siliconflow.cn/v1/chat/completions"</li>
+                                        <li>For SiliconFlow or OpenAI compatible: "https://api.siliconflow.cn/v1/chat/completions"</li>
                                         <li>For local Ollama: "http://localhost:11434/api/chat"</li>
                                     </ul>
                                 </li>
@@ -74,7 +74,7 @@
                                 <li><strong>model</strong>: Model name to use for translation 
                                     <ul>
                                         <li>OpenAI: "gpt-3.5-turbo" or "gpt-4"</li>
-                                        <li>GLM-4: "THUDM/glm-4-9b-chat" or "Qwen/Qwen2.5-7B-Instruct"</li>
+                                        <li>SiliconFlow or OpenAI compatible: "THUDM/glm-4-9b-chat" or "Qwen/Qwen2.5-7B-Instruct"</li>
                                         <li>Ollama: "qwen:7b" or "crosery/sakura-14b-qwen2.5-v1.0-q6k:latest"</li>
                                     </ul>
                                 </li>
@@ -86,7 +86,7 @@
                     <div class="alert alert-info">
                         <i class="bi bi-info-circle"></i> <strong>Configuration Changes:</strong> 
                         <ul>
-                            <li>All configuration changes are now applied immediately after saving, including <code>fanza_mappings</code> and <code>fanza_suffixes</code>.</li>
+                            <li>All configuration changes are applied immediately after saving.</li>
                             <li>Use the Restart button only if you experience issues or for major architecture changes.</li>
                         </ul>
                     </div>
@@ -117,6 +117,9 @@
                     </button>
                     <button type="button" class="btn btn-danger" id="clear-logs-btn">
                         <i class="bi bi-file-earmark-text"></i> 清除日志
+                    </button>
+                    <button type="button" class="btn btn-primary" id="update-cloud115-sizes-btn">
+                        <i class="bi bi-cloud-arrow-down"></i> 更新115文件大小信息
                     </button>
                 </div>
             </div>
@@ -266,6 +269,40 @@
                 }
             })
             .catch(error => {
+                alert('错误: ' + error.message);
+            });
+        }
+    });
+    
+    // Update 115 Cloud File Sizes button
+    document.getElementById('update-cloud115-sizes-btn').addEventListener('click', function() {
+        if (confirm('确定要更新所有115云盘文件的大小信息吗？此操作可能需要一些时间来完成。')) {
+            // 显示正在处理的消息
+            const btn = this;
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<i class="bi bi-hourglass-split"></i> 正在更新中...';
+            
+            fetch('/api/cloud115/update_all_file_sizes', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+                
+                if (data.success) {
+                    alert('成功: ' + data.message);
+                } else {
+                    alert('错误: ' + data.message);
+                }
+            })
+            .catch(error => {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
                 alert('错误: ' + error.message);
             });
         }

@@ -3,7 +3,7 @@ import os
 import requests
 
 # 配置文件路径，与主应用保持一致
-CONFIG_FILE = "config.json"
+CONFIG_FILE = "config/config.json"
 
 class Translator:
     """用于翻译文本的类"""

@@ -138,6 +138,7 @@ class JavbusDatabase:
                 date TEXT,
                 file_id TEXT,
                 pickcode TEXT,
+                size TEXT DEFAULT '',
                 UNIQUE(filepath)
             )
             ''')
@@ -1133,6 +1134,78 @@ class JavbusDatabase:
                         UPDATE cloud115_library SET pickcode = ? WHERE id = ?
                         ''', (pick_code, record_id))
             
+            # 检查cloud115_library表的size列类型
+            try:
+                # 检查当前size列的类型
+                self.local.cursor.execute("SELECT typeof(size) FROM cloud115_library LIMIT 1")
+                result = self.local.cursor.fetchone()
+                if result:
+                    size_type = result[0].upper()
+                    # 如果size类型是INTEGER，将其转换为TEXT
+                    if size_type == 'INTEGER' or size_type == 'INT':
+                        print("将cloud115_library表的size列类型修改为TEXT")
+                        
+                        # SQLite不直接支持修改列类型，需要通过创建临时表并复制数据来实现
+                        # 1. 创建临时表
+                        self.local.cursor.execute('''
+                        CREATE TABLE cloud115_library_temp AS SELECT * FROM cloud115_library
+                        ''')
+                        
+                        # 2. 删除原表
+                        self.local.cursor.execute('''
+                        DROP TABLE cloud115_library
+                        ''')
+                        
+                        # 3. 创建新表，将size改为TEXT类型
+                        self.local.cursor.execute('''
+                        CREATE TABLE cloud115_library (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            title TEXT NOT NULL,
+                            filepath TEXT NOT NULL,
+                            url TEXT NOT NULL,
+                            thumbnail TEXT,
+                            description TEXT,
+                            category TEXT,
+                            date_added INTEGER,
+                            last_played INTEGER DEFAULT 0,
+                            play_count INTEGER DEFAULT 0,
+                            video_id TEXT,
+                            cover_image TEXT,
+                            actors TEXT,
+                            date TEXT,
+                            file_id TEXT,
+                            pickcode TEXT,
+                            size TEXT DEFAULT '',
+                            UNIQUE(filepath)
+                        )
+                        ''')
+                        
+                        # 4. 复制数据
+                        self.local.cursor.execute('''
+                        INSERT INTO cloud115_library SELECT * FROM cloud115_library_temp
+                        ''')
+                        
+                        # 5. 删除临时表
+                        self.local.cursor.execute('''
+                        DROP TABLE cloud115_library_temp
+                        ''')
+                else:
+                    # 如果表为空，直接添加size字段为TEXT
+                    try:
+                        self.local.cursor.execute("ALTER TABLE cloud115_library DROP COLUMN size")
+                    except:
+                        pass
+                    
+                    self.local.cursor.execute("ALTER TABLE cloud115_library ADD COLUMN size TEXT DEFAULT ''")
+                    print("已为cloud115_library表添加size TEXT字段")
+            except sqlite3.OperationalError:
+                # 如果size列不存在，添加为TEXT类型
+                try:
+                    self.local.cursor.execute("ALTER TABLE cloud115_library ADD COLUMN size TEXT DEFAULT ''")
+                    print("已为cloud115_library表添加size TEXT字段")
+                except:
+                    pass
+            
             self.local.conn.commit()
             print("数据库架构升级完成")
         except sqlite3.Error as e:
@@ -1214,7 +1287,8 @@ class JavbusDatabase:
                     category = ?,
                     file_id = ?,
                     pickcode = ?,
-                    video_id = ?
+                    video_id = ?,
+                    size = ?
                 WHERE id = ?
                 ''', (
                     file_data.get('title', ''),
@@ -1225,6 +1299,7 @@ class JavbusDatabase:
                     file_data.get('file_id', ''),
                     pickcode,
                     file_data.get('video_id'),
+                    file_data.get('size', 0),
                     result['id']
                 ))
                 file_id = result['id']
@@ -1232,8 +1307,8 @@ class JavbusDatabase:
                 # 插入新记录
                 self.local.cursor.execute('''
                 INSERT INTO cloud115_library 
-                (title, filepath, url, thumbnail, description, category, date_added, file_id, pickcode, video_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (title, filepath, url, thumbnail, description, category, date_added, file_id, pickcode, video_id, size)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     file_data.get('title', ''),
                     file_data.get('filepath', ''),
@@ -1244,7 +1319,8 @@ class JavbusDatabase:
                     now,
                     file_data.get('file_id', ''),
                     pickcode,
-                    file_data.get('video_id')
+                    file_data.get('video_id'),
+                    file_data.get('size', 0)
                 ))
                 file_id = self.local.cursor.lastrowid
             

@@ -88,7 +88,7 @@
 <div class="container">
     <div class="row">
         <div class="col-12">
-            <div class="back-btn">
+            <div hidden class="back-btn">
                 <a href="{{ url_for('cloud115_library') }}" class="btn btn-outline-secondary">
                     <i class="fas fa-arrow-left"></i> 返回115 Library
                 </a>
@@ -150,9 +150,11 @@
                     <div class="row mt-2">
                         <div class="col-md-6">
                             <p><strong>时长：</strong> <span id="videoDuration">--:--</span></p>
+                            <p><strong>文件名：</strong> <span id="videoFilename">--</span></p>
                         </div>
                         <div class="col-md-6">
                             <p><strong>分辨率：</strong> <span id="videoResolution">-- x --</span></p>
+                            <p><strong>文件大小：</strong> <span id="videoSize">-- MB</span></p>
                         </div>
                     </div>
                 </div>
@@ -172,6 +174,8 @@
         const definitionSelector = document.getElementById('definitionSelector');
         const videoDuration = document.getElementById('videoDuration');
         const videoResolution = document.getElementById('videoResolution');
+        const videoFilename = document.getElementById('videoFilename');
+        const videoSize = document.getElementById('videoSize');
         
         let videoData = null;
         let currentDefinition = null;
@@ -565,6 +569,17 @@
                 const height = videoElement.videoHeight;
                 if (width && height) {
                     videoResolution.textContent = `${width} x ${height}`;
+                }
+                
+                // 更新文件名和大小信息
+                if (videoData) {
+                    if (videoData.file_name) {
+                        videoFilename.textContent = videoData.file_name;
+                    }
+                    if (videoData.file_size) {
+                        const sizeInMB = (videoData.file_size / (1024 * 1024)).toFixed(2);
+                        videoSize.textContent = `${sizeInMB} MB`;
+                    }
                 }
             } catch (e) {
                 addDebugLog(`更新视频信息错误: ${e.message}`);

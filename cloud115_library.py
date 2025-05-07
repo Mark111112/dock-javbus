@@ -361,13 +361,14 @@ class Cloud115Library:
         logging.info(f"115云盘目录导入功能待开发: {directory_path}")
         return 0
         
-    def sync_cloud115_movie_info(self, category=None):
+    def sync_cloud115_movie_info(self, category=None, only_without_details=False):
         """同步115云盘文件的影片详情与电影数据库
         
         从API获取影片详情并更新数据库中的影片信息，每次处理10个请求
         
         Args:
             category: 可选，指定要同步的分类
+            only_without_details: 可选，是否只处理没有详情的影片（date字段为空）
             
         Returns:
             dict: 包含更新结果的字典，格式为 {"success": int, "failed": int}
@@ -377,9 +378,14 @@ class Cloud115Library:
             cloud115_files = self.db.get_cloud115_files(category=category)
             cloud115_files = [file for file in cloud115_files if file.get('video_id')]
             
+            # 如果需要，过滤出没有详情的影片（date字段为空）
+            if only_without_details:
+                cloud115_files = [file for file in cloud115_files if not file.get('date')]
+                logging.info(f"已筛选出 {len(cloud115_files)} 个没有详情的影片")
+            
             total_files = len(cloud115_files)
             if total_files == 0:
-                logging.info(f"115云盘中没有找到带有video_id的文件")
+                logging.info(f"115云盘中没有找到符合条件的文件")
                 return {"success": 0, "failed": 0}
                 
             success_count = 0
@@ -461,7 +467,8 @@ class Cloud115Library:
                     time.sleep(2)
             
             category_info = f"「{category}」分类的" if category else ""
-            logging.info(f"115云盘文件影片详情同步完成，成功: {success_count}，失败: {failed_count}，分类: {category_info}")
+            only_without_details_info = "没有详情的" if only_without_details else ""
+            logging.info(f"115云盘文件影片详情同步完成，成功: {success_count}，失败: {failed_count}，分类: {category_info}，仅无详情: {only_without_details}")
             return {"success": success_count, "failed": failed_count}
         except Exception as e:
             logging.error(f"同步115云盘文件影片详情失败: {str(e)}")

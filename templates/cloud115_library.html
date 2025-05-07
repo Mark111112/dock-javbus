@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 
-{% block title %}115 Library{% endblock %}
+{% block title %}115 & Jellyfin Library{% endblock %}
 
 {% block head %}
 <style>
@@ -26,6 +26,8 @@
         object-fit: cover;
         background-color: #f5f5f5;
     }
+    
+    /* Player button styles */
     .play-icon {
         position: absolute;
         top: 10px;
@@ -41,36 +43,42 @@
         z-index: 10;
         transition: all 0.2s ease;
     }
+    
     .play-icon:hover {
         background-color: rgba(0, 123, 255, 0.8);
         transform: scale(1.1);
     }
+    
+    .play-icon-115 {
+        background-color: rgba(0, 0, 0, 0.6);
+    }
+    
+    .play-icon-115:hover {
+        background-color: rgba(0, 123, 255, 0.8);
+    }
+    
+    .play-icon-jellyfin {
+        background-color: rgba(0, 120, 223, 0.7);
+    }
+    
+    .play-icon-jellyfin:hover {
+        background-color: rgba(0, 90, 180, 0.9);
+    }
+    
+    /* When both buttons are present, adjust positions */
+    .has-both-players .play-icon-115 {
+        top: 60px;
+        right: 10px;
+    }
+    
+    .has-both-players .play-icon-jellyfin {
+        top: 10px;
+        right: 10px;
+    }
+    
     .cloud115-info {
         padding: 15px;
         position: relative;
-    }
-    .cloud115-title {
-        font-weight: bold;
-        margin-bottom: 8px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        display: -webkit-box;
-        -webkit-line-clamp: 2;
-        -webkit-box-orient: vertical;
-        line-height: 1.2;
-        font-size: 0.9rem;
-        height: 2.4em;
-    }
-    .cloud115-category {
-        color: #6c757d;
-        font-size: 0.9rem;
-    }
-    .no-cloud115-files {
-        padding: 40px;
-        text-align: center;
-        background-color: #f8f9fa;
-        border-radius: 8px;
-        margin-top: 20px;
     }
     
     /* Custom tooltip styles */
@@ -120,23 +128,8 @@
         max-height: 100px;
         overflow-y: auto;
     }
-    .cloud115-card .play-icon {
-        position: absolute;
-        top: 10px;
-        right: 10px;
-        background-color: rgba(0, 0, 0, 0.6);
-        border-radius: 50%;
-        width: 40px;
-        height: 40px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: white;
-        font-size: 1.5rem;
-        text-decoration: none;
-        transition: all 0.2s;
-    }
     
+    /* Card buttons */
     .cloud115-card .update-icon-form {
         position: absolute;
         top: 10px;
@@ -160,7 +153,7 @@
         transition: all 0.2s;
     }
     
-    .cloud115-card .play-icon:hover, .cloud115-card .update-icon:hover {
+    .cloud115-card .update-icon:hover {
         background-color: rgba(220, 53, 69, 0.8);
         transform: scale(1.1);
     }
@@ -307,7 +300,7 @@
                             <li><hr class="dropdown-divider"></li>
                             <li>
                                 <button type="button" class="dropdown-item text-danger" data-bs-toggle="modal" data-bs-target="#deleteAllModal">
-                                    <i class="fas fa-trash-alt me-2"></i>删除所有记录
+                                    <i class="fas fa-trash-alt me-2"></i>删除所有115记录
                                 </button>
                             </li>
                             {% if current_category %}
@@ -317,6 +310,12 @@
                                 </button>
                             </li>
                             {% endif %}
+                            <li><hr class="dropdown-divider"></li>
+                            <li>
+                                <a class="dropdown-item" href="{{ url_for('jellyfin_library') }}" style="color: #0056b3;">
+                                    <i class="fas fa-database me-2"></i>管理Jellyfin影片库
+                                </a>
+                            </li>
                         </ul>
                     </div>
                 </div>
@@ -326,160 +325,180 @@
     
     <!-- Files Grid -->
     {% if cloud115_files %}
-    <div class="movie-grid">
-        {% for file in cloud115_files %}
-        <div class="cloud115-card" data-id="{{ file.id }}">
-            <!-- Tooltip -->
-            <div class="cloud115-tooltip">
-                <h6>{{ file.title }}</h6>
-                {% if file.date %}
-                <p><small>Release Date: {{ file.date }}</small></p>
-                {% endif %}
-                {% if file.description %}
-                <p>{{ file.description }}</p>
-                {% endif %}
-                {% if file.video_id %}
-                <p><small>ID: {{ file.video_id }}</small></p>
-                {% endif %}
-                <p>
-                    <small>Added: {{ file.date_added|timestamp_to_date }}</small><br>
-                    {% if file.last_played > 0 %}
-                    <small>Last played: {{ file.last_played|timestamp_to_date }}</small><br>
+        {% set seen_video_ids = [] %}
+        <div class="movie-grid">
+            {% for file in cloud115_files %}
+                {% if not file.video_id or file.video_id not in seen_video_ids %}
+                    {% if file.video_id %}
+                        {# Add this video_id to seen list #}
+                        {{ seen_video_ids.append(file.video_id) or "" }}
                     {% endif %}
-                    <small>Play count: {{ file.play_count }}</small>
-                </p>
-            </div>
-            
-            <!-- Card content with link -->
-            <a href="{% if file.video_id %}{{ url_for('movie_detail', movie_id=file.video_id) }}{% else %}{{ url_for('cloud115_player', file_id=file.id) }}{% endif %}" class="text-decoration-none text-dark">
-                <!-- Thumbnail with priority order -->
-                {% if file.video_id %}
-                <img src="{{ url_for('serve_image', filename='covers/' + file.video_id + '.jpg') }}" class="cloud115-thumbnail" alt="{{ file.title }}">
-                {% elif file.cover_image %}
-                <img src="{{ url_for('proxy_image', url=file.cover_image) }}" class="cloud115-thumbnail" alt="{{ file.title }}">
-                {% elif file.thumbnail %}
-                <img src="{{ url_for('proxy_image', url=file.thumbnail) }}" class="cloud115-thumbnail" alt="{{ file.title }}">
-                {% else %}
-                <div class="cloud115-thumbnail d-flex align-items-center justify-content-center bg-light">
-                    <i class="fas fa-file-video fa-3x text-secondary"></i>
-                </div>
-                {% endif %}
-                
-                <!-- Info -->
-                <div class="cloud115-info">
-                    <h5 class="cloud115-title">{{ file.title }}</h5>
-                    {% if file.actors %}
-                    <div class="cloud115-actors mb-1">
-                        {% for actor in file.actors|fromjson %}
-                        <span class="badge bg-info me-1">{{ actor.name }}</span>
-                        {% endfor %}
-                    </div>
-                    {% endif %}
-                    <div class="cloud115-category">
-                        <span class="badge bg-secondary">{{ file.category }}</span>
-                        {% if file.play_count > 0 %}
-                        <span class="badge bg-info">Played {{ file.play_count }} times</span>
+                    <div class="cloud115-card {% if file.is_cloud115 and file.is_jellyfin %}has-both-players{% endif %}" data-id="{{ file.id }}">
+                        <!-- Tooltip -->
+                        <div class="cloud115-tooltip">
+                            <h6>{{ file.title }}</h6>
+                            {% if file.date %}
+                            <p><small>Release Date: {{ file.date }}</small></p>
+                            {% endif %}
+                            {% if file.description %}
+                            <p>{{ file.description }}</p>
+                            {% endif %}
+                            {% if file.video_id %}
+                            <p><small>ID: {{ file.video_id }}</small></p>
+                            {% endif %}
+                            <p>
+                                <small>Added: {{ file.date_added|timestamp_to_date }}</small><br>
+                                {% if file.last_played > 0 %}
+                                <small>Last played: {{ file.last_played|timestamp_to_date }}</small><br>
+                                {% endif %}
+                                <small>Play count: {{ file.play_count }}</small>
+                            </p>
+                        </div>
+                        
+                        <!-- Card content with link -->
+                        <a href="{% if file.video_id %}{{ url_for('movie_detail', movie_id=file.video_id) }}{% else %}{{ url_for('cloud115_player', file_id=file.id) }}{% endif %}" class="text-decoration-none text-dark">
+                            <!-- Thumbnail with priority order -->
+                            {% if file.video_id %}
+                            <img src="{{ url_for('serve_image', filename='covers/' + file.video_id + '.jpg') }}" class="cloud115-thumbnail" alt="{{ file.title }}">
+                            {% elif file.cover_image %}
+                            <img src="{{ url_for('proxy_image', url=file.cover_image) }}" class="cloud115-thumbnail" alt="{{ file.title }}">
+                            {% elif file.thumbnail %}
+                            <img src="{{ url_for('proxy_image', url=file.thumbnail) }}" class="cloud115-thumbnail" alt="{{ file.title }}">
+                            {% else %}
+                            <div class="cloud115-thumbnail d-flex align-items-center justify-content-center bg-light">
+                                <i class="fas fa-file-video fa-3x text-secondary"></i>
+                            </div>
+                            {% endif %}
+                            
+                            <!-- Info -->
+                            <div class="cloud115-info">
+                                <h6 class="cloud115-title">{{ file.title }}</h6>
+                                {% if file.actors %}
+                                <div class="cloud115-actors mb-1">
+                                    {% for actor in file.actors|fromjson %}
+                                    <span class="badge bg-info me-1">{{ actor.name }}</span>
+                                    {% endfor %}
+                                </div>
+                                {% endif %}
+                                <div class="cloud115-category">
+                                    {% if file.is_jellyfin and not file.is_cloud115 %}
+                                    <span class="badge bg-secondary">{{ file.library_name }}</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary">{{ file.category }}</span>
+                                    {% endif %}
+                                    {% if file.play_count > 0 %}
+                                    <span class="badge bg-info">Played {{ file.play_count }} times</span>
+                                    {% endif %}
+                                    {% if file.date %}
+                                    <span class="badge bg-primary">{{ file.date }}</span>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </a>
+                        
+                        <!-- Play buttons (stays on top) -->
+                        {% if file.is_cloud115 %}
+                        <a href="{{ url_for('cloud115_player', file_id=file.id) }}" class="play-icon play-icon-115" title="Play in 115 Player">
+                            <i class="fas fa-play"></i>
+                        </a>
                         {% endif %}
-                        {% if file.date %}
-                        <span class="badge bg-primary">{{ file.date }}</span>
+                        
+                        {% if file.is_jellyfin %}
+                        <a href="{{ url_for('jellyfin_player', item_id=file.item_id) }}" class="play-icon play-icon-jellyfin" title="Play in Jellyfin">
+                            <i class="fas fa-play"></i>
+                        </a>
                         {% endif %}
-                    </div>
-                </div>
-            </a>
-            
-            <!-- Play button (stays on top) -->
-            <a href="{{ url_for('cloud115_player', file_id=file.id) }}" class="play-icon" title="Play now">
-                <i class="fas fa-play"></i>
-            </a>
-            
-            <!-- Edit ID button -->
-            <button type="button" class="edit-id-btn" title="Edit Video ID" 
-                    data-file-id="{{ file.id }}"
-                    data-file-name="{{ file.title }}"
-                    data-video-id="{{ file.video_id or '' }}"
-                    onclick="showEditVideoIdModal(this)">
-                ID
-            </button>
+                        
+                        <!-- Edit ID button -->
+                        <button type="button" class="edit-id-btn" title="Edit Video ID" 
+                                data-file-id="{{ file.id }}"
+                                data-file-name="{{ file.title }}"
+                                data-video-id="{{ file.video_id or '' }}"
+                                onclick="showEditVideoIdModal(this)">
+                            ID
+                        </button>
 
-            <!-- Delete button -->
-            <button type="button" class="delete-btn" title="Delete this file"
-                    onclick="if(confirm('确定要删除这个文件吗?')) { document.getElementById('delete-form-{{ file.id }}').submit(); }">
-                <i class="fas fa-trash"></i>
-            </button>
-            <form id="delete-form-{{ file.id }}" action="{{ url_for('delete_cloud115_file', file_id=file.id) }}" method="post" style="display: none;"></form>
-        </div>
-        {% endfor %}
-    </div>
-    
-    <!-- Pagination -->
-    {% if pagination %}
-    <nav aria-label="Page navigation" class="my-4">
-        <ul class="pagination justify-content-center">
-            <!-- First Page -->
-            {% if pagination.current_page > 1 %}
-            <li class="page-item">
-                <a class="page-link" href="{{ url_for('cloud115_library_search' if search_query else 'cloud115_library', category=current_category, page=1, query=search_query, sort_by=sort_by, sort_order=sort_order) }}" aria-label="First Page">
-                    <i class="bi bi-chevron-double-left"></i>
-                </a>
-            </li>
-            {% else %}
-            <li class="page-item disabled">
-                <span class="page-link">
-                    <i class="bi bi-chevron-double-left"></i>
-                </span>
-            </li>
-            {% endif %}
-                
-            {% if pagination.current_page > 1 %}
-            <li class="page-item">
-                <a class="page-link" href="{{ url_for('cloud115_library' if not search_query else 'cloud115_library_search', category=current_category, page=pagination.current_page-1, query=search_query, sort_by=sort_by, sort_order=sort_order) }}" aria-label="Previous">
-                    <span aria-hidden="true">&laquo;</span>
-                </a>
-            </li>
-            {% endif %}
-            
-            {% for page_num in pagination.pages %}
-            <li class="page-item {% if page_num == pagination.current_page %}active{% endif %}">
-                <a class="page-link" href="{{ url_for('cloud115_library' if not search_query else 'cloud115_library_search', category=current_category, page=page_num, query=search_query, sort_by=sort_by, sort_order=sort_order) }}">
-                    {{ page_num }}
-                </a>
-            </li>
+                        <!-- Delete button - only for cloud115 files -->
+                        {% if file.is_cloud115 %}
+                        <button type="button" class="delete-btn" title="Delete this file"
+                                onclick="if(confirm('确定要删除这个文件吗?')) { document.getElementById('delete-form-{{ file.id }}').submit(); }">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                        <form id="delete-form-{{ file.id }}" action="{{ url_for('delete_cloud115_file', file_id=file.id) }}" method="post" style="display: none;"></form>
+                        {% endif %}
+                    </div>
+                {% endif %}
             {% endfor %}
-            
-            {% if pagination.has_next %}
-            <li class="page-item">
-                <a class="page-link" href="{{ url_for('cloud115_library' if not search_query else 'cloud115_library_search', category=current_category, page=pagination.next_page, query=search_query, sort_by=sort_by, sort_order=sort_order) }}" aria-label="Next">
-                    <span aria-hidden="true">&raquo;</span>
-                </a>
-            </li>
-            {% endif %}
+        </div>
+        
+        <!-- Pagination -->
+        {% if pagination %}
+        <nav aria-label="Page navigation" class="my-4">
+            <ul class="pagination justify-content-center">
+                <!-- First Page -->
+                {% if pagination.current_page > 1 %}
+                <li class="page-item">
+                    <a class="page-link" href="{{ url_for('cloud115_library_search' if search_query else 'cloud115_library', category=current_category, page=1, query=search_query, sort_by=sort_by, sort_order=sort_order) }}" aria-label="First Page">
+                        <i class="bi bi-chevron-double-left"></i>
+                    </a>
+                </li>
+                {% else %}
+                <li class="page-item disabled">
+                    <span class="page-link">
+                        <i class="bi bi-chevron-double-left"></i>
+                    </span>
+                </li>
+                {% endif %}
+                    
+                {% if pagination.current_page > 1 %}
+                <li class="page-item">
+                    <a class="page-link" href="{{ url_for('cloud115_library' if not search_query else 'cloud115_library_search', category=current_category, page=pagination.current_page-1, query=search_query, sort_by=sort_by, sort_order=sort_order) }}" aria-label="Previous">
+                        <span aria-hidden="true">&laquo;</span>
+                    </a>
+                </li>
+                {% endif %}
+                
+                {% for page_num in pagination.pages %}
+                <li class="page-item {% if page_num == pagination.current_page %}active{% endif %}">
+                    <a class="page-link" href="{{ url_for('cloud115_library' if not search_query else 'cloud115_library_search', category=current_category, page=page_num, query=search_query, sort_by=sort_by, sort_order=sort_order) }}">
+                        {{ page_num }}
+                    </a>
+                </li>
+                {% endfor %}
+                
+                {% if pagination.has_next %}
+                <li class="page-item">
+                    <a class="page-link" href="{{ url_for('cloud115_library' if not search_query else 'cloud115_library_search', category=current_category, page=pagination.next_page, query=search_query, sort_by=sort_by, sort_order=sort_order) }}" aria-label="Next">
+                        <span aria-hidden="true">&raquo;</span>
+                    </a>
+                </li>
+                {% endif %}
 
-            <!-- Last Page -->
-            {% if pagination.current_page < pagination.total_pages %}
-            <li class="page-item">
-                <a class="page-link" href="{{ url_for('cloud115_library_search' if search_query else 'cloud115_library', category=current_category, page=pagination.total_pages, query=search_query, sort_by=sort_by, sort_order=sort_order) }}" aria-label="Last Page">
-                    <i class="bi bi-chevron-double-right"></i>
-                </a>
-            </li>
-            {% else %}
-            <li class="page-item disabled">
-                <span class="page-link">
-                    <i class="bi bi-chevron-double-right"></i>
-                </span>
-            </li>
-            {% endif %}            
-            
-            <!-- Page Jump -->
-            <li class="page-item ms-2">
-                <div class="input-group input-group-sm">
-                    <input type="number" class="form-control" id="jumpToPage" min="1" max="{{ pagination.total_pages }}" placeholder="页码" style="width: 70px;">
-                    <button class="btn btn-outline-secondary" type="button" id="jumpToPageBtn">Go</button>
-                </div>
-            </li>
-        </ul>
-    </nav>
-    {% endif %}
-    
+                <!-- Last Page -->
+                {% if pagination.current_page < pagination.total_pages %}
+                <li class="page-item">
+                    <a class="page-link" href="{{ url_for('cloud115_library_search' if search_query else 'cloud115_library', category=current_category, page=pagination.total_pages, query=search_query, sort_by=sort_by, sort_order=sort_order) }}" aria-label="Last Page">
+                        <i class="bi bi-chevron-double-right"></i>
+                    </a>
+                </li>
+                {% else %}
+                <li class="page-item disabled">
+                    <span class="page-link">
+                        <i class="bi bi-chevron-double-right"></i>
+                    </span>
+                </li>
+                {% endif %}            
+                
+                <!-- Page Jump -->
+                <li class="page-item ms-2">
+                    <div class="input-group input-group-sm">
+                        <input type="number" class="form-control" id="jumpToPage" min="1" max="{{ pagination.total_pages }}" placeholder="页码" style="width: 70px;">
+                        <button class="btn btn-outline-secondary" type="button" id="jumpToPageBtn">Go</button>
+                    </div>
+                </li>
+            </ul>
+        </nav>
+        {% endif %}
     {% else %}
     <div class="no-cloud115-files">
         <h3 class="text-muted">没有找到115云盘文件</h3>
@@ -781,6 +800,13 @@
                     该功能会从API获取完整的影片详情（包括标题、演员、封面和摘要等），并更新数据库中的电影信息。此过程可能会耗费较长时间，尤其是当影片库中影片较多时。
                 </div>
                 
+                <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" id="onlyWithoutDetailsSwitch">
+                    <label class="form-check-label" for="onlyWithoutDetailsSwitch">
+                        <strong>仅获取没有详情的影片</strong> <small class="text-muted">(date字段为空的影片)</small>
+                    </label>
+                </div>
+                
                 <p>请选择要获取详情的范围：</p>
                 
                 <div class="d-grid gap-2 mt-3">
@@ -811,7 +837,17 @@
         const failedList = document.getElementById('failedList');
         const extractResults = document.getElementById('extractResults');
         
-        extractButton.addEventListener('click', function() {
+        // Apply has-both-players class to cards with both player types
+        document.querySelectorAll('.cloud115-card').forEach(card => {
+            const has115Player = card.querySelector('.play-icon-115') !== null;
+            const hasJellyfinPlayer = card.querySelector('.play-icon-jellyfin') !== null;
+            
+            if (has115Player && hasJellyfinPlayer) {
+                card.classList.add('has-both-players');
+            }
+        });
+        
+        extractButton?.addEventListener('click', function() {
             // 显示加载状态
             extractButton.disabled = true;
             extractButton.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 处理中...';
@@ -1611,6 +1647,9 @@
             this.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 处理中...';
             this.disabled = true;
             
+            // 获取开关状态
+            const onlyWithoutDetails = document.getElementById('onlyWithoutDetailsSwitch').checked;
+            
             // 发送请求
             fetch('/api/cloud115/sync_category_movie_info', {
                 method: 'POST',
@@ -1618,7 +1657,8 @@
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    category: '{{ current_category }}'
+                    category: '{{ current_category }}',
+                    only_without_details: onlyWithoutDetails
                 })
             })
             .then(response => response.json())
@@ -1648,12 +1688,18 @@
             this.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 处理中...';
             this.disabled = true;
             
+            // 获取开关状态
+            const onlyWithoutDetails = document.getElementById('onlyWithoutDetailsSwitch').checked;
+            
             // 发送请求
             fetch('/api/cloud115/sync_all_movie_info', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
-                }
+                },
+                body: JSON.stringify({
+                    only_without_details: onlyWithoutDetails
+                })
             })
             .then(response => response.json())
             .then(data => {
