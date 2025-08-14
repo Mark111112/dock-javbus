@@ -996,11 +996,24 @@
                 .replace(/\//g, '_')
                 .replace(/=+$/, '');
         }
+
+        async function sha256_base64(text){
+            const response = await fetch(`/tools/sha256/${text}`);
+            const data = await response.json();
+            console.log(data)
+            if (data.success && data.result && data.result.length > 0) {
+                return data.result
+            }else {
+                return ""
+            }
+        }
         
         // Generate PKCE parameters
         async function generatePKCEParams() {
             codeVerifier = generateRandomString(64);
-            const codeChallenge = base64URLEncode(await sha256(codeVerifier));
+            //此方法中的window.crypto.subtle.digest仅可在https或localhost中使用，使用后端代替
+            // const codeChallenge = base64URLEncode(await sha256(codeVerifier));
+            const codeChallenge = await sha256_base64(codeVerifier);
             return {
                 codeVerifier: codeVerifier,
                 codeChallenge: codeChallenge,
