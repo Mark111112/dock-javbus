@@ -6095,6 +6095,41 @@ def jellyfin_playback_info():
         logging.error(error_message)
         return jsonify({"status": "error", "message": error_message}), 500
 
+
+@app.route('/tools/sha256/<text>', methods=['GET'])
+def sha256_base_encoding(text):
+    """sha256加密及base64Encode
+
+    Args:
+        text: 待加密的字符串 (text)
+
+    Returns:
+        JSON: 包含加密完成的JSON响应
+    """
+    try:
+        encrypted = hashlib.sha256(text.encode('utf-8')).digest()
+        result = base64.urlsafe_b64encode(encrypted).rstrip(b'=').decode('ascii')
+        # 构造响应
+        if result and len(result) > 0:
+            return jsonify({
+                "success": True,
+                "result": result
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "message": f"undone encrypt {text}",
+                "result": ""
+            })
+    except Exception as e:
+        app.logger.error(f"error encrypt: {e}")
+        return jsonify({
+            "success": False,
+            "message": str(e),
+            "result": ""
+        })
+
+
 # Start the server
 if __name__ == '__main__':
     # Initialize libraries only once when the app starts
