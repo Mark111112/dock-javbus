@@ -171,8 +171,14 @@ class FanzaScraper(BaseScraper):
             url = url_list[0]
             self.logger.info(f"搜索找到详情页URL: {url}")
             
-            # 获取详情页内容
-            soup = self.get_page(url)
+            # 🎯 优化：检查是否已经在搜索过程中验证过此页面
+            if hasattr(self, '_verified_page_cache') and url in self._verified_page_cache:
+                self.logger.info(f"使用已验证的页面缓存")
+                soup = self._verified_page_cache[url]
+            else:
+                # 获取详情页内容
+                soup = self.get_page(url)
+            
             if soup:
                 self.logger.info(f"成功获取详情页，提取信息")
                 info = self.extract_info_from_page(soup, movie_id, url)
@@ -246,6 +252,28 @@ class FanzaScraper(BaseScraper):
                 if urls:
                     self.logger.info(f"搜索 '{term}' 找到 {len(urls)} 个结果")
                     all_urls.extend(urls)
+                    
+                    # 🎯 优化：找到结果后立即尝试获取详情页信息
+                    self.logger.info(f"找到搜索结果，尝试验证最佳匹配的详情页...")
+                    best_urls = self._find_best_match(urls, movie_id)
+                    
+                    if best_urls:
+                        # 尝试获取第一个最佳匹配URL的详情页
+                        test_url = best_urls[0]
+                        self.logger.info(f"验证详情页: {test_url}")
+                        
+                        test_soup = self.get_page(test_url)
+                        if test_soup and self._is_valid_detail_page(test_soup):
+                            self.logger.info(f"验证成功，使用此搜索结果，跳过后续搜索")
+                            
+                            # 🎯 优化：缓存已验证的页面，避免重复请求
+                            if not hasattr(self, '_verified_page_cache'):
+                                self._verified_page_cache = {}
+                            self._verified_page_cache[test_url] = test_soup
+                            
+                            return best_urls
+                        else:
+                            self.logger.warning(f"详情页验证失败，继续尝试其他搜索项")
                 else:
                     self.logger.info(f"搜索 '{term}' 未找到结果")
                     
@@ -256,11 +284,35 @@ class FanzaScraper(BaseScraper):
                 self.logger.error(f"搜索过程中出现未知错误: {str(e)}")
                 continue
                 
-        # 选择最匹配的URL
+        # 如果有搜索结果但前面的验证都失败了，返回所有找到的URL
         if all_urls:
             return self._find_best_match(all_urls, movie_id)
         
         return []
+    
+    def _is_valid_detail_page(self, soup):
+        """检查是否为有效的详情页
+        
+        Args:
+            soup: BeautifulSoup对象
+            
+        Returns:
+            bool: 是否为有效的详情页
+        """
+        if not soup:
+            return False
+            
+        # 检查是否有影片标题
+        title_tag = soup.find("h1", class_="item-name") or soup.find("h1", id="title")
+        if not title_tag:
+            return False
+            
+        # 检查是否有信息表格
+        info_table = soup.find("table", class_="mg-b20") or soup.select_one("table.mg-b12")
+        if not info_table:
+            return False
+            
+        return True
     
     def _extract_links_from_search_page(self, soup, movie_id):
         """从搜索结果页提取详情页链接
