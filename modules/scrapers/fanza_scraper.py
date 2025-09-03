@@ -4,10 +4,15 @@
 import re
 import json
 import logging
+import requests
+import urllib3
 from urllib.parse import urljoin, urlencode, quote, unquote
 from bs4 import BeautifulSoup
 
 from modules.scrapers.base_scraper import BaseScraper
+
+# 禁用SSL警告
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 class FanzaScraper(BaseScraper):
@@ -36,7 +41,50 @@ class FanzaScraper(BaseScraper):
             'locale': 'ja'          # 使用日语
         }
         
-        self.logger = logging.getLogger('FanzaScraper')
+        # 更新User-Agent为更现代的版本
+        self.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache',
+            'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+            'Sec-Ch-Ua-Mobile': '?0',
+            'Sec-Ch-Ua-Platform': '"Windows"',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none'
+        })
+        
+    def create_session(self):
+        """创建一个HTTP会话，针对DMM网站优化"""
+        session = requests.Session()
+        
+        # 设置请求头
+        session.headers.update(self.headers)
+        
+        # 设置cookies
+        for key, value in self.cookies.items():
+            session.cookies.set(key, value)
+        
+        # 设置适配器配置
+        adapter = requests.adapters.HTTPAdapter(
+            max_retries=requests.adapters.Retry(
+                total=3,
+                backoff_factor=1,
+                status_forcelist=[500, 502, 503, 504, 520, 521, 522, 523, 524],
+                allowed_methods=["HEAD", "GET", "OPTIONS"]
+            )
+        )
+        
+        session.mount('http://', adapter)
+        session.mount('https://', adapter)
+        
+        # SSL设置 - 处理DMM的SSL问题
+        session.verify = False  # 禁用SSL验证
+        
+        return session
     
     def clean_movie_id(self, movie_id, five_digit=False):
         """标准化影片ID
@@ -176,27 +224,37 @@ class FanzaScraper(BaseScraper):
             search_url = self.search_url_template.format(encoded_term)
             
             self.logger.info(f"搜索URL: {search_url}")
-            response = self.create_session().get(search_url)
             
-            if response.status_code != 200:
-                self.logger.warning(f"搜索请求失败，状态码: {response.status_code}")
-                continue
+            try:
+                session = self.create_session()
+                response = session.get(search_url, timeout=15)
                 
-            # 获取页面内容
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # 调试信息
-            page_title = soup.title.text if soup.title else "无标题"
-            self.logger.info(f"页面标题: {page_title}")
-            
-            # 提取搜索结果中的详情页链接
-            urls = self._extract_links_from_search_page(soup, clean_id)
-            
-            if urls:
-                self.logger.info(f"搜索 '{term}' 找到 {len(urls)} 个结果")
-                all_urls.extend(urls)
-            else:
-                self.logger.info(f"搜索 '{term}' 未找到结果")
+                if response.status_code != 200:
+                    self.logger.warning(f"搜索请求失败，状态码: {response.status_code}")
+                    continue
+                    
+                # 获取页面内容
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                # 调试信息
+                page_title = soup.title.text if soup.title else "无标题"
+                self.logger.info(f"页面标题: {page_title}")
+                
+                # 提取搜索结果中的详情页链接
+                urls = self._extract_links_from_search_page(soup, clean_id)
+                
+                if urls:
+                    self.logger.info(f"搜索 '{term}' 找到 {len(urls)} 个结果")
+                    all_urls.extend(urls)
+                else:
+                    self.logger.info(f"搜索 '{term}' 未找到结果")
+                    
+            except requests.exceptions.RequestException as e:
+                self.logger.error(f"搜索请求异常: {str(e)}")
+                continue
+            except Exception as e:
+                self.logger.error(f"搜索过程中出现未知错误: {str(e)}")
+                continue
                 
         # 选择最匹配的URL
         if all_urls:

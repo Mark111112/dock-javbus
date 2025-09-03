@@ -5,9 +5,13 @@ import logging
 import time
 import random
 import requests
+import urllib3
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 from abc import ABC, abstractmethod
+
+# 禁用SSL警告
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 class BaseScraper(ABC):
@@ -57,13 +61,19 @@ class BaseScraper(ABC):
                 self.logger.debug(f"延迟 {sleep_time:.2f} 秒")
                 time.sleep(sleep_time)
                 
-                # 发起请求
-                response = requests.get(
-                    url, 
-                    headers=self.headers,
-                    cookies=self.cookies,
-                    timeout=10
-                )
+                # 使用子类的session方法或默认请求
+                if hasattr(self, 'create_session'):
+                    session = self.create_session()
+                    response = session.get(url, timeout=15)
+                else:
+                    # 默认请求方式
+                    response = requests.get(
+                        url, 
+                        headers=self.headers,
+                        cookies=self.cookies,
+                        timeout=15,
+                        verify=False  # 禁用SSL验证
+                    )
                 
                 # 检查响应状态
                 if response.status_code == 200:

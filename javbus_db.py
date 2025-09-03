@@ -254,11 +254,11 @@ class JavbusDatabase:
             print(f"获取演员信息错误: {e}")
             return None
     
-    def get_movie(self, movie_id, max_age=30):
+    def get_movie(self, movie_id, max_age=730):
         """获取影片信息，如果数据过期则返回None"""
         self.ensure_connection()
         try:
-            # 计算过期时间（默认30天）
+            # 计算过期时间（默认730天，约2年）
             expire_time = int(time.time()) - (max_age * 24 * 60 * 60)
             
             self.local.cursor.execute('''

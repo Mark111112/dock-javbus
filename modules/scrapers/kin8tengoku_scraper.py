@@ -91,8 +91,8 @@ class Kin8tengokuScraper(BaseScraper):
         self.logger.info(f"Trying direct URL: {direct_url}")
         
         # 尝试访问直接URL
-        response = self.session.get(direct_url, headers=self.headers)
-        if response.status_code == 200 and "金髪天國" in response.text:
+        soup = self.get_page(direct_url)
+        if soup and "金髪天國" in str(soup):
             self.logger.info(f"Direct URL successful: {direct_url}")
             return direct_url
         
@@ -102,14 +102,11 @@ class Kin8tengokuScraper(BaseScraper):
         search_url = self.search_url_template.format(quote(search_query))
         
         self.logger.info(f"Searching with URL: {search_url}")
-        response = self.session.get(search_url, headers=self.headers)
+        soup = self.get_page(search_url)
         
-        if response.status_code != 200:
-            self.logger.error(f"Search request failed with status code: {response.status_code}")
+        if not soup:
+            self.logger.error(f"Search request failed")
             return None
-        
-        # 解析搜索结果
-        soup = BeautifulSoup(response.text, 'html.parser')
         urls = self._extract_links_from_search_page(soup)
         
         if not urls:
@@ -215,32 +212,23 @@ class Kin8tengokuScraper(BaseScraper):
         if not soup:
             return result
         
-        # 提取标题 - 修改为同时检查多个可能的标题元素
-        title_elem = soup.select_one('.sub_title_vip') or soup.select_one('.sub_title')
-        if title_elem:
-            result['title'] = title_elem.text.strip()
+        # 提取标题 - 从图片的 alt 属性获取
+        title_img = soup.select_one('.Movie_Detail_title-img__5zop4 img')
+        if title_img and title_img.get('alt'):
+            result['title'] = title_img.get('alt').strip()
+            self.logger.info(f"Found title from img alt: {result['title']}")
         else:
-            # 如果没有找到特定类，尝试其他可能的选择器
-            title_candidates = [
-                '#sub_main p.sub_title_vip',
-                '#sub_main .sub_title',
-                'p.sub_title',
-                'h1.sub_title',
-                'p.sub_title_vip'
-            ]
-            
-            for selector in title_candidates:
-                element = soup.select_one(selector)
-                if element and element.text.strip():
-                    result['title'] = element.text.strip()
-                    self.logger.info(f"Found title using selector: {selector}")
-                    break
-        
-        # 记录找到的标题
-        if 'title' in result:
-            self.logger.info(f"Extracted title: {result['title']}")
-        else:
-            self.logger.warning("Could not extract title from page")
+            # 备用方法：从页面标题提取
+            if soup.title and soup.title.string:
+                title_text = soup.title.string.strip()
+                # 去除网站名称部分
+                if ' | ' in title_text:
+                    result['title'] = title_text.split(' | ')[0].strip()
+                else:
+                    result['title'] = title_text
+                self.logger.info(f"Found title from page title: {result['title']}")
+            else:
+                self.logger.warning("Could not extract title from page")
         
         # 构建封面图片URL (格式: https://www.kin8tengoku.com/[ID]/pht/1.jpg)
         main_cover_url = f"https://www.kin8tengoku.com/{cleaned_id}/pht/1.jpg"
@@ -280,53 +268,43 @@ class Kin8tengokuScraper(BaseScraper):
                 "alt": f"kin8-{cleaned_id} - Sample Image {i}"
             })
         
-        # 提取演员信息
-        actress_elem = soup.select('.movie_table_td2 .icon a')
-        for elem in actress_elem:
-            if '/actor_' in elem.get('href', ''):
-                result['actresses'].append(elem.text.strip())
+        # 提取演员信息 - 从新的结构中获取
+        actor_elem = soup.select_one('.Movie_Detail_actor___uEJg a')
+        if actor_elem:
+            result['actresses'].append(actor_elem.text.strip())
+            self.logger.info(f"Found actress: {actor_elem.text.strip()}")
         
-        # 提取类别/标签
-        category_elems = soup.select('.movie_table_td2 .icon a')
+        # 提取类别/标签 - 从新的结构中获取
+        category_elems = soup.select('.Movie_Detail_actor-type__j5b5a a')
         for elem in category_elems:
-            if elem.get('href') and ('/listpages/' in elem.get('href')) and not '/actor_' in elem.get('href'):
+            href = elem.get('href', '')
+            if href and ('/listpages/' in href):
                 genre = elem.text.strip()
-                # 从类别文本中提取纯文本（去除数字）
-                genre = re.sub(r'\(\d+\)', '', genre).strip()
-                if genre and genre not in result['genres']:
+                # 跳过SVIP图片标签
+                if genre and 'SVIP' not in genre and genre not in result['genres']:
                     result['genres'].append(genre)
+                    self.logger.info(f"Found genre: {genre}")
         
-        # 提取发行日期
-        date_elem = soup.select_one('.movie_table_td:-soup-contains("更新日")')
-        if date_elem and date_elem.find_next('td'):
-            result['release_date'] = date_elem.find_next('td').text.strip()
+        # 提取发行日期 - 从新的结构中获取
+        date_elem = soup.select_one('.Movie_Detail_date-movie__C6zuv span')
+        if date_elem:
+            date_text = date_elem.text.strip()
+            # 提取开始日期 (格式: 2016/07/16 ~ 2025/09/09)
+            if ' ~ ' in date_text:
+                start_date = date_text.split(' ~ ')[0].strip()
+                result['release_date'] = start_date
+                self.logger.info(f"Found release date: {start_date}")
+            else:
+                result['release_date'] = date_text
+                self.logger.info(f"Found release date: {date_text}")
         
-        # 提取持续时间 - 并转换为分钟
-        duration_elem = soup.select_one('.movie_table_td:-soup-contains("再生時間")')
-        if duration_elem and duration_elem.find_next('td'):
-            duration_text = duration_elem.find_next('td').text.strip()
-            # 转换 HH:MM:SS 格式为分钟
-            try:
-                parts = duration_text.split(':')
-                if len(parts) == 3:
-                    hours = int(parts[0])
-                    minutes = int(parts[1])
-                    seconds = int(parts[2])
-                    total_minutes = hours * 60 + minutes
-                    # 如果秒数超过30，向上取整
-                    if seconds >= 30:
-                        total_minutes += 1
-                    result['duration'] = str(total_minutes)
-                else:
-                    result['duration'] = duration_text
-            except Exception as e:
-                self.logger.error(f"Error converting duration: {str(e)}")
-                result['duration'] = duration_text
+        # 删除原有的时长提取逻辑 - 新结构中没有时长信息
         
-        # 提取描述 - 使用 summary 而不是 description
-        description_elem = soup.select_one('#comment')
+        # 提取描述 - 从新的结构中获取
+        description_elem = soup.select_one('.Movie_Detail_memo__BlQJl')
         if description_elem:
             result['summary'] = description_elem.text.strip()
+            self.logger.info(f"Found summary: {result['summary'][:100]}...")  # 只显示前100个字符
         
         # 提取电影ID
         result['product_code'] = f"kin8-{cleaned_id}"

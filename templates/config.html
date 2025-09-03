@@ -118,9 +118,6 @@
                     <button type="button" class="btn btn-danger" id="clear-logs-btn">
                         <i class="bi bi-file-earmark-text"></i> 清除日志
                     </button>
-                    <button type="button" class="btn btn-primary" id="update-cloud115-sizes-btn">
-                        <i class="bi bi-cloud-arrow-down"></i> 更新115文件大小信息
-                    </button>
                 </div>
             </div>
         </div>
@@ -269,40 +266,6 @@
                 }
             })
             .catch(error => {
-                alert('错误: ' + error.message);
-            });
-        }
-    });
-    
-    // Update 115 Cloud File Sizes button
-    document.getElementById('update-cloud115-sizes-btn').addEventListener('click', function() {
-        if (confirm('确定要更新所有115云盘文件的大小信息吗？此操作可能需要一些时间来完成。')) {
-            // 显示正在处理的消息
-            const btn = this;
-            const originalText = btn.innerHTML;
-            btn.disabled = true;
-            btn.innerHTML = '<i class="bi bi-hourglass-split"></i> 正在更新中...';
-            
-            fetch('/api/cloud115/update_all_file_sizes', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                }
-            })
-            .then(response => response.json())
-            .then(data => {
-                btn.disabled = false;
-                btn.innerHTML = originalText;
-                
-                if (data.success) {
-                    alert('成功: ' + data.message);
-                } else {
-                    alert('错误: ' + data.message);
-                }
-            })
-            .catch(error => {
-                btn.disabled = false;
-                btn.innerHTML = originalText;
                 alert('错误: ' + error.message);
             });
         }

@@ -488,7 +488,11 @@
                     // Files found, create buttons for each
                     data.files.forEach(file => {
                         // Format file size
-                        let sizeDisplay = file.size || "N/A";
+                        let sizeDisplay = file.size;
+                        // If size is not a string or empty, format it
+                        if (typeof sizeDisplay !== 'string' || !sizeDisplay.trim()) {
+                            sizeDisplay = "N/A";
+                        }
                         
                         // Create button
                         const button = document.createElement('button');
@@ -893,7 +897,15 @@
         
         // Format file size
         function formatFileSize(bytes) {
-            if (bytes === 0) return '0 B';
+            if (typeof bytes === 'string' && bytes.trim() !== '') {
+                // If we already have a formatted string like "1.1GB", just return it
+                return bytes;
+            }
+            
+            // If it's a number or can be converted to a number, format it
+            if (bytes === 0 || isNaN(parseInt(bytes))) return 'N/A';
+            
+            bytes = parseInt(bytes);
             const k = 1024;
             const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
             const i = Math.floor(Math.log(bytes) / Math.log(k));

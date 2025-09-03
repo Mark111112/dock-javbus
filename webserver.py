@@ -3854,7 +3854,7 @@ def add_cloud115_file(file_data):
             - file_id: 115文件ID
             - title: 文件标题
             - path: 文件路径
-            - size: 文件大小
+            - size: 文件大小 (可以是整数字节数或字符串如"1.1GB")
             - category: 分类
             - video_id: 可选，影片ID
             
@@ -3876,6 +3876,20 @@ def add_cloud115_file(file_data):
         # 在115云盘中，file_id 不是 pickcode，使用专门的pickcode字段
         pickcode = file_data['pick_code']
         
+        # 确保size字段是字符串格式
+        size = file_data['size']
+        # 如果size是数字，转换为字符串格式
+        if isinstance(size, (int, float)):
+            # 转换为人类可读格式
+            if size > 1024 * 1024 * 1024:  # > 1GB
+                size = f"{size / (1024 * 1024 * 1024):.2f}GB"
+            elif size > 1024 * 1024:  # > 1MB
+                size = f"{size / (1024 * 1024):.2f}MB"
+            elif size > 1024:  # > 1KB
+                size = f"{size / 1024:.2f}KB"
+            else:
+                size = f"{size}B"
+        
         # 构建数据库记录
         db_record = {
             'title': file_data['title'],
@@ -3886,7 +3900,7 @@ def add_cloud115_file(file_data):
             'category': category,
             'file_id': file_data['file_id'],  # 115文件ID
             'pickcode': pickcode,  # 明确存储pickcode
-            'size': file_data['size'],
+            'size': size,  # 使用字符串格式的文件大小
             'date_added': now,
             'play_count': 0,
             'last_played': 0,
@@ -4115,21 +4129,13 @@ def cloud115_import_directory_api():
                     elif file['fc'] == '1':  # 文件
                         # 检查是否为视频文件
                         if file.get('isv') == 1 or file['ico'].lower() in ['mp4', 'mkv', 'avi', 'wmv', 'mov', 'flv', 'm4v', 'rmvb', 'rm']:
-                            # 检查文件大小是否大于最小值
-                            file_size = int(file['fs']) if 'fs' in file else 0
-                            
-                            if min_size_mb > 0 and file_size < min_size_bytes:
-                                skipped_files += 1
-                                app.logger.debug(f"跳过小文件：{file['fn']}，大小：{file_size/1024/1024:.2f}MB")
-                                continue
-                                
                             # 检查文件是否已存在于数据库中
                             if file['fid'] in existing_file_ids:
                                 skipped_existing_files += 1
                                 app.logger.debug(f"跳过已存在文件：{file['fn']}，ID：{file['fid']}")
                                 continue
                                 
-                            # 获取文件详情，获取正确的pickcode
+                            # 获取文件详情，获取正确的pickcode和文件大小
                             file_details_response = requests.get(
                                 'https://proapi.115.com/open/folder/get_info',
                                 params={'file_id': file['fid']},
@@ -4140,12 +4146,34 @@ def cloud115_import_directory_api():
                             
                             file_details = file_details_response.json().get('data', {})
                             pick_code = file_details.get('pick_code', '')
+                            file_size_str = file_details.get('size', '')  # 获取字符串格式的文件大小
+                            
+                            # 需要检查文件大小是否大于最小值
+                            if min_size_mb > 0:
+                                try:
+                                    # 将字符串格式的文件大小转换为字节数
+                                    file_size_bytes = convert_human_size_to_bytes(file_size_str)
+                                    
+                                    # 检查文件大小
+                                    if file_size_bytes < min_size_bytes:
+                                        skipped_files += 1
+                                        app.logger.debug(f"跳过小文件：{file['fn']}，大小：{file_size_str}")
+                                        continue
+                                except Exception as e:
+                                    app.logger.error(f"转换文件大小失败 '{file_size_str}': {str(e)}")
+                                    # 如果转换失败，尝试使用fs字段
+                                    if 'fs' in file:
+                                        file_size_bytes = int(file['fs'])
+                                        if file_size_bytes < min_size_bytes:
+                                            skipped_files += 1
+                                            app.logger.debug(f"跳过小文件：{file['fn']}，大小：{file_size_bytes/1024/1024:.2f}MB")
+                                            continue
                             
                             video_files.append({
                                 'file_id': file['fid'],
                                 'title': file['fn'],
                                 'path': current_path,
-                                'size': file_size,
+                                'size': file_size_str,  # 使用字符串格式的文件大小
                                 'category': category_type, # 使用导入类别
                                 'thumbnail': file.get('thumb', ''),
                                 'pick_code': pick_code  # 添加pick_code字段

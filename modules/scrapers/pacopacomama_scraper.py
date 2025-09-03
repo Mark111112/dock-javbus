@@ -22,7 +22,7 @@ class PacopacomomaScraper(BaseScraper):
         self.base_url = "https://www.pacopacomama.com"
         
         # 详情页URL模板
-        self.detail_url_template = "https://www.pacopacomama.com/movies/{}"
+        self.detail_url_template = "https://www.pacopacomama.com/movies/{}/"
         
         # API URL模板用于获取详细信息
         self.api_url_template = "https://www.pacopacomama.com/dyn/phpauto/movie_details/movie_id/{}.json"

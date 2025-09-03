@@ -1,4 +1,4 @@
-﻿{% extends 'base.html' %}
+{% extends 'base.html' %}
 
 {% block title %}115 & Jellyfin Library{% endblock %}
 
@@ -286,15 +286,17 @@
                             <li><a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#import115DirModal">
                                 <i class="fas fa-folder-open me-2"></i>导入115目录
                             </a></li>
-                            <li><a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#login115Modal">
-                                <i class="fas fa-sign-in-alt me-2"></i>115登录
-                            </a></li>
+                            <li>
+                                <a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#login115Modal">
+                                    <i class="fas fa-sign-in-alt me-2"></i>115登录
+                                </a>
+                            </li>
                             <li><a class="dropdown-item d-none" id="logout115Button" href="#" onclick="logout115()">
                                 <i class="fas fa-sign-out-alt me-2"></i>115退出登录
                             </a></li>
                             <li>
                                 <a class="dropdown-item" href="#" id="update-cloud115-sizes-btn">
-                                    <i class="fas fa-database me-2"></i>更新115文件信息
+                                    <i class="fas fa-cloud-upload-alt me-2"></i>更新115文件大小信息
                                 </a>
                             </li>
                             <li>
@@ -1791,7 +1793,7 @@
             const btn = this;
             const originalText = btn.innerHTML;
             btn.disabled = true;
-            btn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i> 正在更新中...';
+            btn.innerHTML = '<i class="fas fa-hourglass-split me-2"></i> 正在更新中...';
             
             fetch('/api/cloud115/update_all_file_sizes', {
                 method: 'POST',
@@ -1806,6 +1808,8 @@
                 
                 if (data.success) {
                     alert('成功: ' + data.message);
+                    // 刷新页面显示更新后的结果
+                    window.location.reload();
                 } else {
                     alert('错误: ' + data.message);
                 }
@@ -1817,5 +1821,6 @@
             });
         }
     });
+}
 </script>
 {% endblock %} 
