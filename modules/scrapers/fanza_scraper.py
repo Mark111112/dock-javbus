@@ -171,6 +171,15 @@ class FanzaScraper(BaseScraper):
             url = url_list[0]
             self.logger.info(f"搜索找到详情页URL: {url}")
             
+            # 如果是 video.dmm.co.jp 的客户端渲染页面，直接走 GraphQL
+            if "video.dmm.co.jp" in url:
+                content_id = self._extract_content_id_from_video_url(url)
+                if content_id:
+                    graph_info = self._fetch_video_dmm_content_by_content_id(content_id, movie_id)
+                    if graph_info:
+                        return graph_info
+                # 无法解析或GraphQL失败则继续常规流程
+
             # 🎯 优化：检查是否已经在搜索过程中验证过此页面
             if hasattr(self, '_verified_page_cache') and url in self._verified_page_cache:
                 self.logger.info(f"使用已验证的页面缓存")
@@ -199,6 +208,12 @@ class FanzaScraper(BaseScraper):
                 if info:
                     return info
         
+        # 3. 回退：尝试 video.dmm.co.jp 的 GraphQL 接口（客户端渲染）
+        self.logger.info("尝试通过 video.dmm.co.jp GraphQL 接口获取详情")
+        graph_info = self._fetch_video_dmm_content(movie_id)
+        if graph_info:
+            return graph_info
+
         self.logger.warning(f"未找到影片: {movie_id}")
         return None
     
@@ -221,6 +236,7 @@ class FanzaScraper(BaseScraper):
             clean_id,                          # 标准格式：ABC-123
             f"{label}-{number.zfill(5)}",      # 5位数字格式：ABC-00123
             f"{label}{number}",                # 无连字符格式：ABC123
+            f"{label}{number.zfill(5)}",       # 无连字符且零填充：ABC000123
             label + number                     # 无任何分隔：ABC123
         ]
         
@@ -258,19 +274,20 @@ class FanzaScraper(BaseScraper):
                     best_urls = self._find_best_match(urls, movie_id)
                     
                     if best_urls:
-                        # 尝试获取第一个最佳匹配URL的详情页
+                        # 如果是 video.dmm.co.jp 链接，直接认为有效（后续用GraphQL获取）
                         test_url = best_urls[0]
-                        self.logger.info(f"验证详情页: {test_url}")
+                        if "video.dmm.co.jp" in test_url:
+                            self.logger.info("检测到 video.dmm.co.jp 链接，跳过HTML验证，稍后用GraphQL获取详情")
+                            return best_urls
                         
+                        # 否则按原有方式验证HTML详情页
+                        self.logger.info(f"验证详情页: {test_url}")
                         test_soup = self.get_page(test_url)
                         if test_soup and self._is_valid_detail_page(test_soup):
                             self.logger.info(f"验证成功，使用此搜索结果，跳过后续搜索")
-                            
-                            # 🎯 优化：缓存已验证的页面，避免重复请求
                             if not hasattr(self, '_verified_page_cache'):
                                 self._verified_page_cache = {}
                             self._verified_page_cache[test_url] = test_soup
-                            
                             return best_urls
                         else:
                             self.logger.warning(f"详情页验证失败，继续尝试其他搜索项")
@@ -342,16 +359,21 @@ class FanzaScraper(BaseScraper):
             product_links = soup.select("div.box-image a")
         
         if not product_links:
-            # 尝试通用方法：查找所有包含"cid="的链接
+            # 尝试通用方法：查找所有可能的详情链接
             all_links = soup.find_all("a", href=True)
-            product_links = [link for link in all_links if "cid=" in link.get("href")]
+            product_links = [
+                link for link in all_links
+                if ("cid=" in link.get("href") or "video.dmm.co.jp/av/content/?id=" in link.get("href"))
+            ]
         
         # 处理找到的链接
         if product_links:
             for link in product_links:
                 href = link.get("href")
-                if href and "cid=" in href:
-                    # 标准化URL
+                if not href:
+                    continue
+                # 接受两类：cid= 详情页 或 video.dmm.co.jp 的 content 页面
+                if ("cid=" in href) or ("video.dmm.co.jp/av/content/?id=" in href):
                     url = href
                     if not url.startswith("http"):
                         url = urljoin(self.base_url, url)
@@ -370,8 +392,9 @@ class FanzaScraper(BaseScraper):
             list: 排序后的URL列表
         """
         # 获取标准化的影片ID
-        _, _, clean_id = self.clean_movie_id(movie_id)
-        label_part = clean_id.split('-')[0].lower()
+        label, number, clean_id = self.clean_movie_id(movie_id)
+        label_part = label.lower() if label else ""
+        number_part = number if number else ""
         
         # 定义优先级计算函数
         def get_priority(url):
@@ -390,18 +413,84 @@ class FanzaScraper(BaseScraper):
             elif "rental" in url:
                 priority += 10
                 
-            # 5. 检查URL中是否包含完整影片代号
+            # 5. video.dmm.co.jp 的内容页优先级最高（可直接GraphQL）
+            if "video.dmm.co.jp/av/content" in url:
+                priority += 1000
+
+            # 6. 检查URL中的cid匹配度
             cid_match = re.search(r'cid=([^/]+)', url, re.IGNORECASE)
             if cid_match:
-                cid = cid_match.group(1)
-                # 如果cid包含厂商代号，提高优先级
-                if label_part in cid.lower():
-                    priority += 5
+                cid = cid_match.group(1).lower()
+                
+                # 6.1 完全匹配：cid与clean_id完全一致（忽略大小写）
+                if cid == clean_id.lower():
+                    priority += 10000  # 最高优先级
+                    self.logger.info(f"找到完全匹配的cid: {cid} == {clean_id}")
+                
+                # 6.2 精确匹配：检查label和number是否都匹配
+                elif label_part and number_part:
+                    # 提取cid中的label和number部分
+                    cid_label_match = re.search(r'^([a-z]+)', cid)
+                    cid_number_match = re.search(r'(\d+)', cid)
+                    
+                    if cid_label_match and cid_number_match:
+                        cid_label = cid_label_match.group(1)
+                        cid_number = cid_number_match.group(1)
+                        
+                        # 如果label和number都匹配
+                        if cid_label == label_part and cid_number == number_part:
+                            priority += 5000  # 很高优先级
+                            self.logger.info(f"找到精确匹配: {cid_label}{cid_number} == {label_part}{number_part}")
+                        # 如果只有label匹配
+                        elif cid_label == label_part:
+                            priority += 1000
+                            self.logger.info(f"找到label匹配: {cid_label} == {label_part}")
+                        # 如果只有number匹配
+                        elif cid_number == number_part:
+                            priority += 500
+                            self.logger.info(f"找到number匹配: {cid_number} == {number_part}")
+                
+                # 6.3 部分匹配：检查是否包含厂商代号
+                elif label_part and label_part in cid:
+                    priority += 100
+                    
+            # 7. 检查video.dmm.co.jp的id参数匹配度
+            video_id_match = re.search(r'[?&]id=([^&#]+)', url, re.IGNORECASE)
+            if video_id_match:
+                video_id = video_id_match.group(1).lower()
+                
+                # 7.1 完全匹配
+                if video_id == clean_id.lower():
+                    priority += 10000
+                    self.logger.info(f"找到完全匹配的video id: {video_id} == {clean_id}")
+                
+                # 7.2 精确匹配
+                elif label_part and number_part:
+                    video_label_match = re.search(r'^([a-z]+)', video_id)
+                    video_number_match = re.search(r'(\d+)', video_id)
+                    
+                    if video_label_match and video_number_match:
+                        video_label = video_label_match.group(1)
+                        video_number = video_number_match.group(1)
+                        
+                        if video_label == label_part and video_number == number_part:
+                            priority += 5000
+                            self.logger.info(f"找到精确匹配的video id: {video_label}{video_number} == {label_part}{number_part}")
+                        elif video_label == label_part:
+                            priority += 1000
+                        elif video_number == number_part:
+                            priority += 500
                     
             return priority
         
         # 按优先级排序
         sorted_urls = sorted(urls, key=get_priority, reverse=True)
+        
+        # 记录排序结果用于调试
+        self.logger.info(f"搜索结果排序（前5个）:")
+        for i, url in enumerate(sorted_urls[:5]):
+            priority = get_priority(url)
+            self.logger.info(f"  {i+1}. 优先级={priority}, URL={url}")
         
         # 去除重复URL
         unique_urls = []
@@ -609,11 +698,736 @@ class FanzaScraper(BaseScraper):
             if rating_match:
                 result["rating"] = rating_match.group(1)
                 
-        # 7. 提取简介
-        description_element = soup.select_one("#introduction-text") or soup.select_one(".mg-b20.lh4")
-        if description_element:
-            summary = description_element.text.strip()
-            if summary:
-                result["summary"] = summary
+        # 7. 提取简介（更精准：优先提取正文段落，过滤广告/说明块）
+        summary_text = None
+
+        try:
+            # 7.1 优先选择 page-detail 区域内的正文段落，过滤广告/说明
+            detail_root = soup.select_one("div.page-detail")
+            if detail_root:
+                paragraph_candidates = detail_root.select("div.mg-b20.lh4 p, p.mg-b20")
+            else:
+                paragraph_candidates = soup.select("div.mg-b20.lh4 p, p.mg-b20")
+            cleaned_candidates = []
+
+            # 定义需过滤的关键词（常见广告/说明用语）
+            ad_keywords = [
+                "特典", "セット商品", "キャンペーン", "オフ", "セール", "詳しくはこちら", "コンビニ受取", "注文方法", "送料無料", "ポイント"
+            ]
+
+            for p in paragraph_candidates:
+                text = (p.get_text() or "").strip()
+                if not text:
+                    continue
+                # 过滤包含广告关键词或过短的段落
+                if any(k in text for k in ad_keywords):
+                    continue
+                if len(text) < 50:
+                    continue
+                # 过滤处于广告说明容器内的段落（如 .d-boxother 或 .mg-t20）
+                parent_classes = " ".join(p.parent.get("class", [])) if p.parent else ""
+                if "d-boxother" in parent_classes or "mg-t20" in parent_classes:
+                    continue
+                cleaned_candidates.append(text)
+
+            # 保留所有有效的段落，保持分段结构
+            if cleaned_candidates:
+                # 按长度排序，优先保留较长的段落，但保留所有有效段落
+                cleaned_candidates.sort(key=len, reverse=True)
+                # 如果只有一个段落，直接使用
+                if len(cleaned_candidates) == 1:
+                    summary_text = cleaned_candidates[0]
+                else:
+                    # 多个段落时，用双换行符分隔，保持分段
+                    summary_text = "\n\n".join(cleaned_candidates)
+
+            # 7.2 兜底：如果没拿到，退回旧的选择器
+            if not summary_text:
+                description_element = soup.select_one("#introduction-text") or soup.select_one(".mg-b20.lh4")
+                if description_element:
+                    paras = [t.get_text().strip() for t in description_element.select("p")]
+                    paras = [t for t in paras if t and len(t) >= 50 and not any(k in t for k in ad_keywords)]
+                    if paras:
+                        # 保持分段结构
+                        if len(paras) == 1:
+                            summary_text = paras[0]
+                        else:
+                            summary_text = "\n\n".join(paras)
+                    else:
+                        summary_text = (description_element.get_text() or "").strip()
+            # 7.3 再兜底：meta 描述
+            if not summary_text:
+                og_desc = soup.find("meta", attrs={"property": "og:description"})
+                if og_desc and og_desc.get("content"):
+                    summary_text = og_desc.get("content").strip()
+            if not summary_text:
+                meta_desc = soup.find("meta", attrs={"name": "description"})
+                if meta_desc and meta_desc.get("content"):
+                    summary_text = meta_desc.get("content").strip()
+        except Exception:
+            # 出错时退回最初策略，保证不影响整体抓取
+            description_element = soup.select_one("#introduction-text") or soup.select_one(".mg-b20.lh4")
+            if description_element:
+                summary_text = (description_element.get_text() or "").strip()
+
+        if summary_text:
+            result["summary"] = summary_text
+
+        # 8. 提取雑誌掲載コメント/AVライターコメント（作为摘要的补充段落）
+        try:
+            journal_comment = soup.select_one("div.journal-comment")
+            if journal_comment:
+                # 提取标题（dt）和内容（dd）
+                dt = journal_comment.select_one("dt")
+                dd = journal_comment.select_one("dd")
+                if dt and dd:
+                    title = dt.get_text().strip()
+                    content = dd.get_text().strip()
+                    if title and content:
+                        # 将评价内容作为摘要的补充段落，保持分段结构
+                        if "summary" in result:
+                            # 如果已有摘要，添加换行符保持分段
+                            result["summary"] += f"\n\n【{title}】\n{content}"
+                        else:
+                            # 如果没有摘要，直接使用评价内容
+                            result["summary"] = f"【{title}】\n{content}"
+        except Exception:
+            # 出错时忽略，不影响整体抓取
+            pass
+
+        # 9. 提取用户评价（User Reviews）- 从专门的评价页面获取
+        try:
+            user_reviews = self._fetch_user_reviews_from_review_page(movie_id, result)
+            if user_reviews:
+                result["user_reviews"] = user_reviews
+                
+                # 同时将用户评价添加到摘要中（保持向后兼容）
+                review_text = ""
+                for review in user_reviews:
+                    if review.get("title") and review.get("comment"):
+                        review_text += f"\n\n【{review['title']}】\n{review['comment']}"
+                    elif review.get("comment"):
+                        review_text += f"\n\n【用户评价】\n{review['comment']}"
+                
+                if review_text and "summary" in result:
+                    result["summary"] += review_text
+                elif review_text:
+                    result["summary"] = review_text.strip()
+                    
+        except Exception:
+            # 出错时忽略，不影响整体抓取
+            pass
     
         return result 
+
+    def _fetch_user_reviews_from_review_page(self, movie_id, movie_data):
+        """从专门的用户评价页面获取用户评价"""
+        try:
+            # 从影片数据中提取cid
+            cid = None
+            if "url" in movie_data and "cid=" in movie_data["url"]:
+                import re
+                cid_match = re.search(r'cid=([^/&]+)', movie_data["url"])
+                if cid_match:
+                    cid = cid_match.group(1)
+            
+            # 如果没有cid，尝试从movie_id构造
+            if not cid:
+                # 尝试从movie_id构造cid（可能需要一些映射逻辑）
+                cid = movie_id.lower()
+            
+            if not cid:
+                self.logger.warning(f"无法获取cid来构建评价页面URL: {movie_id}")
+                return []
+            
+            # 构建评价页面URL
+            review_url = f"https://www.dmm.co.jp/mono/dvd/-/detail/review/=/cid={cid}/"
+            self.logger.info(f"尝试获取用户评价: {review_url}")
+            
+            # 获取评价页面
+            session = self.create_session()
+            response = session.get(review_url, timeout=15)
+            
+            if response.status_code != 200:
+                self.logger.warning(f"评价页面请求失败，状态码: {response.status_code}")
+                return []
+            
+            # 解析评价页面
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # 检查是否有评价内容
+            review_units = soup.select("li.dcd-review__unit")
+            if not review_units:
+                self.logger.info(f"未找到用户评价: {movie_id}")
+                return []
+            
+            user_reviews = []
+            for unit in review_units:
+                try:
+                    # 提取评价标题
+                    title_elem = unit.select_one("span.dcd-review__unit__title")
+                    title = title_elem.get_text().strip() if title_elem else ""
+                    
+                    # 提取评价内容 - 使用更精确的方法
+                    comment_parts = []
+                    
+                    # 1. 首先提取所有可见的comment div（这是最可靠的方法）
+                    comment_elems = unit.select("div.dcd-review__unit__comment")
+                    for comment_elem in comment_elems:
+                        # 处理HTML中的<br>标签，转换为换行符
+                        comment_html = str(comment_elem)
+                        # 将<br>和<br/>标签替换为换行符
+                        import re
+                        comment_html = re.sub(r'<br\s*/?>', '\n', comment_html)
+                        # 然后提取文本内容
+                        comment_text = BeautifulSoup(comment_html, 'html.parser').get_text().strip()
+                        
+                        # 只保留实际的评价内容，过滤掉警告和导航信息
+                        if (comment_text and 
+                            len(comment_text) > 20 and  # 内容足够长
+                            not comment_text.startswith("※このレビューは作品の内容に関する記述が含まれています。") and
+                            "レビューを表示する" not in comment_text and
+                            "参考になりましたか" not in comment_text and
+                            "違反を報告する" not in comment_text and
+                            "投票しています" not in comment_text and
+                            "このレビューは参考になりましたか" not in comment_text and
+                            "不適切なレビューを報告する" not in comment_text and
+                            "以下の内容に該当するレビューは報告できます" not in comment_text and
+                            "個人情報の公開・漏洩" not in comment_text and
+                            "特定の個人や企業等への嫌がらせ" not in comment_text and
+                            "差別的な表現の使用" not in comment_text and
+                            "無関係な宣伝スパム" not in comment_text and
+                            "明らかに事実と異なる虚偽の主張" not in comment_text and
+                            "報告後、内容を確認し" not in comment_text and
+                            "より良いサービス環境のため" not in comment_text and
+                            "キャンセル" not in comment_text and
+                            "報告する" not in comment_text and
+                            "エラーが発生しました" not in comment_text and
+                            "再度時間をおいてお試しください" not in comment_text and
+                            "購入・利用済み" not in comment_text and
+                            "ビデオ(動画)" not in comment_text):
+                            comment_parts.append(comment_text)
+                    
+                    # 2. 如果标准方法没有找到内容，尝试查找可能被折叠的内容
+                    if not comment_parts:
+                        # 查找可能包含评价内容的div，但排除已知的导航元素
+                        excluded_classes = [
+                            'dcd-review__unit__bottom',
+                            'dcd-review__unit__voted', 
+                            'dcd-review__unit__evaluate',
+                            'dcd-review__unit__report',
+                            'dcd-review__report-modal',
+                            'dcd-review__modtogglelink-open'
+                        ]
+                        
+                        # 查找所有div，但排除导航相关的
+                        all_divs = unit.select("div")
+                        for div in all_divs:
+                            # 检查div的class是否在排除列表中
+                            div_classes = div.get("class", [])
+                            if any(excluded_class in div_classes for excluded_class in excluded_classes):
+                                continue
+                                
+                            # 处理HTML中的<br>标签，转换为换行符
+                            div_html = str(div)
+                            div_html = re.sub(r'<br\s*/?>', '\n', div_html)
+                            div_text = BeautifulSoup(div_html, 'html.parser').get_text().strip()
+                            
+                            if (div_text and 
+                                len(div_text) > 30 and  # 内容足够长
+                                "レビューを表示する" not in div_text and
+                                "参考になりましたか" not in div_text and
+                                "違反を報告する" not in div_text and
+                                "投票しています" not in div_text and
+                                "このレビューは参考になりましたか" not in div_text and
+                                "不適切なレビューを報告する" not in div_text and
+                                "以下の内容に該当するレビューは報告できます" not in div_text and
+                                "個人情報の公開・漏洩" not in div_text and
+                                "特定の個人や企業等への嫌がらせ" not in div_text and
+                                "差別的な表現の使用" not in div_text and
+                                "無関係な宣伝スパム" not in div_text and
+                                "明らかに事実と異なる虚偽の主張" not in div_text and
+                                "報告後、内容を確認し" not in div_text and
+                                "より良いサービス環境のため" not in div_text and
+                                "キャンセル" not in div_text and
+                                "報告する" not in div_text and
+                                "エラーが発生しました" not in div_text and
+                                "再度時間をおいてお試しください" not in div_text and
+                                "購入・利用済み" not in div_text and
+                                "ビデオ(動画)" not in div_text and
+                                not div_text.startswith("※") and
+                                div_text not in comment_parts):
+                                comment_parts.append(div_text)
+                    
+                    # 3. 如果还是没有找到内容，尝试从整个unit中智能提取
+                    if not comment_parts:
+                        unit_text = unit.get_text()
+                        lines = unit_text.split('\n')
+                        content_lines = []
+                        in_content = False
+                        
+                        for line in lines:
+                            line = line.strip()
+                            if not line:
+                                continue
+                                
+                            # 开始收集内容（在标题之后）
+                            if title and title in line:
+                                in_content = True
+                                continue
+                                
+                            # 停止收集内容（遇到评价者信息或导航元素）
+                            if (reviewer and reviewer in line) or \
+                               "投票しています" in line or \
+                               "参考になりましたか" in line or \
+                               "違反を報告する" in line:
+                                break
+                                
+                            # 收集内容行
+                            if in_content and len(line) > 10:
+                                content_lines.append(line)
+                        
+                        if content_lines:
+                            comment_parts.append('\n'.join(content_lines))
+                    
+                    # 合并所有评论内容，去重并保持顺序
+                    seen = set()
+                    unique_parts = []
+                    for part in comment_parts:
+                        if part not in seen and len(part.strip()) > 10:
+                            seen.add(part)
+                            unique_parts.append(part)
+                    
+                    comment = "\n\n".join(unique_parts) if unique_parts else ""
+                    
+                    # 提取评分
+                    rating_elem = unit.select_one("span[class*='dcd-review-rating']")
+                    rating = ""
+                    if rating_elem:
+                        class_name = " ".join(rating_elem.get("class", []))
+                        rating_match = re.search(r'dcd-review-rating-(\d+)', class_name)
+                        if rating_match:
+                            rating_value = int(rating_match.group(1))
+                            rating = f"{rating_value/10:.1f}" if rating_value > 0 else ""
+                    
+                    # 提取评价者信息
+                    reviewer_elem = unit.select_one("span.dcd-review__unit__reviewer a")
+                    reviewer = reviewer_elem.get_text().strip() if reviewer_elem else ""
+                    
+                    # 提取发布日期
+                    date_elem = unit.select_one("span.dcd-review__unit__postdate")
+                    post_date = date_elem.get_text().strip() if date_elem else ""
+                    
+                    # 只有当标题或内容存在时才添加
+                    if title or comment:
+                        review_data = {
+                            "title": title,
+                            "comment": comment,
+                            "rating": rating,
+                            "reviewer": reviewer,
+                            "post_date": post_date
+                        }
+                        user_reviews.append(review_data)
+                        
+                except Exception as e:
+                    self.logger.warning(f"解析单个评价时出错: {str(e)}")
+                    continue
+            
+            self.logger.info(f"成功获取 {len(user_reviews)} 条用户评价")
+            return user_reviews
+            
+        except Exception as e:
+            self.logger.error(f"获取用户评价失败: {str(e)}")
+            return []
+
+    # =====================
+    # video.dmm.co.jp 支持
+    # =====================
+    def _build_video_dmm_id(self, movie_id):
+        """构造 video.dmm.co.jp 使用的ID（如 cosx00087）"""
+        label, number, _ = self.clean_movie_id(movie_id)
+        if not label:
+            return None
+        return f"{label.lower()}{number.zfill(5)}"
+
+    def _video_dmm_url(self, content_id):
+        """构造 video.dmm.co.jp 详情页 URL"""
+        return f"https://video.dmm.co.jp/av/content/?id={content_id}"
+
+    def _extract_content_id_from_video_url(self, url):
+        """从 video.dmm.co.jp 链接中提取 id=XXXX 参数"""
+        try:
+            m = re.search(r'[?&]id=([^&#]+)', url, re.IGNORECASE)
+            if m:
+                return m.group(1)
+            return None
+        except Exception:
+            return None
+
+    def _fetch_video_dmm_content_by_content_id(self, content_id, movie_id=None):
+        """使用已知 content_id（例如 1stcv00580、h_1732orecs00387）调用 GraphQL"""
+        try:
+            if not content_id:
+                return None
+
+            graphql_url = "https://api.video.dmm.co.jp/graphql"
+
+            query = (
+                "query Content($id: ID!) {\n"
+                "  ppvContent(id: $id) {\n"
+                "    id\n"
+                "    title\n"
+                "    description\n"
+                "    duration\n"
+                "    makerReleasedAt\n"
+                "    packageImage { largeUrl mediumUrl __typename }\n"
+                "    sampleImages { number imageUrl largeImageUrl __typename }\n"
+                "    maker { id name __typename }\n"
+                "    label { id name __typename }\n"
+                "    genres { id name __typename }\n"
+                "    makerContentId\n"
+                "    __typename\n"
+                "  }\n"
+                "  reviewSummary(contentId: $id) { average total __typename }\n"
+                "}"
+            )
+
+            payload = {
+                "operationName": "Content",
+                "query": query,
+                "variables": {"id": content_id}
+            }
+
+            session = self.create_session()
+            session.headers.update({
+                'Accept': 'application/graphql-response+json, application/json',
+                'Content-Type': 'application/json',
+                'Origin': 'https://video.dmm.co.jp',
+                'Referer': self._video_dmm_url(content_id)
+            })
+
+            resp = session.post(graphql_url, data=json.dumps(payload), timeout=20)
+            if resp.status_code != 200:
+                self.logger.warning(f"GraphQL 请求失败，状态码: {resp.status_code}")
+                return None
+
+            data = resp.json()
+            content = (data or {}).get('data', {}).get('ppvContent')
+            if not content:
+                self.logger.info("GraphQL 无内容返回")
+                return None
+
+            url = self._video_dmm_url(content_id)
+            result = {
+                "source": "fanza",
+                "id": movie_id or content_id,
+                "url": url,
+                "title": content.get("title") or ""
+            }
+
+            maker_released_at = content.get("makerReleasedAt") or ""
+            if maker_released_at:
+                result["release_date"] = maker_released_at.split("T")[0].replace("/", "-")
+
+            duration_sec = content.get("duration")
+            if isinstance(duration_sec, int) and duration_sec > 0:
+                minutes = str(int(round(duration_sec / 60)))
+                result["duration"] = minutes + "分钟"
+
+            maker = (content.get("maker") or {}).get("name")
+            if maker:
+                result["maker"] = maker
+            label_name = (content.get("label") or {}).get("name")
+            if label_name:
+                result["label"] = label_name
+
+            maker_content_id = content.get("makerContentId")
+            if maker_content_id:
+                result["product_code"] = maker_content_id
+
+            genres = [g.get("name") for g in (content.get("genres") or []) if g.get("name")]
+            if genres:
+                result["genres"] = genres
+
+            package_image = content.get("packageImage") or {}
+            cover = package_image.get("largeUrl") or package_image.get("mediumUrl")
+            if cover:
+                result["cover"] = cover
+
+            thumbs = []
+            for img in (content.get("sampleImages") or []):
+                large = img.get("largeImageUrl") or img.get("imageUrl")
+                if large:
+                    thumbs.append(large)
+            if thumbs:
+                result["thumbnails"] = thumbs
+
+            review = (data or {}).get('data', {}).get('reviewSummary') or {}
+            average = review.get('average')
+            if average is not None:
+                result["rating"] = str(average)
+
+            desc = content.get("description")
+            if desc:
+                result["summary"] = re.sub(r'<br\s*/?>', '\n', desc).strip()
+
+            # 获取用户评价
+            user_reviews = self._fetch_video_dmm_user_reviews(content_id)
+            if user_reviews:
+                result["user_reviews"] = user_reviews
+                # 将用户评价也添加到summary中（向后兼容）
+                review_texts = []
+                for review in user_reviews:
+                    review_text = f"【{review.get('title', '')}】\n{review.get('comment', '')}"
+                    review_texts.append(review_text)
+                
+                if review_texts:
+                    if result.get("summary"):
+                        result["summary"] += "\n\n" + "\n\n".join(review_texts)
+                    else:
+                        result["summary"] = "\n\n".join(review_texts)
+
+            self.logger.info("通过 GraphQL 成功获取详情（content_id）")
+            return result
+
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"GraphQL 请求异常: {str(e)}")
+            return None
+        except Exception as e:
+            self.logger.error(f"GraphQL 解析异常: {str(e)}")
+            return None
+
+    def _fetch_video_dmm_user_reviews(self, content_id):
+        """从video.dmm.co.jp获取用户评价"""
+        try:
+            # 构建用户评价GraphQL查询
+            query = """
+            query UserReviews($id: ID!, $sort: ReviewSort!, $offset: Int!) {
+                reviews(contentId: $id, sort: $sort, limit: 10, offset: $offset) {
+                    items {
+                        id
+                        title
+                        rating
+                        reviewerId
+                        nickname
+                        isPurchased
+                        comment
+                        helpfulCount
+                        service
+                        isExposure
+                        publishDate
+                        __typename
+                    }
+                    __typename
+                }
+            }
+            """
+            
+            variables = {
+                "id": content_id,
+                "offset": 0,
+                "sort": "HELPFUL_COUNT_DESC"
+            }
+            
+            payload = {
+                "operationName": "UserReviews",
+                "query": query,
+                "variables": variables
+            }
+            
+            # 发送GraphQL请求
+            session = self.create_session()
+            session.headers.update({
+                'Accept': 'application/graphql-response+json, application/json',
+                'Content-Type': 'application/json',
+                'Origin': 'https://video.dmm.co.jp',
+                'Referer': self._video_dmm_url(content_id)
+            })
+            
+            response = session.post(
+                "https://api.video.dmm.co.jp/graphql",
+                data=json.dumps(payload),
+                timeout=15
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                if "data" in data and "reviews" in data["data"] and "items" in data["data"]["reviews"]:
+                    reviews = data["data"]["reviews"]["items"]
+                    self.logger.info(f"成功从video.dmm.co.jp获取 {len(reviews)} 条用户评价: {content_id}")
+                    
+                    # 转换数据格式以匹配现有结构
+                    user_reviews = []
+                    for review in reviews:
+                        # 处理日期格式
+                        publish_date = review.get("publishDate", "")
+                        if publish_date:
+                            # 转换ISO格式日期为简单格式
+                            try:
+                                from datetime import datetime
+                                dt = datetime.fromisoformat(publish_date.replace('Z', '+00:00'))
+                                publish_date = dt.strftime("%Y-%m-%d")
+                            except:
+                                publish_date = publish_date[:10] if len(publish_date) >= 10 else publish_date
+                        
+                        review_data = {
+                            "title": review.get("title", ""),
+                            "comment": review.get("comment", ""),
+                            "rating": str(review.get("rating", 0)),
+                            "reviewer": review.get("nickname", ""),
+                            "post_date": publish_date,
+                            "helpful_count": review.get("helpfulCount", 0),
+                            "is_purchased": review.get("isPurchased", False),
+                            "service": review.get("service", "")
+                        }
+                        user_reviews.append(review_data)
+                    
+                    return user_reviews
+                else:
+                    self.logger.warning(f"GraphQL响应中未找到reviews数据: {content_id}")
+                    return []
+            else:
+                self.logger.warning(f"用户评价GraphQL请求失败，状态码: {response.status_code}")
+                return []
+                
+        except Exception as e:
+            self.logger.error(f"从video.dmm.co.jp获取用户评价失败: {str(e)}")
+            return []
+
+    def _fetch_video_dmm_content(self, movie_id):
+        """基于 movie_id 推导 content_id 后调用 GraphQL"""
+        content_id = self._build_video_dmm_id(movie_id)
+        return self._fetch_video_dmm_content_by_content_id(content_id, movie_id)
+        """调用 video.dmm.co.jp GraphQL 接口获取内容并映射为统一结构"""
+        try:
+            content_id = self._build_video_dmm_id(movie_id)
+            if not content_id:
+                return None
+
+            graphql_url = "https://api.video.dmm.co.jp/graphql"
+
+            # 精简版查询，获取必要字段
+            query = (
+                "query Content($id: ID!) {\n"
+                "  ppvContent(id: $id) {\n"
+                "    id\n"
+                "    title\n"
+                "    description\n"
+                "    duration\n"
+                "    makerReleasedAt\n"
+                "    packageImage { largeUrl mediumUrl __typename }\n"
+                "    sampleImages { number imageUrl largeImageUrl __typename }\n"
+                "    maker { id name __typename }\n"
+                "    label { id name __typename }\n"
+                "    genres { id name __typename }\n"
+                "    makerContentId\n"
+                "    __typename\n"
+                "  }\n"
+                "  reviewSummary(contentId: $id) { average total __typename }\n"
+                "}"
+            )
+
+            payload = {
+                "operationName": "Content",
+                "query": query,
+                "variables": {"id": content_id}
+            }
+
+            session = self.create_session()
+            # GraphQL 需要JSON头与来源
+            session.headers.update({
+                'Accept': 'application/graphql-response+json, application/json',
+                'Content-Type': 'application/json',
+                'Origin': 'https://video.dmm.co.jp',
+                'Referer': 'https://video.dmm.co.jp/'
+            })
+
+            resp = session.post(graphql_url, data=json.dumps(payload), timeout=20)
+            if resp.status_code != 200:
+                self.logger.warning(f"GraphQL 请求失败，状态码: {resp.status_code}")
+                return None
+
+            data = resp.json()
+            content = (data or {}).get('data', {}).get('ppvContent')
+            if not content:
+                self.logger.info("GraphQL 无内容返回")
+                return None
+
+            # 映射到统一结构
+            url = self._video_dmm_url(content_id)
+            result = {
+                "source": "fanza",
+                "id": movie_id,
+                "url": url,
+                "title": content.get("title") or ""
+            }
+
+            # 日期
+            maker_released_at = content.get("makerReleasedAt") or ""
+            if maker_released_at:
+                result["release_date"] = maker_released_at.split("T")[0].replace("/", "-")
+
+            # 时长（单位：分钟）
+            duration_sec = content.get("duration")
+            if isinstance(duration_sec, int) and duration_sec > 0:
+                minutes = str(int(round(duration_sec / 60)))
+                result["duration"] = minutes + "分钟"
+
+            # 演员：该接口对素人作多为空，保持兼容
+            actresses = []
+            if actresses:
+                result["actresses"] = actresses
+
+            # 制作商/发行商
+            maker = (content.get("maker") or {}).get("name")
+            if maker:
+                result["maker"] = maker
+            label_name = (content.get("label") or {}).get("name")
+            if label_name:
+                result["label"] = label_name
+
+            # 品番
+            maker_content_id = content.get("makerContentId")
+            if maker_content_id:
+                result["product_code"] = maker_content_id
+
+            # 类型/标签
+            genres = [g.get("name") for g in (content.get("genres") or []) if g.get("name")]
+            if genres:
+                result["genres"] = genres
+
+            # 封面与预览图
+            package_image = content.get("packageImage") or {}
+            cover = package_image.get("largeUrl") or package_image.get("mediumUrl")
+            if cover:
+                result["cover"] = cover
+
+            thumbs = []
+            for img in (content.get("sampleImages") or []):
+                large = img.get("largeImageUrl") or img.get("imageUrl")
+                if large:
+                    thumbs.append(large)
+            if thumbs:
+                result["thumbnails"] = thumbs
+
+            # 评分
+            review = (data or {}).get('data', {}).get('reviewSummary') or {}
+            average = review.get('average')
+            if average is not None:
+                result["rating"] = str(average)
+
+            # 简介
+            desc = content.get("description")
+            if desc:
+                # 去掉可能的 <br>
+                result["summary"] = re.sub(r'<br\s*/?>', '\n', desc).strip()
+
+            self.logger.info("通过 GraphQL 成功获取详情")
+            return result
+
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"GraphQL 请求异常: {str(e)}")
+            return None
+        except Exception as e:
+            self.logger.error(f"GraphQL 解析异常: {str(e)}")
+            return None

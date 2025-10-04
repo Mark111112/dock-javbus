@@ -200,43 +200,121 @@
                 
                 {% if movie.summary %}
                 <div class="mb-3">
-                    <strong>Summary:</strong>
-                    <p>{{ movie.summary }}</p>
-                    {% if movie.translated_summary %}
-                    <div class="card bg-light">
-                        <div class="card-body">
-                            <strong>译文简介:</strong>
-                            <p>{{ movie.translated_summary }}</p>
-                        </div>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <strong>Summary:</strong>
+                        <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#summaryContent" aria-expanded="false" aria-controls="summaryContent">
+                            <span class="summary-toggle-text">展开</span>
+                            <i class="bi bi-chevron-down summary-toggle-icon"></i>
+                        </button>
                     </div>
-                    {% else %}
-                    <div id="translated-summary-container" class="card bg-light" style="display: none;">
-                        <div class="card-body">
-                            <strong>译文简介:</strong>
-                            <p id="translated-summary-text"></p>
+                    <div class="collapse" id="summaryContent">
+                        <div style="white-space: pre-line;">{{ movie.summary }}</div>
+                        {% if movie.translated_summary %}
+                        <div class="card bg-light mt-2">
+                            <div class="card-body">
+                                <strong>译文简介:</strong>
+                                <div style="white-space: pre-line;">{{ movie.translated_summary }}</div>
+                            </div>
                         </div>
+                        {% else %}
+                        <div id="translated-summary-container" class="card bg-light mt-2" style="display: none;">
+                            <div class="card-body">
+                                <strong>译文简介:</strong>
+                                <div id="translated-summary-text" style="white-space: pre-line;"></div>
+                            </div>
+                        </div>
+                        {% endif %}
+                        
+                        {% if movie.user_reviews and movie.user_reviews|length > 0 %}
+                        <div class="mt-3">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <strong>用户评价 ({{ movie.user_reviews|length }}条):</strong>
+                                <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#userReviewsContent" aria-expanded="false" aria-controls="userReviewsContent">
+                                    <span class="reviews-toggle-text">展开</span>
+                                    <i class="bi bi-chevron-down reviews-toggle-icon"></i>
+                                </button>
+                            </div>
+                            <div class="collapse" id="userReviewsContent">
+                                {% for review in movie.user_reviews %}
+                                <div class="card mt-2">
+                                    <div class="card-body">
+                                        <div class="d-flex justify-content-between align-items-start mb-2">
+                                            <div>
+                                                {% if review.title %}
+                                                <h6 class="card-title mb-1">{{ review.title }}</h6>
+                                                {% endif %}
+                                                {% if review.rating %}
+                                                <span class="badge bg-warning me-2">评分: {{ review.rating }}</span>
+                                                {% endif %}
+                                            </div>
+                                            <div class="text-muted small">
+                                                {% if review.reviewer %}
+                                                <div>评价者: {{ review.reviewer }}</div>
+                                                {% endif %}
+                                                {% if review.post_date %}
+                                                <div>{{ review.post_date }}</div>
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                        {% if review.comment %}
+                                        <div class="card-text" style="white-space: pre-line;">{{ review.comment }}</div>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        {% endif %}
                     </div>
-                    {% endif %}
                 </div>
                 {% elif not has_summary %}
                 <!-- Summary loading placeholder -->
                 <div class="mb-3" id="summary-loading-container">
-                    <strong>Summary:</strong>
-                    <div class="d-flex align-items-center mt-2">
-                        <div class="spinner-border spinner-border-sm text-primary me-2" role="status">
-                            <span class="visually-hidden">Loading...</span>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <strong>Summary:</strong>
+                        <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#summaryContent" aria-expanded="false" aria-controls="summaryContent">
+                            <span class="summary-toggle-text">展开</span>
+                            <i class="bi bi-chevron-down summary-toggle-icon"></i>
+                        </button>
+                    </div>
+                    <div class="collapse" id="summaryContent">
+                        <div class="d-flex align-items-center mt-2">
+                            <div class="spinner-border spinner-border-sm text-primary me-2" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <span>Loading summary from Provider...</span>
                         </div>
-                        <span>Loading summary from Provider...</span>
                     </div>
                 </div>
                 <!-- Summary will be loaded here -->
                 <div class="mb-3" id="summary-container" style="display: none;">
-                    <strong>Summary:</strong>
-                    <p id="summary-text"></p>
-                    <div id="async-translated-summary-container" class="card bg-light" style="display: none;">
-                        <div class="card-body">
-                            <strong>译文简介:</strong>
-                            <p id="async-translated-summary-text"></p>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <strong>Summary:</strong>
+                        <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#summaryContent" aria-expanded="false" aria-controls="summaryContent">
+                            <span class="summary-toggle-text">展开</span>
+                            <i class="bi bi-chevron-down summary-toggle-icon"></i>
+                        </button>
+                    </div>
+                    <div class="collapse" id="summaryContent">
+                        <div id="summary-text" style="white-space: pre-line;"></div>
+                        <div id="async-translated-summary-container" class="card bg-light mt-2" style="display: none;">
+                            <div class="card-body">
+                                <strong>译文简介:</strong>
+                                <div id="async-translated-summary-text" style="white-space: pre-line;"></div>
+                            </div>
+                        </div>
+                        <!-- User reviews will be loaded here if available -->
+                        <div id="async-user-reviews-container" class="mt-3" style="display: none;">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <strong id="async-user-reviews-title">用户评价:</strong>
+                                <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#asyncUserReviewsContent" aria-expanded="false" aria-controls="asyncUserReviewsContent">
+                                    <span class="async-reviews-toggle-text">展开</span>
+                                    <i class="bi bi-chevron-down async-reviews-toggle-icon"></i>
+                                </button>
+                            </div>
+                            <div class="collapse" id="asyncUserReviewsContent">
+                                <div id="async-user-reviews-content"></div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -618,6 +696,11 @@
                             // Hide the button only if we have both title and summary translated
                             translateBtn.style.display = 'none';
                         }
+                    }
+                    
+                    // If there are user reviews, load them
+                    if (data.user_reviews && data.user_reviews.length > 0) {
+                        loadUserReviews(data.user_reviews);
                     }
                 } else {
                     // Show no summary available message
@@ -1212,5 +1295,99 @@
             alert('加入片库请求失败，请重试');
         });
     };
+
+    // 折叠/展开功能
+    document.addEventListener('DOMContentLoaded', function() {
+        // 处理 Summary 折叠/展开
+        const summaryCollapse = document.getElementById('summaryContent');
+        if (summaryCollapse) {
+            summaryCollapse.addEventListener('show.bs.collapse', function() {
+                const toggleText = document.querySelector('.summary-toggle-text');
+                const toggleIcon = document.querySelector('.summary-toggle-icon');
+                if (toggleText) toggleText.textContent = '收起';
+                if (toggleIcon) toggleIcon.className = 'bi bi-chevron-up';
+            });
+            
+            summaryCollapse.addEventListener('hide.bs.collapse', function() {
+                const toggleText = document.querySelector('.summary-toggle-text');
+                const toggleIcon = document.querySelector('.summary-toggle-icon');
+                if (toggleText) toggleText.textContent = '展开';
+                if (toggleIcon) toggleIcon.className = 'bi bi-chevron-down';
+            });
+        }
+
+        // 处理用户评价折叠/展开
+        const reviewsCollapse = document.getElementById('userReviewsContent');
+        if (reviewsCollapse) {
+            reviewsCollapse.addEventListener('show.bs.collapse', function() {
+                const toggleText = document.querySelector('.reviews-toggle-text');
+                const toggleIcon = document.querySelector('.reviews-toggle-icon');
+                if (toggleText) toggleText.textContent = '收起';
+                if (toggleIcon) toggleIcon.className = 'bi bi-chevron-up';
+            });
+            
+            reviewsCollapse.addEventListener('hide.bs.collapse', function() {
+                const toggleText = document.querySelector('.reviews-toggle-text');
+                const toggleIcon = document.querySelector('.reviews-toggle-icon');
+                if (toggleText) toggleText.textContent = '展开';
+                if (toggleIcon) toggleIcon.className = 'bi bi-chevron-down';
+            });
+        }
+
+        // 处理异步用户评价折叠/展开
+        const asyncReviewsCollapse = document.getElementById('asyncUserReviewsContent');
+        if (asyncReviewsCollapse) {
+            asyncReviewsCollapse.addEventListener('show.bs.collapse', function() {
+                const toggleText = document.querySelector('.async-reviews-toggle-text');
+                const toggleIcon = document.querySelector('.async-reviews-toggle-icon');
+                if (toggleText) toggleText.textContent = '收起';
+                if (toggleIcon) toggleIcon.className = 'bi bi-chevron-up';
+            });
+            
+            asyncReviewsCollapse.addEventListener('hide.bs.collapse', function() {
+                const toggleText = document.querySelector('.async-reviews-toggle-text');
+                const toggleIcon = document.querySelector('.async-reviews-toggle-icon');
+                if (toggleText) toggleText.textContent = '展开';
+                if (toggleIcon) toggleIcon.className = 'bi bi-chevron-down';
+            });
+        }
+    });
+
+    // 动态加载用户评价的函数
+    function loadUserReviews(userReviews) {
+        if (!userReviews || userReviews.length === 0) return;
+        
+        const container = document.getElementById('async-user-reviews-container');
+        const title = document.getElementById('async-user-reviews-title');
+        const content = document.getElementById('async-user-reviews-content');
+        
+        if (container && title && content) {
+            title.textContent = `用户评价 (${userReviews.length}条):`;
+            
+            let reviewsHTML = '';
+            userReviews.forEach(review => {
+                reviewsHTML += `
+                    <div class="card mt-2">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-start mb-2">
+                                <div>
+                                    ${review.title ? `<h6 class="card-title mb-1">${review.title}</h6>` : ''}
+                                    ${review.rating ? `<span class="badge bg-warning me-2">评分: ${review.rating}</span>` : ''}
+                                </div>
+                                <div class="text-muted small">
+                                    ${review.reviewer ? `<div>评价者: ${review.reviewer}</div>` : ''}
+                                    ${review.post_date ? `<div>${review.post_date}</div>` : ''}
+                                </div>
+                            </div>
+                            ${review.comment ? `<div class="card-text" style="white-space: pre-line;">${review.comment}</div>` : ''}
+                        </div>
+                    </div>
+                `;
+            });
+            
+            content.innerHTML = reviewsHTML;
+            container.style.display = 'block';
+        }
+    }
 </script>
 {% endblock %} 

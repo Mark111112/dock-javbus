@@ -276,47 +276,17 @@ def get_movie_summary(movie_id):
         try:
             # 加载爬虫
             scraper = load_scraper(scraper_name)
-            
-            # 获取爬虫类型
-            scraper_type = SCRAPER_TYPES.get(scraper_name, 'search_first')
-            
-            # 获取电影URL
-            if scraper_type == 'direct_access':
-                # 直接访问类型
-                url = scraper.get_movie_url(movie_id)
-                if url:
-                    logging.info(f"直接访问详情页: {url}")
-                    urls = [url]
-                else:
-                    # 如果直接构建URL失败，尝试搜索
-                    logging.warning(f"无法直接构建URL，尝试搜索模式")
-                    urls = scraper.search_movie(movie_id)
-            else:
-                # 搜索优先类型
-                urls = scraper.search_movie(movie_id)
-            
-            if not urls:
+
+            # 统一通过爬虫的 get_movie_info 获取信息（内部自行处理直连/搜索/回退）
+            movie_info = scraper.get_movie_info(movie_id)
+
+            if not movie_info:
                 logging.error(f"未找到影片: {movie_id}")
                 return None
-            
-            # 获取第一个结果的详情
-            url = urls[0]
-            soup = scraper.get_page(url)
-            
-            if not soup:
-                logging.error(f"无法获取页面: {url}")
-                return None
-            
-            # 提取影片信息
-            movie_info = scraper.extract_info_from_page(soup, movie_id, url)
-            
-            if not movie_info:
-                logging.error(f"无法提取影片信息: {url}")
-                return None
-            
-            # 标记来源
-            movie_info['source'] = scraper_name
-            
+
+            # 标记来源（若爬虫内部已设置，以外部标记为准）
+            movie_info['source'] = movie_info.get('source') or scraper_name
+
             return movie_info
             
         except Exception as e:

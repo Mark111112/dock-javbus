@@ -1231,8 +1231,9 @@ def get_movie_data(movie_id):
     # Get the caller function name
     caller_function = sys._getframe().f_back.f_code.co_name
     
-    # Try to get from database first with a shorter expiration time to ensure data is fresh
-    movie_data = db.get_movie(movie_id, max_age=1)  # 1 day expiration to ensure frequent updates
+    # Try to get from database first; relax expiry for favorites page
+    max_age_days = 7300  # 20 years for all callers; use explicit refresh to update
+    movie_data = db.get_movie(movie_id, max_age=max_age_days)
     
     # Check if it's likely an uncensored movie based on ID pattern or if data is incomplete
     is_likely_uncensored = bool(re.search(r'_\d+$', movie_id))  # IDs like xxx_001 are often uncensored
@@ -1434,6 +1435,7 @@ def format_movie_data(movie_data):
         "genres": movie_data.get("genres", []),  # Add full genres objects
         "summary": movie_data.get("description", ""),
         "translated_summary": movie_data.get("translated_description", ""),
+        "user_reviews": movie_data.get("user_reviews", []),  # Add user reviews
         "samples": movie_data.get("samples", []),  # Add samples
         "actors": [],
         "magnet_links": [],
