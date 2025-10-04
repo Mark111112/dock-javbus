@@ -427,15 +427,28 @@ class FanzaScraper(BaseScraper):
                     priority += 10000  # 最高优先级
                     self.logger.info(f"找到完全匹配的cid: {cid} == {clean_id}")
                 
-                # 6.2 精确匹配：检查label和number是否都匹配
+                # 6.1.5 纯净匹配：优先选择没有后缀的CID（如ssni314而不是ssni314bod）
                 elif label_part and number_part:
+                    # 检查是否是纯净的label+number格式（没有额外后缀）
+                    pure_pattern = f"^{label_part}{number_part}$"
+                    if re.match(pure_pattern, cid):
+                        priority += 8000  # 很高优先级，仅次于完全匹配
+                        self.logger.info(f"找到纯净匹配的cid: {cid} == {label_part}{number_part}")
+                
+                # 6.2 精确匹配：检查label和number是否都匹配
+                if label_part and number_part:
                     # 提取cid中的label和number部分
-                    cid_label_match = re.search(r'^([a-z]+)', cid)
-                    cid_number_match = re.search(r'(\d+)', cid)
+                    # 修改正则表达式以处理数字开头的CID（如1sdmf002）
+                    cid_label_match = re.search(r'([a-z]+)', cid)
+                    cid_number_match = re.search(r'[a-z]+(\d+)', cid)
                     
                     if cid_label_match and cid_number_match:
                         cid_label = cid_label_match.group(1)
                         cid_number = cid_number_match.group(1)
+                        
+                        # 调试信息
+                        self.logger.info(f"分析CID: {cid}, 提取的label: {cid_label}, number: {cid_number}")
+                        self.logger.info(f"目标label: {label_part}, number: {number_part}")
                         
                         # 如果label和number都匹配
                         if cid_label == label_part and cid_number == number_part:
@@ -451,7 +464,7 @@ class FanzaScraper(BaseScraper):
                             self.logger.info(f"找到number匹配: {cid_number} == {number_part}")
                 
                 # 6.3 部分匹配：检查是否包含厂商代号
-                elif label_part and label_part in cid:
+                if label_part and label_part in cid:
                     priority += 100
                     
             # 7. 检查video.dmm.co.jp的id参数匹配度
@@ -487,10 +500,22 @@ class FanzaScraper(BaseScraper):
         sorted_urls = sorted(urls, key=get_priority, reverse=True)
         
         # 记录排序结果用于调试
-        self.logger.info(f"搜索结果排序（前5个）:")
-        for i, url in enumerate(sorted_urls[:5]):
+        self.logger.info(f"搜索结果排序（前10个）:")
+        for i, url in enumerate(sorted_urls[:10]):
             priority = get_priority(url)
             self.logger.info(f"  {i+1}. 优先级={priority}, URL={url}")
+        
+        # 特别检查是否包含目标CID
+        target_cids = [f"cid={clean_id.lower()}", f"cid=1{label_part}{number_part}"]
+        for target_cid in target_cids:
+            matching_urls = [url for url in sorted_urls if target_cid in url.lower()]
+            if matching_urls:
+                self.logger.info(f"找到目标CID {target_cid} 的URL: {matching_urls[0]}")
+                # 检查这个URL的优先级
+                target_priority = get_priority(matching_urls[0])
+                self.logger.info(f"目标URL优先级: {target_priority}")
+            else:
+                self.logger.info(f"未找到目标CID {target_cid} 的URL")
         
         # 去除重复URL
         unique_urls = []
@@ -821,7 +846,7 @@ class FanzaScraper(BaseScraper):
         return result 
 
     def _fetch_user_reviews_from_review_page(self, movie_id, movie_data):
-        """从专门的用户评价页面获取用户评价"""
+        """从专门的用户评价页面获取用户评价（支持多页爬取）"""
         try:
             # 从影片数据中提取cid
             cid = None
@@ -841,208 +866,232 @@ class FanzaScraper(BaseScraper):
                 return []
             
             # 构建评价页面URL
-            review_url = f"https://www.dmm.co.jp/mono/dvd/-/detail/review/=/cid={cid}/"
-            self.logger.info(f"尝试获取用户评价: {review_url}")
+            base_review_url = f"https://www.dmm.co.jp/mono/dvd/-/detail/review/=/cid={cid}/"
+            self.logger.info(f"尝试获取用户评价: {base_review_url}")
             
-            # 获取评价页面
+            # 获取所有页面的评价
+            all_user_reviews = []
+            page = 1
+            max_pages = 10  # 限制最大页数，避免无限循环
             session = self.create_session()
-            response = session.get(review_url, timeout=15)
             
-            if response.status_code != 200:
-                self.logger.warning(f"评价页面请求失败，状态码: {response.status_code}")
-                return []
-            
-            # 解析评价页面
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # 检查是否有评价内容
-            review_units = soup.select("li.dcd-review__unit")
-            if not review_units:
-                self.logger.info(f"未找到用户评价: {movie_id}")
-                return []
-            
-            user_reviews = []
-            for unit in review_units:
-                try:
-                    # 提取评价标题
-                    title_elem = unit.select_one("span.dcd-review__unit__title")
-                    title = title_elem.get_text().strip() if title_elem else ""
-                    
-                    # 提取评价内容 - 使用更精确的方法
-                    comment_parts = []
-                    
-                    # 1. 首先提取所有可见的comment div（这是最可靠的方法）
-                    comment_elems = unit.select("div.dcd-review__unit__comment")
-                    for comment_elem in comment_elems:
-                        # 处理HTML中的<br>标签，转换为换行符
-                        comment_html = str(comment_elem)
-                        # 将<br>和<br/>标签替换为换行符
-                        import re
-                        comment_html = re.sub(r'<br\s*/?>', '\n', comment_html)
-                        # 然后提取文本内容
-                        comment_text = BeautifulSoup(comment_html, 'html.parser').get_text().strip()
+            while page <= max_pages:
+                # 构建当前页面的URL
+                if page == 1:
+                    page_url = base_review_url
+                else:
+                    page_url = f"{base_review_url}?paging={page}&sort=value_desc#review_anchor"
+                
+                self.logger.info(f"获取第 {page} 页评价: {page_url}")
+                
+                # 获取当前页面
+                response = session.get(page_url, timeout=15)
+                if response.status_code != 200:
+                    self.logger.warning(f"第 {page} 页请求失败，状态码: {response.status_code}")
+                    break
+                
+                # 解析当前页面
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                # 检查是否有评价内容
+                review_units = soup.select("li.dcd-review__unit")
+                if not review_units:
+                    self.logger.info(f"第 {page} 页没有找到评价，停止爬取")
+                    break
+                
+                self.logger.info(f"第 {page} 页找到 {len(review_units)} 条评价")
+                
+                # 处理当前页面的评价
+                for unit in review_units:
+                    try:
+                        # 提取评价标题
+                        title_elem = unit.select_one("span.dcd-review__unit__title")
+                        title = title_elem.get_text().strip() if title_elem else ""
                         
-                        # 只保留实际的评价内容，过滤掉警告和导航信息
-                        if (comment_text and 
-                            len(comment_text) > 20 and  # 内容足够长
-                            not comment_text.startswith("※このレビューは作品の内容に関する記述が含まれています。") and
-                            "レビューを表示する" not in comment_text and
-                            "参考になりましたか" not in comment_text and
-                            "違反を報告する" not in comment_text and
-                            "投票しています" not in comment_text and
-                            "このレビューは参考になりましたか" not in comment_text and
-                            "不適切なレビューを報告する" not in comment_text and
-                            "以下の内容に該当するレビューは報告できます" not in comment_text and
-                            "個人情報の公開・漏洩" not in comment_text and
-                            "特定の個人や企業等への嫌がらせ" not in comment_text and
-                            "差別的な表現の使用" not in comment_text and
-                            "無関係な宣伝スパム" not in comment_text and
-                            "明らかに事実と異なる虚偽の主張" not in comment_text and
-                            "報告後、内容を確認し" not in comment_text and
-                            "より良いサービス環境のため" not in comment_text and
-                            "キャンセル" not in comment_text and
-                            "報告する" not in comment_text and
-                            "エラーが発生しました" not in comment_text and
-                            "再度時間をおいてお試しください" not in comment_text and
-                            "購入・利用済み" not in comment_text and
-                            "ビデオ(動画)" not in comment_text):
-                            comment_parts.append(comment_text)
-                    
-                    # 2. 如果标准方法没有找到内容，尝试查找可能被折叠的内容
-                    if not comment_parts:
-                        # 查找可能包含评价内容的div，但排除已知的导航元素
-                        excluded_classes = [
-                            'dcd-review__unit__bottom',
-                            'dcd-review__unit__voted', 
-                            'dcd-review__unit__evaluate',
-                            'dcd-review__unit__report',
-                            'dcd-review__report-modal',
-                            'dcd-review__modtogglelink-open'
-                        ]
+                        # 提取评价内容 - 使用更精确的方法
+                        comment_parts = []
                         
-                        # 查找所有div，但排除导航相关的
-                        all_divs = unit.select("div")
-                        for div in all_divs:
-                            # 检查div的class是否在排除列表中
-                            div_classes = div.get("class", [])
-                            if any(excluded_class in div_classes for excluded_class in excluded_classes):
-                                continue
-                                
+                        # 1. 首先提取所有可见的comment div（这是最可靠的方法）
+                        comment_elems = unit.select("div.dcd-review__unit__comment")
+                        for comment_elem in comment_elems:
                             # 处理HTML中的<br>标签，转换为换行符
-                            div_html = str(div)
-                            div_html = re.sub(r'<br\s*/?>', '\n', div_html)
-                            div_text = BeautifulSoup(div_html, 'html.parser').get_text().strip()
+                            comment_html = str(comment_elem)
+                            # 将<br>和<br/>标签替换为换行符
+                            import re
+                            comment_html = re.sub(r'<br\s*/?>', '\n', comment_html)
+                            # 然后提取文本内容
+                            comment_text = BeautifulSoup(comment_html, 'html.parser').get_text().strip()
                             
-                            if (div_text and 
-                                len(div_text) > 30 and  # 内容足够长
-                                "レビューを表示する" not in div_text and
-                                "参考になりましたか" not in div_text and
-                                "違反を報告する" not in div_text and
-                                "投票しています" not in div_text and
-                                "このレビューは参考になりましたか" not in div_text and
-                                "不適切なレビューを報告する" not in div_text and
-                                "以下の内容に該当するレビューは報告できます" not in div_text and
-                                "個人情報の公開・漏洩" not in div_text and
-                                "特定の個人や企業等への嫌がらせ" not in div_text and
-                                "差別的な表現の使用" not in div_text and
-                                "無関係な宣伝スパム" not in div_text and
-                                "明らかに事実と異なる虚偽の主張" not in div_text and
-                                "報告後、内容を確認し" not in div_text and
-                                "より良いサービス環境のため" not in div_text and
-                                "キャンセル" not in div_text and
-                                "報告する" not in div_text and
-                                "エラーが発生しました" not in div_text and
-                                "再度時間をおいてお試しください" not in div_text and
-                                "購入・利用済み" not in div_text and
-                                "ビデオ(動画)" not in div_text and
-                                not div_text.startswith("※") and
-                                div_text not in comment_parts):
-                                comment_parts.append(div_text)
-                    
-                    # 3. 如果还是没有找到内容，尝试从整个unit中智能提取
-                    if not comment_parts:
-                        unit_text = unit.get_text()
-                        lines = unit_text.split('\n')
-                        content_lines = []
-                        in_content = False
+                            # 只保留实际的评价内容，过滤掉警告和导航信息
+                            if (comment_text and 
+                                len(comment_text) > 20 and  # 内容足够长
+                                not comment_text.startswith("※このレビューは作品の内容に関する記述が含まれています。") and
+                                "レビューを表示する" not in comment_text and
+                                "参考になりましたか" not in comment_text and
+                                "違反を報告する" not in comment_text and
+                                "投票しています" not in comment_text and
+                                "このレビューは参考になりましたか" not in comment_text and
+                                "不適切なレビューを報告する" not in comment_text and
+                                "以下の内容に該当するレビューは報告できます" not in comment_text and
+                                "個人情報の公開・漏洩" not in comment_text and
+                                "特定の個人や企業等への嫌がらせ" not in comment_text and
+                                "差別的な表現の使用" not in comment_text and
+                                "無関係な宣伝スパム" not in comment_text and
+                                "明らかに事実と異なる虚偽の主張" not in comment_text and
+                                "報告後、内容を確認し" not in comment_text and
+                                "より良いサービス環境のため" not in comment_text and
+                                "キャンセル" not in comment_text and
+                                "報告する" not in comment_text and
+                                "エラーが発生しました" not in comment_text and
+                                "再度時間をおいてお試しください" not in comment_text and
+                                "購入・利用済み" not in comment_text and
+                                "ビデオ(動画)" not in comment_text):
+                                comment_parts.append(comment_text)
                         
-                        for line in lines:
-                            line = line.strip()
-                            if not line:
-                                continue
+                        # 2. 如果标准方法没有找到内容，尝试查找可能被折叠的内容
+                        if not comment_parts:
+                            # 查找可能包含评价内容的div，但排除已知的导航元素
+                            excluded_classes = [
+                                'dcd-review__unit__bottom',
+                                'dcd-review__unit__voted', 
+                                'dcd-review__unit__evaluate',
+                                'dcd-review__unit__report',
+                                'dcd-review__report-modal',
+                                'dcd-review__modtogglelink-open'
+                            ]
+                            
+                            # 查找所有div，但排除导航相关的
+                            all_divs = unit.select("div")
+                            for div in all_divs:
+                                # 检查div的class是否在排除列表中
+                                div_classes = div.get("class", [])
+                                if any(excluded_class in div_classes for excluded_class in excluded_classes):
+                                    continue
+                                    
+                                # 处理HTML中的<br>标签，转换为换行符
+                                div_html = str(div)
+                                div_html = re.sub(r'<br\s*/?>', '\n', div_html)
+                                div_text = BeautifulSoup(div_html, 'html.parser').get_text().strip()
                                 
-                            # 开始收集内容（在标题之后）
-                            if title and title in line:
-                                in_content = True
-                                continue
-                                
-                            # 停止收集内容（遇到评价者信息或导航元素）
-                            if (reviewer and reviewer in line) or \
-                               "投票しています" in line or \
-                               "参考になりましたか" in line or \
-                               "違反を報告する" in line:
-                                break
-                                
-                            # 收集内容行
-                            if in_content and len(line) > 10:
-                                content_lines.append(line)
+                                if (div_text and 
+                                    len(div_text) > 30 and  # 内容足够长
+                                    "レビューを表示する" not in div_text and
+                                    "参考になりましたか" not in div_text and
+                                    "違反を報告する" not in div_text and
+                                    "投票しています" not in div_text and
+                                    "このレビューは参考になりましたか" not in div_text and
+                                    "不適切なレビューを報告する" not in div_text and
+                                    "以下の内容に該当するレビューは報告できます" not in div_text and
+                                    "個人情報の公開・漏洩" not in div_text and
+                                    "特定の個人や企業等への嫌がらせ" not in div_text and
+                                    "差別的な表現の使用" not in div_text and
+                                    "無関係な宣伝スパム" not in div_text and
+                                    "明らかに事実と異なる虚偽の主張" not in div_text and
+                                    "報告後、内容を確認し" not in div_text and
+                                    "より良いサービス環境のため" not in div_text and
+                                    "キャンセル" not in div_text and
+                                    "報告する" not in div_text and
+                                    "エラーが発生しました" not in div_text and
+                                    "再度時間をおいてお試しください" not in div_text and
+                                    "購入・利用済み" not in div_text and
+                                    "ビデオ(動画)" not in div_text and
+                                    not div_text.startswith("※") and
+                                    div_text not in comment_parts):
+                                    comment_parts.append(div_text)
                         
-                        if content_lines:
-                            comment_parts.append('\n'.join(content_lines))
-                    
-                    # 合并所有评论内容，去重并保持顺序
-                    seen = set()
-                    unique_parts = []
-                    for part in comment_parts:
-                        if part not in seen and len(part.strip()) > 10:
-                            seen.add(part)
-                            unique_parts.append(part)
-                    
-                    comment = "\n\n".join(unique_parts) if unique_parts else ""
-                    
-                    # 提取评分
-                    rating_elem = unit.select_one("span[class*='dcd-review-rating']")
-                    rating = ""
-                    if rating_elem:
-                        class_name = " ".join(rating_elem.get("class", []))
-                        rating_match = re.search(r'dcd-review-rating-(\d+)', class_name)
-                        if rating_match:
-                            rating_value = int(rating_match.group(1))
-                            rating = f"{rating_value/10:.1f}" if rating_value > 0 else ""
-                    
-                    # 提取评价者信息
-                    reviewer_elem = unit.select_one("span.dcd-review__unit__reviewer a")
-                    reviewer = reviewer_elem.get_text().strip() if reviewer_elem else ""
-                    
-                    # 提取发布日期
-                    date_elem = unit.select_one("span.dcd-review__unit__postdate")
-                    post_date = date_elem.get_text().strip() if date_elem else ""
-                    
-                    # 只有当标题或内容存在时才添加
-                    if title or comment:
-                        review_data = {
-                            "title": title,
-                            "comment": comment,
-                            "rating": rating,
-                            "reviewer": reviewer,
-                            "post_date": post_date
-                        }
-                        user_reviews.append(review_data)
+                        # 3. 如果还是没有找到内容，尝试从整个unit中智能提取
+                        if not comment_parts:
+                            unit_text = unit.get_text()
+                            lines = unit_text.split('\n')
+                            content_lines = []
+                            in_content = False
+                            
+                            for line in lines:
+                                line = line.strip()
+                                if not line:
+                                    continue
+                                    
+                                # 开始收集内容（在标题之后）
+                                if title and title in line:
+                                    in_content = True
+                                    continue
+                                    
+                                # 停止收集内容（遇到评价者信息或导航元素）
+                                if (reviewer and reviewer in line) or \
+                                   "投票しています" in line or \
+                                   "参考になりましたか" in line or \
+                                   "違反を報告する" in line:
+                                    break
+                                    
+                                # 收集内容行
+                                if in_content and len(line) > 10:
+                                    content_lines.append(line)
+                            
+                            if content_lines:
+                                comment_parts.append('\n'.join(content_lines))
                         
-                except Exception as e:
-                    self.logger.warning(f"解析单个评价时出错: {str(e)}")
-                    continue
+                        # 合并所有评论内容，去重并保持顺序
+                        seen = set()
+                        unique_parts = []
+                        for part in comment_parts:
+                            if part not in seen and len(part.strip()) > 10:
+                                seen.add(part)
+                                unique_parts.append(part)
+                        
+                        comment = "\n\n".join(unique_parts) if unique_parts else ""
+                        
+                        # 提取评分
+                        rating_elem = unit.select_one("span[class*='dcd-review-rating']")
+                        rating = ""
+                        if rating_elem:
+                            class_name = " ".join(rating_elem.get("class", []))
+                            rating_match = re.search(r'dcd-review-rating-(\d+)', class_name)
+                            if rating_match:
+                                rating_value = int(rating_match.group(1))
+                                rating = f"{rating_value/10:.1f}" if rating_value > 0 else ""
+                        
+                        # 提取评价者信息
+                        reviewer_elem = unit.select_one("span.dcd-review__unit__reviewer a")
+                        reviewer = reviewer_elem.get_text().strip() if reviewer_elem else ""
+                        
+                        # 提取发布日期
+                        date_elem = unit.select_one("span.dcd-review__unit__postdate")
+                        post_date = date_elem.get_text().strip() if date_elem else ""
+                        
+                        # 只有当标题或内容存在时才添加
+                        if title or comment:
+                            review_data = {
+                                "title": title,
+                                "comment": comment,
+                                "rating": rating,
+                                "reviewer": reviewer,
+                                "post_date": post_date
+                            }
+                            all_user_reviews.append(review_data)
+                            
+                    except Exception as e:
+                        self.logger.warning(f"解析单个评价时出错: {str(e)}")
+                        continue
+                
+                # 检查是否还有下一页
+                # 查找分页链接，看是否有下一页
+                next_page_link = soup.select_one("li a[href*='paging=']")
+                if not next_page_link or page >= max_pages:
+                    self.logger.info(f"没有更多页面或达到最大页数限制，停止爬取")
+                    break
+                
+                page += 1
+                # 添加延迟，避免请求过于频繁
+                import time
+                time.sleep(1)
             
-            self.logger.info(f"成功获取 {len(user_reviews)} 条用户评价")
-            return user_reviews
+            self.logger.info(f"成功获取 {len(all_user_reviews)} 条用户评价（共 {page-1} 页）")
+            return all_user_reviews
             
         except Exception as e:
             self.logger.error(f"获取用户评价失败: {str(e)}")
             return []
 
-    # =====================
-    # video.dmm.co.jp 支持
-    # =====================
     def _build_video_dmm_id(self, movie_id):
         """构造 video.dmm.co.jp 使用的ID（如 cosx00087）"""
         label, number, _ = self.clean_movie_id(movie_id)
