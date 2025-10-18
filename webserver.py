@@ -40,6 +40,9 @@ except ImportError as e:
 # 添加URL解析库
 import urllib.parse
 import re
+import subprocess
+import uuid
+import shutil
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -118,6 +121,31 @@ DB_FILE = os.path.abspath("data/javbus.db")  # Use absolute path to avoid confus
 os.makedirs("data", exist_ok=True)
 os.makedirs("buspic/covers", exist_ok=True)
 os.makedirs("buspic/actor", exist_ok=True)
+DOWNLOAD_DIR = os.path.abspath(os.path.join("data", "downloads"))
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+DOWNLOAD_TASKS = {}
+
+def _run_ffmpeg_hls_to_mp4(task_id, m3u8_url, output_path):
+    """在后台运行 ffmpeg 将 HLS(m3u8) 保存为 MP4。"""
+    DOWNLOAD_TASKS[task_id]["status"] = "running"
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", m3u8_url,
+        "-c", "copy",
+        "-bsf:a", "aac_adtstoasc",
+        output_path
+    ]
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        _, stderr = proc.communicate()
+        if proc.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            DOWNLOAD_TASKS[task_id]["status"] = "completed"
+        else:
+            DOWNLOAD_TASKS[task_id]["status"] = "error"
+            DOWNLOAD_TASKS[task_id]["error"] = (stderr or b"").decode(errors="ignore")[:2000]
+    except Exception as e:
+        DOWNLOAD_TASKS[task_id]["status"] = "error"
+        DOWNLOAD_TASKS[task_id]["error"] = str(e)
 
 # Initialize database
 db = JavbusDatabase(db_file=DB_FILE)
@@ -783,6 +811,89 @@ def video_player(movie_id):
                               error_title="Video Player Error", 
                               error_message=error_message), 500
 
+# -----------------------------
+# 下载 MP4 相关 API
+# -----------------------------
+@app.route('/api/download_mp4', methods=['POST'])
+def api_download_mp4():
+    """启动后台任务：将 HLS(m3u8) 保存为本地 MP4。
+    JSON: { "movie_id": "IPX-123", "quality": "720p", "filename": "IPX-123.mp4" }
+    """
+    try:
+        data = request.get_json(force=True) or {}
+        movie_id = str(data.get('movie_id', '')).strip()
+        quality = data.get('quality')
+        filename = str(data.get('filename') or f"{movie_id}.mp4").strip()
+        if not movie_id:
+            return jsonify({"success": False, "message": "movie_id 必填"}), 400
+
+        # 生成 m3u8 播放地址
+        hls_url = None
+        try:
+            if CURRENT_WATCH_URL_PREFIX and video_player_adapter:
+                target_url = f"{CURRENT_WATCH_URL_PREFIX}/{movie_id}"
+                session = requests.Session()
+                session.headers.update({
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+                    "Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+                    "Referer": CURRENT_WATCH_URL_PREFIX,
+                })
+                adapter = video_player_adapter.VideoAPIAdapter(retry=3, delay=2)
+                hls_url = video_player_adapter.get_video_stream_url(target_url, session, quality)
+        except Exception as e:
+            logging.warning(f"获取 HLS 地址失败: {e}")
+
+        if not hls_url:
+            hls_url = f"{CURRENT_WATCH_URL_PREFIX}/{movie_id}"
+
+        # 检查 ffmpeg 是否可用
+        if not shutil.which('ffmpeg'):
+            return jsonify({
+                "success": False,
+                "message": "未检测到 ffmpeg，请在运行环境安装并加入 PATH 后重试"
+            }), 500
+
+        # 后台任务
+        task_id = uuid.uuid4().hex
+        safe_name = secure_filename(filename) or f"{movie_id}.mp4"
+        output_path = os.path.join(DOWNLOAD_DIR, safe_name)
+        DOWNLOAD_TASKS[task_id] = {
+            "movie_id": movie_id,
+            "m3u8": hls_url,
+            "output": output_path,
+            "status": "queued",
+            "created_at": int(time.time())
+        }
+
+        t = threading.Thread(target=_run_ffmpeg_hls_to_mp4, args=(task_id, hls_url, output_path), daemon=True)
+        t.start()
+
+        return jsonify({
+            "success": True,
+            "task_id": task_id,
+            "status": DOWNLOAD_TASKS[task_id]["status"],
+            "output_path": output_path
+        })
+    except Exception as e:
+        logging.exception("download_mp4 启动失败")
+        return jsonify({"success": False, "message": str(e)}), 500
+
+@app.route('/api/download_mp4/status/<task_id>', methods=['GET'])
+def api_download_mp4_status(task_id):
+    task = DOWNLOAD_TASKS.get(task_id)
+    if not task:
+        return jsonify({"success": False, "message": "任务不存在"}), 404
+    resp = {"success": True, **task}
+    if task.get("status") == "completed":
+        filename = os.path.basename(task.get("output"))
+        resp["download_url"] = url_for('downloaded_file', filename=filename)
+    return jsonify(resp)
+
+@app.route('/downloads/<path:filename>', methods=['GET'])
+def downloaded_file(filename):
+    return send_from_directory(DOWNLOAD_DIR, filename, as_attachment=True)
+
 @app.route('/favorites')
 def favorites():
     """Show favorites page"""
@@ -968,6 +1079,24 @@ def translate_text():
             logging.info(f"Extracted translated text: {translated_text}")
             
             if translated_text:
+                # If movie_id is provided, save the translation to database
+                if movie_id:
+                    try:
+                        # Import database functions
+                        from javbus_db import update_movie_translation
+                        
+                        if translate_summary:
+                            # Update translated summary
+                            update_movie_translation(movie_id, translated_summary=translated_text)
+                        else:
+                            # Update translated title
+                            update_movie_translation(movie_id, translated_title=translated_text)
+                        
+                        logging.info(f"Translation saved to database for movie {movie_id}")
+                    except Exception as e:
+                        logging.warning(f"Failed to save translation to database: {str(e)}")
+                        # Continue even if database save fails
+                
                 return jsonify({"status": "success", "translated_text": translated_text})
             else:
                 return jsonify({"status": "error", "message": "Could not extract translated text from API response"}), 500

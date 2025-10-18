@@ -274,6 +274,50 @@ class JavbusDatabase:
             print(f"获取影片信息错误: {e}")
             return None
     
+    def update_movie_translation(self, movie_id, translated_title=None, translated_summary=None):
+        """更新影片的翻译信息"""
+        self.ensure_connection()
+        try:
+            # 首先获取现有的影片数据
+            self.local.cursor.execute('SELECT data FROM movies WHERE id = ?', (movie_id,))
+            result = self.local.cursor.fetchone()
+            
+            if not result:
+                print(f"影片 {movie_id} 不存在")
+                return False
+            
+            # 解析现有数据
+            movie_data = json.loads(result['data'])
+            
+            # 更新翻译字段
+            if translated_title is not None:
+                movie_data['translated_title'] = translated_title
+            
+            if translated_summary is not None:
+                movie_data['translated_summary'] = translated_summary
+            
+            # 将更新后的数据转换回JSON
+            data_json = json.dumps(movie_data, ensure_ascii=False)
+            
+            # 更新数据库
+            now = int(time.time())
+            self.local.cursor.execute('''
+            UPDATE movies 
+            SET data = ?, last_updated = ?
+            WHERE id = ?
+            ''', (data_json, now, movie_id))
+            
+            self.local.conn.commit()
+            print(f"影片 {movie_id} 翻译信息已更新")
+            return True
+            
+        except sqlite3.Error as e:
+            print(f"更新影片翻译信息错误: {e}")
+            return False
+        except json.JSONDecodeError as e:
+            print(f"解析影片数据错误: {e}")
+            return False
+
     def delete_movie(self, movie_id):
         """从数据库中删除影片信息及相关关联
         
@@ -1594,4 +1638,10 @@ class JavbusDatabase:
             return True
         except sqlite3.Error as e:
             print(f"更新115云盘电影信息错误: {e}")
-            return False 
+            return False
+
+# 全局函数，用于从其他模块调用数据库操作
+def update_movie_translation(movie_id, translated_title=None, translated_summary=None):
+    """更新影片的翻译信息（全局函数）"""
+    db = JavbusDatabase()
+    return db.update_movie_translation(movie_id, translated_title, translated_summary) 

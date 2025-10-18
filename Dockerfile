@@ -19,7 +19,8 @@ WORKDIR /app
 COPY --from=builder /install /usr/local
 
 # 安装运行时依赖，尽量保持精简
-RUN apk add --no-cache libjpeg
+# 安装运行时依赖与 ffmpeg（用于下载转存 HLS 为 MP4）
+RUN apk add --no-cache libjpeg ffmpeg
 
 # 复制应用文件
 COPY *.py .

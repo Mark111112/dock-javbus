@@ -53,6 +53,11 @@
                     <a href="/video_player/{{ movie.id }}" target="_blank" class="btn btn-outline-primary">
                         <i class="bi bi-play-circle"></i> Ad-free Player
                     </a>
+
+                    <!-- 下载 MP4 按钮 -->
+                    <button id="download-mp4-btn" class="btn btn-success" data-movie-id="{{ movie.id }}">
+                        <i class="bi bi-download"></i> 下载 MP4
+                    </button>
                     
                     <!-- STRM Player button -->
                     <a href="/strm/find_video/{{ movie.id }}" class="btn btn-outline-success">
@@ -112,15 +117,25 @@
         <div class="card mb-4">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <h5 class="mb-0">{{ movie.title }}</h5>
-                {% if not movie.translated_title or not movie.translated_summary %}
-                <button class="btn btn-sm btn-outline-primary" id="translate-btn" 
-                        data-movie-id="{{ movie.id }}" 
-                        data-title="{{ movie.title }}"
-                        {% if movie.summary %}data-summary="{{ movie.summary }}"{% endif %}
-                        onclick="translateMovie(this)">
-                    <i class="bi bi-translate"></i> Translate
-                </button>
-                {% endif %}
+                <div class="btn-group" role="group">
+                    {% if not movie.translated_title or not movie.translated_summary %}
+                    <button class="btn btn-sm btn-outline-primary" id="translate-btn" 
+                            data-movie-id="{{ movie.id }}" 
+                            data-title="{{ movie.title }}"
+                            {% if movie.summary %}data-summary="{{ movie.summary }}"{% endif %}
+                            onclick="translateMovie(this)">
+                        <i class="bi bi-translate"></i> Translate
+                    </button>
+                    {% else %}
+                    <button class="btn btn-sm btn-outline-success" id="refresh-translate-btn" 
+                            data-movie-id="{{ movie.id }}" 
+                            data-title="{{ movie.title }}"
+                            {% if movie.summary %}data-summary="{{ movie.summary }}"{% endif %}
+                            onclick="refreshTranslation(this)">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh Translation
+                    </button>
+                    {% endif %}
+                </div>
             </div>
             <div class="card-body">
                 {% if movie.translated_title %}
@@ -537,6 +552,57 @@
 <script>
     // Fetch and display 115 library files for the current movie ID
     document.addEventListener('DOMContentLoaded', function() {
+        // 绑定下载 MP4 按钮
+        const dlBtn = document.getElementById('download-mp4-btn');
+        if (dlBtn) {
+            dlBtn.addEventListener('click', async function() {
+                const movieId = this.getAttribute('data-movie-id');
+                if (!movieId) return;
+                this.disabled = true;
+                const originalHTML = this.innerHTML;
+                this.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 准备中...';
+
+                try {
+                    const resp = await fetch('/api/download_mp4', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ movie_id: movieId, quality: '720p', filename: movieId + '.mp4' })
+                    });
+                    const data = await resp.json();
+                    if (!data.success) throw new Error(data.message || '启动下载失败');
+
+                    const taskId = data.task_id;
+                    this.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 下载中...';
+
+                    // 轮询状态
+                    const poll = async () => {
+                        const s = await fetch('/api/download_mp4/status/' + taskId);
+                        const st = await s.json();
+                        if (!st.success) throw new Error(st.message || '查询状态失败');
+                        if (st.status === 'completed' && st.download_url) {
+                            this.disabled = false;
+                            this.innerHTML = '<i class="bi bi-check-circle"></i> 下载完成';
+                            // 弹出下载
+                            window.open(st.download_url, '_blank');
+                            return;
+                        } else if (st.status === 'error') {
+                            this.disabled = false;
+                            this.innerHTML = originalHTML;
+                            alert('下载失败：' + (st.error || '未知错误'));
+                            return;
+                        } else {
+                            // 继续轮询
+                            setTimeout(poll, 3000);
+                        }
+                    };
+                    setTimeout(poll, 2000);
+                } catch (e) {
+                    this.disabled = false;
+                    this.innerHTML = originalHTML;
+                    alert('下载任务启动失败：' + e.message);
+                }
+            });
+        }
         // Check if we have a movie ID
         const movieId = "{{ movie.id }}";
         if (movieId) {
@@ -943,6 +1009,203 @@
         tempButton.setAttribute('data-movie-id', movieId);
         tempButton.setAttribute('data-title', originalTitle);
         translateMovie(tempButton);
+    }
+
+    function showNotification(message, type = 'info') {
+        // Create notification element
+        const notification = document.createElement('div');
+        notification.className = `alert alert-${type === 'error' ? 'danger' : type} alert-dismissible fade show position-fixed`;
+        notification.style.cssText = 'top: 20px; right: 20px; z-index: 9999; min-width: 300px;';
+        notification.innerHTML = `
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        `;
+        
+        // Add to page
+        document.body.appendChild(notification);
+        
+        // Auto remove after 5 seconds
+        setTimeout(() => {
+            if (notification.parentNode) {
+                notification.remove();
+            }
+        }, 5000);
+    }
+
+    function refreshTranslation(button) {
+        // Get data from button attributes
+        const movieId = button.getAttribute('data-movie-id');
+        const originalTitle = button.getAttribute('data-title');
+        let originalSummary = button.getAttribute('data-summary') || '';
+        
+        // If summary was loaded asynchronously, get it from the text element
+        if (!originalSummary && document.getElementById('summary-text')) {
+            originalSummary = document.getElementById('summary-text').textContent || '';
+            // Don't try to translate placeholder messages
+            if (originalSummary === 'No summary available for this movie.' || 
+                originalSummary === 'Failed to load summary. Please try again later.') {
+                originalSummary = '';
+            }
+        }
+        
+        // Disable the button to prevent multiple clicks
+        button.disabled = true;
+        button.innerHTML = '<i class="bi bi-hourglass-split"></i> Refreshing...';
+        
+        let translationPromises = [];
+        let results = {};
+        
+        // Always translate title (refresh existing translation)
+        const titlePromise = fetch('/api/translate', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                text: originalTitle,
+                movie_id: movieId
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success' && data.translated_text) {
+                results.translated_title = data.translated_text;
+                
+                // Find and update existing translated title containers
+                const existingContainers = document.querySelectorAll('[id*="translated-title"]');
+                existingContainers.forEach(container => {
+                    if (container.id === 'translated-title-container') {
+                        const textSpan = container.querySelector('#translated-title-text');
+                        if (textSpan) {
+                            textSpan.textContent = data.translated_text;
+                            container.style.display = 'block';
+                        }
+                    } else {
+                        // For other containers, update the text content directly
+                        container.textContent = data.translated_text;
+                        container.style.display = 'block';
+                    }
+                });
+                
+                // If no existing containers found, create a new one
+                if (existingContainers.length === 0) {
+                    const titleContainer = document.createElement('div');
+                    titleContainer.id = 'translated-title-container';
+                    titleContainer.className = 'mb-3 alert alert-info';
+                    titleContainer.innerHTML = '<strong>译文标题:</strong> <span id="translated-title-text"></span>';
+                    
+                    // Insert after the title
+                    const cardBody = document.querySelector('.card-body');
+                    if (cardBody) {
+                        cardBody.insertBefore(titleContainer, cardBody.firstChild);
+                        document.getElementById('translated-title-text').textContent = data.translated_text;
+                    }
+                }
+            } else {
+                throw new Error(data.message || 'Title translation failed');
+            }
+        });
+        
+        translationPromises.push(titlePromise);
+        
+        // Always translate summary if available (refresh existing translation)
+        if (originalSummary) {
+            const summaryPromise = fetch('/api/translate', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    text: originalSummary,
+                    movie_id: movieId,
+                    translate_summary: true
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success' && data.translated_text) {
+                    results.translated_summary = data.translated_text;
+                    
+                    // Find and update existing translated summary containers
+                    const existingContainers = document.querySelectorAll('[id*="translated-summary"]');
+                    let updated = false;
+                    
+                    existingContainers.forEach(container => {
+                        const textEl = container.querySelector('[id*="translated-summary-text"]') || 
+                                      container.querySelector('div[style*="white-space"]') ||
+                                      container.querySelector('.card-body div');
+                        
+                        if (textEl) {
+                            textEl.textContent = data.translated_text;
+                            container.style.display = 'block';
+                            updated = true;
+                        }
+                    });
+                    
+                    // If no existing containers found, create a new one in the summary section
+                    if (!updated) {
+                        // Find the summary content area
+                        const summaryContent = document.getElementById('summaryContent') || 
+                                             document.querySelector('.collapse');
+                        
+                        if (summaryContent) {
+                            // Create translated summary container
+                            const container = document.createElement('div');
+                            container.id = 'refreshed-translated-summary-container';
+                            container.className = 'card bg-light mt-2';
+                            
+                            const cardBody = document.createElement('div');
+                            cardBody.className = 'card-body';
+                            
+                            const strongEl = document.createElement('strong');
+                            strongEl.textContent = '译文简介:';
+                            
+                            const textEl = document.createElement('div');
+                            textEl.id = 'refreshed-translated-summary-text';
+                            textEl.style.whiteSpace = 'pre-line';
+                            textEl.textContent = data.translated_text;
+                            
+                            cardBody.appendChild(strongEl);
+                            cardBody.appendChild(textEl);
+                            container.appendChild(cardBody);
+                            
+                            // Insert into summary content
+                            summaryContent.appendChild(container);
+                        }
+                    }
+                } else {
+                    throw new Error(data.message || 'Summary translation failed');
+                }
+            });
+            
+            translationPromises.push(summaryPromise);
+        }
+        
+        // Wait for all translations to complete
+        Promise.all(translationPromises)
+        .then(() => {
+            // Re-enable the button and change text
+            button.disabled = false;
+            button.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Refresh Translation';
+            
+            // Show success message
+            showNotification('Translation refreshed successfully!', 'success');
+            
+            // Refresh the page to show updated translation from database
+            setTimeout(() => {
+                window.location.reload();
+            }, 1500); // Wait 1.5 seconds to show the success message
+        })
+        .catch(error => {
+            console.error('Translation refresh failed:', error);
+            
+            // Re-enable the button
+            button.disabled = false;
+            button.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Refresh Translation';
+            
+            // Show error message
+            showNotification('Translation refresh failed: ' + error.message, 'error');
+        });
     }
 
     document.addEventListener('DOMContentLoaded', function() {

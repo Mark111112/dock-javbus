@@ -363,7 +363,9 @@ class FanzaScraper(BaseScraper):
             all_links = soup.find_all("a", href=True)
             product_links = [
                 link for link in all_links
-                if ("cid=" in link.get("href") or "video.dmm.co.jp/av/content/?id=" in link.get("href"))
+                if ("cid=" in link.get("href") or 
+                    "video.dmm.co.jp/av/content/?id=" in link.get("href") or
+                    "video.dmm.co.jp/amateur/content/?id=" in link.get("href"))
             ]
         
         # 处理找到的链接
@@ -372,8 +374,8 @@ class FanzaScraper(BaseScraper):
                 href = link.get("href")
                 if not href:
                     continue
-                # 接受两类：cid= 详情页 或 video.dmm.co.jp 的 content 页面
-                if ("cid=" in href) or ("video.dmm.co.jp/av/content/?id=" in href):
+                # 接受三类：cid= 详情页 或 video.dmm.co.jp 的 content 页面（av或amateur）
+                if ("cid=" in href) or ("video.dmm.co.jp/av/content/?id=" in href) or ("video.dmm.co.jp/amateur/content/?id=" in href):
                     url = href
                     if not url.startswith("http"):
                         url = urljoin(self.base_url, url)
@@ -416,6 +418,12 @@ class FanzaScraper(BaseScraper):
             # 5. video.dmm.co.jp 的内容页优先级最高（可直接GraphQL）
             if "video.dmm.co.jp/av/content" in url:
                 priority += 1000
+            elif "video.dmm.co.jp/amateur/content" in url:
+                priority += 1000  # amateur内容也使用GraphQL，优先级相同
+            
+            # 5.5. 降低monthly链接的优先级（月额动画，通常不是我们想要的）
+            if "monthly/" in url:
+                priority -= 10000  # 大幅降低优先级，确保低于video.dmm.co.jp
 
             # 6. 检查URL中的cid匹配度
             cid_match = re.search(r'cid=([^/]+)', url, re.IGNORECASE)
