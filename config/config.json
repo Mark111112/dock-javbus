@@ -11,10 +11,34 @@
   },
   "cloud115": {
     "default_folder_id": "",
+    "auth_mode": "auto",
+    "token_file": "data/cloud115_token.json",
+    "request_timeout": 15,
+    "driver": {
+      "enabled": true,
+      "cookie": "",
+      "cookie_file": "data/cloud115_cookie.txt",
+      "user_agent": "Mozilla/5.0 115Browser/27.0.5.7",
+      "timeout": 15,
+      "api_urls": [
+        "https://webapi.115.com/files",
+        "http://web.api.115.com/files"
+      ],
+      "login_check_interval": 300
+    },
     "library_settings": {
       "category": "other",
       "min_file_size_mb": 200,
       "default_delay_seconds": 5
+    },
+    "alist": {
+      "enabled": true,
+      "base_url": "http://192.168.1.246:5244",
+      "root_path": "/115",
+      "username": "",
+      "password": "",
+      "timeout": 30,
+      "url_cache_seconds": 300
     }
   },
   "jellyfin": {

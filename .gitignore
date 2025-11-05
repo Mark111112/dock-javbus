@@ -20,7 +20,9 @@ var/
 .installed.cfg
 *.egg
 115/
+115server/
 nextbus/
+external/
 
 # Environment variables
 .env

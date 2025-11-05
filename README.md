@@ -11,25 +11,31 @@
 - 影片搜索与浏览
 - 在bus网站提供的元数据基础上加入了多来源的影片简介（强力！）
 - bus未收录影片的元数据刮削（kin8等）（强力！）
+- 增加了影片简介爬取功能；由于用户评价也很有趣，所以一起列入
 - 影片标题、简介自动翻译(支持多种翻译API)
 
-### 2. 视频播放
+### 2. 视频播放（统一播放器）
 
-- 支持在线HLS流播放
+- 支持在线 HLS 流播放
 - 在线网站清洁播放（强力！）、网站播放
-- STR片库在线播放
-- 115和Jellyfin片库在线转码播放（强力！）
-- 多清晰度切换
+- STRM 片库在线播放
+- 115 与 Jellyfin 片库播放（强力！）：
+  - 115片库默认优先使用 Alist 原始直链播放（对 mp4 的定位/快进时延最小，体验更好，需要部署alist挂载115网盘）
+  - 当原始直链不可用或需要转码时，可切换到 115 官方的转码 HLS 播放（多清晰度）
+  - 未登录115时自动回退 Alist 原画直链（保持可播）
+  - 清晰度选择与 UI 统一，可在播放器内一键切换
 
-### 3. 115网盘/Jellyfin影片库
+### 3. 115网盘 / Jellyfin 影片库
 
-- 云盘文件浏览与管理
+- 115云盘文件浏览与视频文件点击播放
 - 视频文件识别与关联
 - 数据库方式对影片库的管理
-- 扫码登录功能(115API实现，无须cookies)
-- **增加导入Jellyfin影片库功能，和115影片库完美融合，你的一体化终极影片库！**
-- **在线播放云盘视频（包括115和Jellyfin，自动转码hls推流）**
-- **浏览搜索影片一键离线下载并加入片库播放** （强力！）
+- 115 登录管理：扫码登录（OpenAPI）或 Cookie 登录（driver）
+- 登录状态自动识别与回退（auto 模式：优先 driver，失败回退 OpenAPI）
+- 一键更新 Cookie（热更新，无需重启）
+- 增加导入Jellyfin影片库功能，和115影片库完美融合，你的一体化终极影片库！
+- 在线播放云盘视频（包括115和Jellyfin，自动转码hls推流）
+- 浏览搜索影片一键离线下载并加入片库播放 （强力！）
   - 自动添加到默认目录添加到115网盘影片库、自动提取影片ID并关联元数据
   - 一键后10秒即可播放！
 
@@ -89,11 +95,35 @@ S  "api_url": "API server address", //Requires valid API from javbus-api
     "model": "Translation model"
   },
   "cloud115": {
-    "default_folder_id": "0", //Target directory ID (viewable via 115)
+    "auth_mode": "auto",            // openapi | driver | auto（推荐）
+    "token_file": "data/cloud115_token.json",
+    "request_timeout": 15,
+    "driver": {                      // 115driver（Cookie 登录）
+      "enabled": true,
+      "cookie": "UID=...;CID=...;SEID=...;KID=...", // 或留空配合 cookie_file
+      "cookie_file": "data/cloud115_cookie.txt",
+      "user_agent": "Mozilla/5.0 115Browser/27.0.5.7",
+      "timeout": 15,
+      "api_urls": [
+        "https://webapi.115.com/files",
+        "http://web.api.115.com/files"
+      ],
+      "login_check_interval": 300
+    },
+    "alist": {                       // Alist 播放直链来源
+      "enabled": true,
+      "base_url": "http://<alist-host>:5244",
+      "root_path": "/115",
+      "username": "admin",
+      "password": "******",
+      "timeout": 30,
+      "url_cache_seconds": 300
+    },
+    "default_folder_id": "0",
     "library_settings": {
       "category": "other",
-      "min_file_size_mb": 50, //Set to 200 to filter small ad videos
-      "default_delay_seconds": 5 //Adjust accordingly to reduce idle time
+      "min_file_size_mb": 200,
+      "default_delay_seconds": 5
     }
   },
   "jellyfin": {
@@ -116,16 +146,26 @@ S  "api_url": "API server address", //Requires valid API from javbus-api
 }
 ```
 
-### 115云盘片库配置
+### 115 云盘 / 登录管理
 
-`cloud115`配置项用于控制115云盘离线下载和片库添加功能：
+新增统一的 115 登录管理：访问 `/cloud115/login`。
 
-- `default_folder_id`: 设置默认的115文件夹ID，下载任务将保存到此目录
-  - 可以通过115网盘获取文件夹ID，默认为"0"(根目录)
-- `library_settings`: 设置片库添加的参数
-  - `category`: 文件分类，可选值为"movies"、"tv"或"other"
-  - `min_file_size_mb`: 最小文件大小(MB)，小于此大小的文件将被忽略
-  - `default_delay_seconds`: 添加离线下载后等待的时间(秒)
+- 查看当前登录状态（OpenAPI Token / driver Cookie）
+- 扫码登录（OpenAPI）
+- 粘贴 Cookie 登录（driver）
+- 认证模式切换：openapi / driver / auto
+- Cookie 热更新，无需重启
+
+`cloud115` 配置项说明：
+
+- `auth_mode`: 登录模式（openapi/driver/auto），推荐 `auto`
+- `driver.cookie`/`cookie_file`: 浏览器 Cookie（UID/CID/SEID/KID），二选一
+- `alist.*`: Alist 服务配置，用于原始直链播放与路径解析
+- `default_folder_id`: 115 默认保存目录 ID，默认 `0`（根目录），用于离线下载保存位置
+- `library_settings`: 片库导入参数（导入目录时生效）
+  - `category`: `movies`/`tv`/`other`
+  - `min_file_size_mb`: 小于该值的文件会被忽略
+  - `default_delay_seconds`: 发起离线下载后的等待时间
 
 ### Jellyfin Configuration
 
@@ -159,7 +199,7 @@ S  "api_url": "API server address", //Requires valid API from javbus-api
    python webserver.py
    ```
 
-### 使用Docker部署：
+## 使用 Docker 部署
 
 ```bash
 docker run -d -p 9080:8080 \
@@ -175,13 +215,20 @@ docker run -d -p 9080:8080 \
 docker-compose up -d
 ```
 
+## 页面导航
+
+- 登录管理：`/cloud115/login`
+- 115 网盘浏览器：`/explorer`（分页浏览、进入子目录、获取文件列表）
+- 115 影片库：`/cloud115/library`（分类筛选、搜索、元数据、删除）
+- 115 播放页：`/cloud115/player?file_id=<id>` 或从库页进入
+
 ## 注意事项
 
 - 请确保网络环境科学，或预先在可访问的科学环境中部署可以不科学访问的API
 - 建议使用反向代理来保护服务
 - 定期备份数据库文件
 - 注意配置文件中的敏感信息安全
-- 使用115播放和离线下载功能需要先登录115云盘
+- 115 播放在无 Token 时会自动回退 Alist 原画直链（需正确配置 Alist & Cookie）
 
 ## License
 

@@ -379,6 +379,17 @@ class TokyoHotScraper:
             self.logger.error(f"提取信息时出错: {str(e)}")
             return None
     
+    def get_movie_info(self, movie_id):
+        """获取影片信息（统一接口）
+        
+        Args:
+            movie_id: 影片ID
+            
+        Returns:
+            dict: 影片信息字典
+        """
+        return self.scrape(movie_id)
+    
     def scrape(self, movie_id):
         """抓取影片信息
         

@@ -16,6 +16,8 @@ services:
       - PYTHONUNBUFFERED=1
       - LANG=C.UTF-8
       - LC_ALL=C.UTF-8
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     tty: true
     logging:
       driver: "json-file"

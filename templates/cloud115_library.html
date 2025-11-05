@@ -286,8 +286,13 @@
                             <li><a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#import115DirModal">
                                 <i class="fas fa-folder-open me-2"></i>导入115目录
                             </a></li>
-                            <li><a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#login115Modal">
-                                <i class="fas fa-sign-in-alt me-2"></i>115登录
+                            <li><a class="dropdown-item" href="/cloud115/login" target="_blank">
+                                <i class="fas fa-key me-2"></i>115登录管理
+                            </a></li>
+                            <li><a class="dropdown-item" href="#" id="login-status-info" style="pointer-events: none;">
+                                <span id="loginStatusText" class="text-muted">
+                                    <i class="fas fa-circle-notch fa-spin me-2"></i>检查登录状态...
+                                </span>
                             </a></li>
                             <li><a class="dropdown-item d-none" id="logout115Button" href="#" onclick="logout115()">
                                 <i class="fas fa-sign-out-alt me-2"></i>115退出登录
@@ -1028,34 +1033,51 @@
         
         // Check the login status
         async function checkLoginStatus() {
+            const loginStatusText = document.getElementById('loginStatusText');
+            
             try {
                 const response = await fetch('/api/cloud115/check_auth_status');
                 const data = await response.json();
                 
-                if (data.state === 1 && data.data && data.data.logged_in) {
-                    // User is logged in
-                    if (logoutButton) {
-                        logoutButton.classList.remove('d-none');
-                    }
+                if (data.state === 1 && data.data) {
+                    const { logged_in, active_method, auth_status } = data.data;
                     
-                    // If modal is open, show success state
-                    if (successContainer) {
-                        statusElement.classList.add('d-none');
-                        qrcodeContainer.style.display = 'none';
-                        refreshButton.style.display = 'none';
-                        successContainer.classList.remove('d-none');
-                    }
-                } else {
-                    // User is not logged in
-                    if (logoutButton) {
-                        logoutButton.classList.add('d-none');
-                    }
-                    
-                    // Reset login modal to default state if it's open
-                    if (successContainer && successContainer.classList.contains('d-none') === false) {
-                        statusElement.classList.remove('d-none');
-                        qrcodeContainer.style.display = 'block';
-                        successContainer.classList.add('d-none');
+                    if (logged_in) {
+                        // User is logged in
+                        if (logoutButton) {
+                            logoutButton.classList.remove('d-none');
+                        }
+                        
+                        // Update status text with method info
+                        const methodLabel = active_method === 'driver' ? 'Cookie' : 'Token';
+                        const methodIcon = active_method === 'driver' ? 'fa-key' : 'fa-qrcode';
+                        if (loginStatusText) {
+                            loginStatusText.innerHTML = `<i class="fas fa-check-circle text-success me-2"></i>已登录 (${methodLabel})`;
+                        }
+                        
+                        // If modal is open, show success state
+                        if (successContainer) {
+                            statusElement.classList.add('d-none');
+                            qrcodeContainer.style.display = 'none';
+                            refreshButton.style.display = 'none';
+                            successContainer.classList.remove('d-none');
+                        }
+                    } else {
+                        // User is not logged in
+                        if (logoutButton) {
+                            logoutButton.classList.add('d-none');
+                        }
+                        
+                        if (loginStatusText) {
+                            loginStatusText.innerHTML = '<i class="fas fa-times-circle text-danger me-2"></i>未登录';
+                        }
+                        
+                        // Reset login modal to default state if it's open
+                        if (successContainer && successContainer.classList.contains('d-none') === false) {
+                            statusElement.classList.remove('d-none');
+                            qrcodeContainer.style.display = 'block';
+                            successContainer.classList.add('d-none');
+                        }
                     }
                 }
             } catch (error) {

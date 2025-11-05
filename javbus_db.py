@@ -1438,6 +1438,57 @@ class JavbusDatabase:
         except sqlite3.Error as e:
             print(f"获取115云盘文件信息错误: {e}")
             return None
+    
+    def find_cloud115_file_by_file_id_or_pickcode(self, file_id=None, pickcode=None):
+        """根据file_id或pickcode查找115云盘文件信息
+        
+        Args:
+            file_id: 115云盘的文件ID
+            pickcode: 115云盘的pickcode
+            
+        Returns:
+            dict: 找到的文件信息字典，包含数据库id字段；如果未找到则返回None
+        """
+        self.ensure_connection()
+        try:
+            # 优先使用 file_id 查找
+            if file_id:
+                self.local.cursor.execute('''
+                SELECT * FROM cloud115_library WHERE file_id = ? LIMIT 1
+                ''', (file_id,))
+                result = self.local.cursor.fetchone()
+                if result:
+                    return dict(result)
+            
+            # 如果 file_id 未找到，使用 pickcode 查找
+            if pickcode:
+                self.local.cursor.execute('''
+                SELECT * FROM cloud115_library WHERE pickcode = ? LIMIT 1
+                ''', (pickcode,))
+                result = self.local.cursor.fetchone()
+                if result:
+                    return dict(result)
+            
+            return None
+        except sqlite3.Error as e:
+            print(f"查找115云盘文件错误: {e}")
+            return None
+            
+    def update_cloud115_filepath(self, record_id, filepath):
+        """更新115云盘文件的相对路径"""
+        self.ensure_connection()
+        try:
+            self.local.cursor.execute('''
+            UPDATE cloud115_library
+            SET filepath = ?
+            WHERE id = ?
+            ''', (filepath, record_id))
+
+            self.local.conn.commit()
+            return True
+        except sqlite3.Error as e:
+            print(f"更新115云盘文件路径错误: {e}")
+            return False
             
     def delete_cloud115_file(self, file_id):
         """删除115云盘文件记录"""

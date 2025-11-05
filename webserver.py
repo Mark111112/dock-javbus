@@ -43,6 +43,7 @@ import re
 import subprocess
 import uuid
 import shutil
+import posixpath
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -170,10 +171,34 @@ def load_config():
         },
         "cloud115": {
             "default_folder_id": "",
+            "auth_mode": "auto",
+            "token_file": "data/cloud115_token.json",
+            "request_timeout": 15,
+            "driver": {
+                "enabled": True,
+                "cookie": "",
+                "cookie_file": "data/cloud115_cookie.txt",
+                "user_agent": "Mozilla/5.0 115Browser/27.0.5.7",
+                "timeout": 15,
+                "api_urls": [
+                    "https://webapi.115.com/files",
+                    "http://web.api.115.com/files"
+                ],
+                "login_check_interval": 300
+            },
             "library_settings": {
                 "category": "other",
                 "min_file_size_mb": 200,
                 "default_delay_seconds": 5
+            },
+            "alist": {
+                "enabled": True,
+                "base_url": "",
+                "root_path": "/115",
+                "username": "",
+                "password": "",
+                "timeout": 30,
+                "url_cache_seconds": 300
             }
         },
         "jellyfin": {
@@ -210,6 +235,44 @@ def load_config():
     except Exception as e:
         logging.error(f"Failed to load configuration file: {str(e)}")
     
+    # Ensure cloud115 and alist configuration sections are fully populated
+    cloud115_config = config.setdefault("cloud115", {})
+    
+    # 确保 driver 配置存在
+    driver_defaults = {
+        "enabled": False,
+        "cookie": "",
+        "cookie_file": "data/cloud115_cookie.txt",
+        "user_agent": "Mozilla/5.0 115Browser/27.0.5.7",
+        "timeout": 15,
+        "api_urls": ["https://webapi.115.com/files", "http://web.api.115.com/files"],
+        "login_check_interval": 300
+    }
+    existing_driver_config = cloud115_config.get("driver", {}) or {}
+    merged_driver_config = driver_defaults.copy()
+    merged_driver_config.update(existing_driver_config)
+    cloud115_config["driver"] = merged_driver_config
+    
+    # 确保其他115配置字段存在
+    cloud115_config.setdefault("auth_mode", "openapi")
+    cloud115_config.setdefault("token_file", "data/cloud115_token.json")
+    cloud115_config.setdefault("request_timeout", 15)
+    
+    alist_defaults = {
+        "enabled": True,
+        "base_url": "",
+        "root_path": "/115",
+        "username": "",
+        "password": "",
+        "timeout": 30,
+        "url_cache_seconds": 300
+    }
+    existing_alist_config = cloud115_config.get("alist", {}) or {}
+    merged_alist_config = alist_defaults.copy()
+    merged_alist_config.update(existing_alist_config)
+    cloud115_config["alist"] = merged_alist_config
+    config["cloud115"] = cloud115_config
+    
     return config
 
 # Get current configuration
@@ -234,6 +297,37 @@ else:
 
 CURRENT_WATCH_URL_PREFIX = CURRENT_CONFIG.get("watch_url_prefix", "https://missav.ai")
 CURRENT_BASE_URL = CURRENT_CONFIG.get("base_url", "https://www.javbus.com")
+
+# Alist integration caches and defaults
+ALIST_AUTH_CACHE = {
+    "token": None,
+    "expires_at": 0
+}
+ALIST_FILE_URL_CACHE = {}
+ALIST_CACHE_LOCK = threading.Lock()
+
+# Initialize 115 Cloud Client
+try:
+    from modules.cloud115_client import Cloud115Client
+    cloud115_config = CURRENT_CONFIG.get("cloud115", {})
+    driver_config = cloud115_config.get("driver", {})
+    
+    CLOUD115_CLIENT = Cloud115Client(
+        token_file=cloud115_config.get("token_file", "data/cloud115_token.json"),
+        driver_cookie=driver_config.get("cookie", "").strip() or None,
+        driver_cookie_file=driver_config.get("cookie_file", "").strip() or None,
+        mode=cloud115_config.get("auth_mode", "openapi"),
+        timeout=int(cloud115_config.get("request_timeout", 15)),
+        driver_user_agent=driver_config.get("user_agent", "Mozilla/5.0 115Browser/27.0.5.7"),
+        driver_api_urls=driver_config.get("api_urls"),
+        driver_login_check_interval=int(driver_config.get("login_check_interval", 300)),
+        logger=logging.getLogger("Cloud115Client"),
+    )
+    logging.info(f"115 云盘客户端初始化成功 (mode={cloud115_config.get('auth_mode', 'openapi')})")
+except Exception as exc:
+    logging.error(f"115 云盘客户端初始化失败: {exc}")
+    CLOUD115_CLIENT = None
+
 
 # Favorites management
 FAVORITES_FILE = "data/favorites.json"
@@ -3467,17 +3561,109 @@ def cloud115_player(file_id):
         
         # 更新播放次数
         db.update_cloud115_play_count(file_id)
+        relative_path = resolve_cloud115_relative_path(file_info)
+        if relative_path:
+            file_info['filepath'] = relative_path
+        alist_available = is_alist_configured()
+        initial_mode = 'alist' if alist_available else 'cloud115'
+        
+        # 获取关联的电影详细信息
+        movie_detail = None
+        video_id = file_info.get('video_id')
+        app.logger.info(f"云盘文件ID={file_id}, video_id={video_id}")
+        
+        if video_id:
+            # 直接查询数据库获取完整记录
+            try:
+                import json
+                db.ensure_connection()
+                db.local.cursor.execute('''
+                    SELECT id, cover, date, data 
+                    FROM movies 
+                    WHERE id = ?
+                ''', (video_id,))
+                result = db.local.cursor.fetchone()
+                
+                if result:
+                    movie_detail = dict(result)
+                    app.logger.info(f"找到电影记录: id={movie_detail.get('id')}, cover={movie_detail.get('cover')[:50] if movie_detail.get('cover') else 'None'}, date={movie_detail.get('date')}")
+                    
+                    # 解析 data 字段中的 JSON 数据
+                    if movie_detail.get('data'):
+                        try:
+                            movie_data = json.loads(movie_detail['data']) if isinstance(movie_detail['data'], str) else movie_detail['data']
+                            movie_detail['parsed_data'] = movie_data
+                            app.logger.info(f"解析电影数据成功: stars={len(movie_data.get('stars', []))}, genres={len(movie_data.get('genres', []))}")
+                        except Exception as e:
+                            app.logger.warning(f"解析电影数据失败: {e}")
+                else:
+                    app.logger.warning(f"未找到video_id={video_id}的电影记录")
+            except Exception as e:
+                app.logger.error(f"获取电影信息失败: {e}", exc_info=True)
         
         # 返回播放页面
         return render_template(
             'cloud115_player.html',
             title=file_info.get('title', '未命名视频'),
-            file_id=file_id
+            file_id=file_id,
+            file_info=file_info,
+            movie_detail=movie_detail,
+            file_path=relative_path,
+            alist_enabled=alist_available,
+            initial_mode=initial_mode,
+            play_mode='library',
+            direct_pickcode=None,
+            direct_path=None
         )
     except Exception as e:
         app.logger.error(f"Error rendering 115 player page: {str(e)}", exc_info=True)
         flash(f'加载播放器失败: {str(e)}', 'danger')
         return redirect(url_for('cloud115_library'))
+
+
+@app.route('/cloud115/player/direct', methods=['GET'])
+def cloud115_player_direct():
+    """115网盘直接播放页面（浏览器模式）"""
+    pickcode = (request.args.get('pickcode') or '').strip()
+    file_id_115 = (request.args.get('file_id') or '').strip()
+    file_name = (request.args.get('name') or '未命名视频').strip() or '未命名视频'
+    file_path = (request.args.get('path') or '').strip()
+
+    if not pickcode:
+        flash('缺少必要的播放参数', 'danger')
+        return redirect(url_for('cloud115_library'))
+
+    # 尝试从cloud115_library中查找对应的记录
+    library_file = db.find_cloud115_file_by_file_id_or_pickcode(
+        file_id=file_id_115 if file_id_115 else None,
+        pickcode=pickcode
+    )
+    
+    # 如果在library中找到了对应的记录，跳转到带有影片信息的播放器
+    if library_file and library_file.get('id'):
+        app.logger.info(f"在cloud115_library中找到记录 (id={library_file.get('id')}), 跳转到cloud115_player")
+        return redirect(url_for('cloud115_player', file_id=library_file.get('id')))
+    
+    # 如果未找到，按照原有方式直接播放
+    app.logger.info(f"未在cloud115_library中找到记录 (file_id={file_id_115}, pickcode={pickcode}), 使用直接播放模式")
+
+    alist_available = is_alist_configured()
+    initial_mode = 'alist' if alist_available else 'cloud115'
+
+    return render_template(
+        'cloud115_player.html',
+        title=file_name,
+        file_id=None,
+        file_info={'title': file_name, 'pickcode': pickcode, 'file_id': file_id_115},
+        movie_detail=None,
+        file_path=file_path or file_name,
+        alist_enabled=alist_available,
+        initial_mode=initial_mode,
+        play_mode='direct',
+        direct_pickcode=pickcode,
+        direct_path=file_path or file_name
+    )
+
 
 @app.route('/cloud115/import_directory', methods=['POST'])
 def cloud115_import_directory_deprecated():
@@ -3907,34 +4093,148 @@ def cloud115_device_code_to_token():
 
 @app.route('/api/cloud115/check_auth_status', methods=['GET'])
 def cloud115_check_auth_status():
-    """检查115云盘登录状态"""
+    """检查115云盘登录状态（统一检查 OpenAPI Token 和 Driver Cookie）"""
     try:
-        is_valid = is_cloud115_token_valid()
+        auth_status = {
+            'openapi': {'logged_in': False, 'method': 'token'},
+            'driver': {'logged_in': False, 'method': 'cookie'},
+            'current_mode': CURRENT_CONFIG.get('cloud115', {}).get('auth_mode', 'openapi'),
+        }
         
-        if is_valid:
-            return jsonify({
-                'state': 1,
-                'code': 0,
-                'message': '已登录',
-                'data': {
-                    'logged_in': True
-                }
-            })
+        # 检查 OpenAPI Token
+        try:
+            is_valid = is_cloud115_token_valid()
+            auth_status['openapi']['logged_in'] = bool(is_valid)
+        except Exception as e:
+            app.logger.debug(f"OpenAPI token 检查失败: {e}")
+        
+        # 检查 Driver Cookie
+        if CLOUD115_CLIENT and CLOUD115_CLIENT.driver:
+            try:
+                CLOUD115_CLIENT.driver.ensure_login(force=True)
+                auth_status['driver']['logged_in'] = True
+            except Exception as e:
+                app.logger.debug(f"Driver cookie 检查失败: {e}")
+                auth_status['driver']['logged_in'] = False
+        
+        # 判断整体登录状态
+        current_mode = auth_status['current_mode']
+        if current_mode in ('driver', 'auto'):
+            logged_in = auth_status['driver']['logged_in'] or auth_status['openapi']['logged_in']
+            active_method = 'driver' if auth_status['driver']['logged_in'] else 'openapi'
         else:
-            return jsonify({
-                'state': 1,
-                'code': 0,
-                'message': '未登录',
-                'data': {
-                    'logged_in': False
-                }
-            })
+            logged_in = auth_status['openapi']['logged_in']
+            active_method = 'openapi'
+        
+        return jsonify({
+            'state': 1,
+            'code': 0,
+            'message': '已登录' if logged_in else '未登录',
+            'data': {
+                'logged_in': logged_in,
+                'active_method': active_method,
+                'auth_status': auth_status
+            }
+        })
     except Exception as e:
         app.logger.error(f"检查115登录状态错误: {str(e)}")
         return jsonify({
             'state': 0,
             'code': 500,
             'message': f'检查登录状态失败: {str(e)}'
+        })
+
+@app.route('/api/cloud115/update_cookie', methods=['POST'])
+def cloud115_update_cookie():
+    """更新 115driver Cookie（热更新，无需重启）"""
+    global CLOUD115_CLIENT, CURRENT_CONFIG
+    
+    try:
+        data = request.get_json() or {}
+        new_cookie = data.get('cookie', '').strip()
+        auth_mode = data.get('auth_mode', '').strip()
+        
+        if not new_cookie:
+            return jsonify({
+                'state': 0,
+                'code': 400,
+                'message': '缺少 Cookie 参数'
+            })
+        
+        # 验证 Cookie 格式
+        from modules.cloud115_client import DriverCredential, Cloud115ConfigError
+        try:
+            credential = DriverCredential.from_cookie(new_cookie)
+        except Cloud115ConfigError as e:
+            return jsonify({
+                'state': 0,
+                'code': 400,
+                'message': f'Cookie 格式错误: {str(e)}'
+            })
+        
+        # 更新配置文件
+        cloud115_config = CURRENT_CONFIG.setdefault('cloud115', {})
+        driver_config = cloud115_config.setdefault('driver', {})
+        driver_config['cookie'] = new_cookie
+        driver_config['enabled'] = True
+        
+        if auth_mode:
+            cloud115_config['auth_mode'] = auth_mode
+        elif cloud115_config.get('auth_mode') == 'openapi':
+            cloud115_config['auth_mode'] = 'auto'
+        
+        # 保存到配置文件
+        try:
+            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+                json.dump(CURRENT_CONFIG, f, ensure_ascii=False, indent=2)
+            app.logger.info("配置文件已更新")
+        except Exception as e:
+            app.logger.error(f"保存配置文件失败: {e}")
+        
+        # 重新初始化客户端（热更新）
+        try:
+            from modules.cloud115_client import Cloud115Client
+            
+            CLOUD115_CLIENT = Cloud115Client(
+                token_file=cloud115_config.get('token_file', 'data/cloud115_token.json'),
+                driver_cookie=new_cookie,
+                driver_cookie_file=driver_config.get('cookie_file', '').strip() or None,
+                mode=cloud115_config.get('auth_mode', 'auto'),
+                timeout=int(cloud115_config.get('request_timeout', 15)),
+                driver_user_agent=driver_config.get('user_agent', 'Mozilla/5.0 115Browser/27.0.5.7'),
+                driver_api_urls=driver_config.get('api_urls'),
+                driver_login_check_interval=int(driver_config.get('login_check_interval', 300)),
+                logger=logging.getLogger('Cloud115Client'),
+            )
+            
+            # 测试新 Cookie 是否有效
+            CLOUD115_CLIENT.driver.ensure_login(force=True)
+            
+            app.logger.info("115 客户端热更新成功")
+            
+            return jsonify({
+                'state': 1,
+                'code': 0,
+                'message': 'Cookie 更新成功，无需重启',
+                'data': {
+                    'auth_mode': cloud115_config.get('auth_mode'),
+                    'driver_enabled': True
+                }
+            })
+        except Exception as e:
+            app.logger.error(f"Cookie 验证失败: {e}")
+            return jsonify({
+                'state': 0,
+                'code': 400,
+                'message': f'Cookie 无效或已过期: {str(e)}'
+            })
+            
+    except Exception as e:
+        app.logger.error(f"更新 Cookie 失败: {str(e)}", exc_info=True)
+        return jsonify({
+            'state': 0,
+            'code': 500,
+            'message': f'更新失败: {str(e)}'
         })
 
 @app.route('/api/cloud115/logout', methods=['POST'])
@@ -3976,6 +4276,473 @@ def get_cloud115_valid_token():
     
     return None
     
+
+# Alist 辅助方法
+def get_alist_config():
+    """返回Alist相关配置"""
+    return (CURRENT_CONFIG.get("cloud115", {}) or {}).get("alist", {}) or {}
+
+
+def is_alist_configured():
+    """判断Alist是否已启用且配置完整"""
+    config = get_alist_config()
+    if not config.get("enabled", True):
+        return False
+    required = [config.get("base_url"), config.get("username"), config.get("password")]
+    return all(item and str(item).strip() for item in required)
+
+
+def _normalize_alist_root(root_path):
+    if not root_path:
+        return "/"
+    root = str(root_path).strip()
+    if not root:
+        return "/"
+    root = root.replace("\\", "/")
+    if not root.startswith("/"):
+        root = f"/{root}"
+    return root.rstrip("/") or "/"
+
+
+def build_alist_path(relative_path, config=None):
+    """组合Alist中的完整访问路径"""
+    if not relative_path:
+        return None
+    if config is None:
+        config = get_alist_config()
+    root_path = _normalize_alist_root(config.get("root_path", "/"))
+    relative = str(relative_path).replace("\\", "/").strip("/")
+    if not relative:
+        return root_path or "/"
+    combined = posixpath.join(root_path, relative)
+    if not combined.startswith("/"):
+        combined = f"/{combined}"
+    return combined
+
+
+def clear_alist_token():
+    with ALIST_CACHE_LOCK:
+        ALIST_AUTH_CACHE["token"] = None
+        ALIST_AUTH_CACHE["expires_at"] = 0
+
+
+def get_alist_token(force_refresh=False):
+    """获取Alist访问令牌"""
+    if not is_alist_configured():
+        return None
+    config = get_alist_config()
+    now = time.time()
+    with ALIST_CACHE_LOCK:
+        if (not force_refresh and ALIST_AUTH_CACHE.get("token") and
+                now < ALIST_AUTH_CACHE.get("expires_at", 0) - 30):
+            return ALIST_AUTH_CACHE["token"]
+    login_url = config.get("base_url", "").rstrip('/') + '/api/auth/login'
+    payload = {
+        "username": config.get("username"),
+        "password": config.get("password")
+    }
+    timeout = config.get("timeout", 30)
+    try:
+        response = requests.post(login_url, json=payload, timeout=timeout)
+        response.raise_for_status()
+        response_data = response.json()
+    except Exception as exc:
+        app.logger.error(f"获取Alist令牌失败: {exc}")
+        return None
+
+    token = None
+    expires_in = 3600
+    if isinstance(response_data, dict):
+        if response_data.get('code') == 200 and response_data.get('data'):
+            data = response_data['data']
+            token = data.get('token') or data.get('access_token')
+            if not token and isinstance(data.get('user'), dict):
+                token = data['user'].get('token')
+            expires_in = data.get('token_expires') or data.get('expire') or expires_in
+        elif 'data' in response_data and isinstance(response_data['data'], dict):
+            data = response_data['data']
+            token = data.get('token')
+            expires_in = data.get('token_expires') or data.get('expire') or expires_in
+        else:
+            message = response_data.get('message') or response_data.get('msg') or '未知错误'
+            app.logger.error(f"Alist登录失败: {message}")
+            return None
+
+    if not token:
+        app.logger.error("Alist登录未返回有效token")
+        return None
+
+    expires_at = now + max(int(expires_in), 300)
+    with ALIST_CACHE_LOCK:
+        ALIST_AUTH_CACHE["token"] = token
+        ALIST_AUTH_CACHE["expires_at"] = expires_at
+
+    return token
+
+
+def get_alist_file_info(alist_path, force_refresh=False):
+    """获取Alist中文件的原始URL等信息"""
+    if not alist_path or not is_alist_configured():
+        return {'error': 'Alist未配置或路径为空'}
+    config = get_alist_config()
+    cache_key = alist_path
+    now = time.time()
+    if not force_refresh:
+        with ALIST_CACHE_LOCK:
+            cached = ALIST_FILE_URL_CACHE.get(cache_key)
+        if cached and now < cached.get('expires_at', 0):
+            cached['error'] = None
+            return cached
+
+    token = get_alist_token(force_refresh=force_refresh)
+    if not token:
+        return {'error': '无法获取Alist访问令牌'}
+
+    headers = {
+        "Authorization": token
+    }
+    payload = {
+        "path": alist_path,
+        "password": "",
+        "force": True
+    }
+    timeout = config.get("timeout", 30)
+    api_url = config.get("base_url", "").rstrip('/') + '/api/fs/get'
+
+    try:
+        response = requests.post(api_url, json=payload, headers=headers, timeout=timeout)
+        if response.status_code in (401, 403):
+            if force_refresh:
+                clear_alist_token()
+                return {'error': 'Alist认证失败，已清除缓存令牌'}
+            clear_alist_token()
+            return get_alist_file_info(alist_path, force_refresh=True)
+        response.raise_for_status()
+        response_data = response.json()
+    except Exception as exc:
+        app.logger.error(f"请求Alist文件信息失败: {exc}")
+        return {'error': f"请求Alist文件信息失败: {exc}"}
+
+    if response_data.get('code') != 200:
+        message = response_data.get('message') or response_data.get('msg') or '未知错误'
+        app.logger.error(f"Alist返回错误: {message}")
+        if response_data.get('code') in (401, 403) and not force_refresh:
+            clear_alist_token()
+            return get_alist_file_info(alist_path, force_refresh=True)
+        return {'error': message}
+
+    data = response_data.get('data') or {}
+    raw_url = data.get('raw_url') or data.get('url')
+    cache_entry = {
+        'raw_url': raw_url,
+        'data': data,
+        'error': None
+    }
+
+    expires_in = config.get('url_cache_seconds', 300)
+    cache_entry['expires_at'] = now + max(int(expires_in), 60)
+
+    with ALIST_CACHE_LOCK:
+        ALIST_FILE_URL_CACHE[cache_key] = cache_entry
+
+    return cache_entry
+
+
+def clear_alist_file_cache(alist_path):
+    if not alist_path:
+        return
+    with ALIST_CACHE_LOCK:
+        if alist_path in ALIST_FILE_URL_CACHE:
+            del ALIST_FILE_URL_CACHE[alist_path]
+
+
+def resolve_cloud115_relative_path(file_record, force_refresh=False):
+    """根据115文件记录获取或推断相对路径"""
+    if not file_record:
+        return None
+
+    existing = (file_record.get('filepath') or '').strip()
+    # 如果现有路径看起来不完整(只有文件名,没有目录),强制刷新
+    if existing and not force_refresh:
+        # 检查是否包含路径分隔符,如果没有说明只是文件名
+        if '/' in existing or '\\' in existing:
+            return existing.replace('\\', '/')
+        else:
+            # 只有文件名,需要获取完整路径
+            app.logger.info(f"文件路径不完整(只有文件名): {existing}, 将获取完整路径")
+            force_refresh = True
+
+    file_id_115 = file_record.get('file_id')
+    if not file_id_115:
+        return existing or None
+
+    # 优先使用 OpenAPI，如不可用则回退到 driver（cookie）
+    info = None
+    access_token = get_cloud115_valid_token()
+    if access_token:
+        try:
+            resp = requests.get(
+                'https://proapi.115.com/open/folder/get_info',
+                params={'file_id': file_id_115},
+                headers={'Authorization': f'Bearer {access_token}'},
+                timeout=15
+            )
+            resp.raise_for_status()
+            response_data = resp.json() if resp.content else {}
+            info = response_data.get('data', {}) if isinstance(response_data, dict) else {}
+            if not isinstance(info, dict):
+                app.logger.warning(f"115 API返回的data不是dict类型: {type(info)}")
+                info = None
+        except Exception as exc:
+            app.logger.warning(f"OpenAPI 获取文件路径失败，将尝试使用 driver: {exc}")
+            info = None
+
+    # 如果 OpenAPI 不可用或失败，尝试使用 driver（cookie）
+    if info is None:
+        try:
+            if CLOUD115_CLIENT is not None:
+                driver_info = CLOUD115_CLIENT.get_folder_info(str(file_id_115))
+                # 兼容不同返回结构，统一为 info dict
+                if isinstance(driver_info, dict):
+                    # driver 规范化后通常直接就是我们需要的结构
+                    info = driver_info.get('data') or driver_info
+            else:
+                app.logger.debug("CLOUD115_CLIENT 未初始化，无法使用 driver 获取路径")
+        except Exception as exc:
+            app.logger.error(f"driver 获取文件路径失败: {exc}")
+            info = None
+
+    if not isinstance(info, dict):
+        return existing or None
+
+    segments = []
+    paths = info.get('paths') or info.get('path') or []
+    if isinstance(paths, dict):
+        paths = paths.values()
+    if isinstance(paths, list):
+        for entry in paths:
+            if not isinstance(entry, dict):
+                continue
+            file_id_val = entry.get('file_id') or entry.get('cid')
+            name = entry.get('file_name') or entry.get('name') or ''
+            name = str(name).strip()
+            if not name:
+                continue
+            # 过滤根目录或占位符
+            if str(file_id_val) in ('0', '') or name in ('根目录', '根目錄', '/', '\\'):
+                continue
+            if name:
+                segments.append(name)
+    file_name = info.get('file_name') or info.get('name') or file_record.get('title') or ''
+    if file_name:
+        segments.append(str(file_name).strip())
+
+    normalized = "/".join(seg.strip('/\\') for seg in segments if seg)
+    if not normalized:
+        normalized = existing.replace('\\', '/') if existing else None
+
+    if normalized and file_record.get('id'):
+        try:
+            db.update_cloud115_filepath(file_record['id'], normalized)
+            file_record['filepath'] = normalized
+        except Exception as exc:
+            app.logger.warning(f"更新115文件路径失败(ID={file_record['id']}): {exc}")
+
+    return normalized
+
+
+def format_size_from_alist(data, fallback=None):
+    size_value = None
+    if isinstance(data, dict):
+        size_value = data.get('size')
+    if size_value is None:
+        return fallback
+    try:
+        size_int = int(size_value)
+    except (TypeError, ValueError):
+        return fallback
+    units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
+    size_float = float(size_int)
+    for unit in units:
+        if size_float < 1024 or unit == units[-1]:
+            return f"{size_float:.2f}{unit}"
+        size_float /= 1024
+    return fallback
+
+
+def _get_alist_info_from_pickcode(pickcode, file_path=None, force_refresh=False):
+    """根据 pickcode 获取 Alist 播放信息。
+
+    Args:
+        pickcode (str): 115 文件 pickcode。
+        file_path (str, optional): 相对路径，缺省则调用 115 接口获取。
+        force_refresh (bool): 是否强制刷新 Alist 缓存。
+
+    Returns:
+        (dict, int): (结果字典, HTTP 状态码)
+    """
+
+    if not is_alist_configured():
+        return ({'success': False, 'message': 'Alist未配置或未启用'}, 400)
+
+    if not pickcode:
+        return ({'success': False, 'message': '缺少pickcode参数'}, 400)
+
+    relative_path = None
+    file_name = None
+    file_size_bytes = None
+
+    try:
+        if file_path:
+            relative_path = str(file_path).replace('\\', '/').strip('/')
+            file_name = relative_path.split('/')[-1] if relative_path else None
+        else:
+            access_token = get_cloud115_valid_token()
+            if not access_token:
+                return ({'success': False, 'message': '未授权，请先登录115云盘'}, 401)
+
+            resp = requests.get(
+                'https://proapi.115.com/open/file/info',
+                params={'pick_code': pickcode},
+                headers={'Authorization': f'Bearer {access_token}'},
+                timeout=15
+            )
+            resp.raise_for_status()
+            payload = resp.json() if resp.content else {}
+            data = payload.get('data', {}) if isinstance(payload, dict) else {}
+
+            file_name = str(data.get('file_name') or data.get('name') or '').strip()
+            relative_path = str(data.get('path') or '').replace('\\', '/').strip('/')
+            if not relative_path:
+                parent_name = str(data.get('parent_name') or data.get('parent_path') or '').replace('\\', '/').strip('/')
+                if parent_name:
+                    relative_path = f"{parent_name}/{file_name}".strip('/')
+                else:
+                    relative_path = file_name
+
+            file_size_bytes = data.get('file_size') or data.get('size')
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else 502
+        return ({'success': False, 'message': f'获取115文件信息失败: {exc}'}, status)
+    except Exception as exc:
+        return ({'success': False, 'message': f'获取115文件信息失败: {exc}'}, 500)
+
+    relative_path = (relative_path or '').strip()
+    if not relative_path:
+        return ({'success': False, 'message': '无法确定文件路径'}, 500)
+
+    relative_path = relative_path.strip('/')
+    alist_path = build_alist_path(relative_path)
+    if not alist_path:
+        return ({'success': False, 'message': '无法构建Alist路径'}, 500)
+
+    info = get_alist_file_info(alist_path, force_refresh=force_refresh)
+    if info.get('error'):
+        if not force_refresh:
+            # 尝试强制刷新一次
+            return _get_alist_info_from_pickcode(pickcode, relative_path, force_refresh=True)
+        return ({'success': False, 'message': f"从Alist获取播放信息失败: {info.get('error')}"}, 502)
+
+    raw_url = info.get('raw_url')
+    if not raw_url:
+        if not force_refresh:
+            # 缺少原始地址时尝试刷新一次
+            return _get_alist_info_from_pickcode(pickcode, relative_path, force_refresh=True)
+        return ({'success': False, 'message': 'Alist未返回原始播放地址'}, 502)
+
+    info_data = info.get('data') or {}
+
+    if file_name is None or not file_name:
+        file_name = info_data.get('name') or relative_path.split('/')[-1]
+
+    try:
+        file_size_bytes = int(file_size_bytes)
+    except (TypeError, ValueError):
+        try:
+            file_size_bytes = int(info_data.get('size')) if info_data.get('size') is not None else None
+        except (TypeError, ValueError):
+            file_size_bytes = None
+
+    file_size_text = format_size_from_alist(info_data, None)
+    if not file_size_text and file_size_bytes:
+        file_size_text = format_size_from_alist({'size': file_size_bytes}, None)
+
+    result = {
+        'success': True,
+        'data': {
+            'proxy_url': None,
+            'raw_url': raw_url,
+            'alist_path': alist_path,
+            'relative_path': relative_path,
+            'file_name': file_name,
+            'file_size': file_size_text,
+            'file_size_bytes': file_size_bytes,
+            'updated_at': info_data.get('modified') or info_data.get('mtime'),
+            'mode': 'alist'
+        }
+    }
+
+    return (result, 200)
+
+
+def _get_video_play_data_by_pickcode(pickcode):
+    """直接通过 pickcode 获取 115 视频播放信息。"""
+
+    if not pickcode:
+        return ({'success': False, 'message': '缺少pickcode参数'}, 400)
+
+    access_token = get_cloud115_valid_token()
+    if not access_token:
+        # 无 Token 时，回退到 Alist 原始地址，封装为与 OpenAPI 相同的数据结构
+        alist_payload, alist_status = _get_alist_info_from_pickcode(pickcode)
+        if alist_status == 200 and alist_payload.get('success'):
+            data = alist_payload.get('data') or {}
+            raw_url = data.get('raw_url') or data.get('proxy_url')
+            if raw_url:
+                return ({
+                    'success': True,
+                    'data': {
+                        # 用一个“原画(100)”清晰度承载 raw_url，兼容前端 UI
+                        'video_url': [
+                            {
+                                'definition': 100,
+                                'title': '原画',
+                                'url': raw_url
+                            }
+                        ]
+                    }
+                }, 200)
+        # 如果 Alist 也不可用，提示需要登录
+        return ({'success': False, 'message': '未登录115云盘，请使用 Cookie 或扫码登录'}, 401)
+
+    try:
+        response = requests.get(
+            'https://proapi.115.com/open/video/play',
+            params={'pick_code': pickcode},
+            headers={'Authorization': f'Bearer {access_token}'},
+            timeout=15
+        )
+    except requests.RequestException as exc:
+        return ({'success': False, 'message': f'获取播放地址失败: {exc}'}, 502)
+
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        return ({'success': False, 'message': f'解析播放地址失败: {exc}'}, 502)
+
+    data = payload.get('data') if isinstance(payload, dict) else None
+    if payload.get('state') and isinstance(data, dict) and 'video_url' in data:
+        return ({'success': True, 'data': data}, 200)
+
+    message = ''
+    if isinstance(payload, dict):
+        message = payload.get('message') or payload.get('msg') or ''
+    message = message or '获取播放地址失败'
+
+    status = response.status_code if response.status_code >= 400 else 200
+    return ({'success': False, 'message': message}, status)
+
+
 # 数据库辅助方法
 def add_cloud115_file(file_data):
     """添加115云盘文件记录到数据库
@@ -4051,62 +4818,59 @@ def cloud115_files():
     """获取115云盘文件列表"""
     try:
         # 参数获取
-        cid = request.args.get('cid', '0')  # 默认为根目录
-        limit = request.args.get('limit', '1150')
-        offset = request.args.get('offset', '0')
-        
-        # 获取token
-        access_token = get_cloud115_valid_token()
-        if not access_token:
+        cid = request.args.get('cid', '0')
+        try:
+            limit = int(request.args.get('limit', '1150'))
+            offset = int(request.args.get('offset', '0'))
+        except ValueError:
             return jsonify({
                 'state': 0,
-                'code': 401,
-                'message': '未授权，请先登录115云盘'
+                'code': 400,
+                'message': '参数格式错误'
             })
         
-        # 构建请求参数
-        params = {
-            'cid': cid,
-            'limit': limit,
-            'offset': offset,
-            'show_dir': 1,  # 显示目录
-            'aid': 1,  # 正常文件
-            'o': 'user_utime',  # 按修改时间排序
-            'asc': 0,  # 降序
-        }
+        # 使用统一客户端
+        if CLOUD115_CLIENT is None:
+            return jsonify({
+                'state': 0,
+                'code': 503,
+                'message': '115客户端未初始化'
+            })
         
-        # 发送请求获取文件列表
-        response = requests.get(
-            'https://proapi.115.com/open/ufile/files',
-            params=params,
-            headers={
-                'Authorization': f'Bearer {access_token}'
-            }
-        )
-        
-        app.logger.debug(f"115 files response status: {response.status_code}")
-        
-        # 解析响应
+        from modules.cloud115_client import Cloud115AuthError, Cloud115RateLimitError
         try:
-            response_data = response.json()
-            app.logger.debug(f"115 files response: {response_data}")
+            result = CLOUD115_CLIENT.list_files(
+                cid=cid,
+                limit=limit,
+                offset=offset,
+                show_dir=1,
+                aid=1,
+                order='user_utime',
+                asc=0
+            )
             
-            # 返回文件列表
             return jsonify({
                 'state': 1,
                 'code': 0,
                 'message': '',
-                'data': response_data.get('data', [])
+                'data': result.get('data', [])
             })
-        except Exception as e:
-            app.logger.error(f"Error parsing 115 files response: {str(e)}", exc_info=True)
+        except Cloud115AuthError as e:
+            app.logger.warning(f"115 认证失败: {e}")
             return jsonify({
                 'state': 0,
-                'code': 500,
-                'message': f'解析文件列表失败: {str(e)}'
+                'code': 401,
+                'message': f'未授权: {str(e)}'
+            })
+        except Cloud115RateLimitError as e:
+            app.logger.warning(f"115 限流: {e}")
+            return jsonify({
+                'state': 0,
+                'code': 429,
+                'message': f'请求过于频繁: {str(e)}'
             })
     except Exception as e:
-        app.logger.error(f"Error getting 115 files: {str(e)}", exc_info=True)
+        app.logger.error(f"获取115文件列表失败: {str(e)}", exc_info=True)
         return jsonify({
             'state': 0,
             'code': 500,
@@ -4117,9 +4881,7 @@ def cloud115_files():
 def cloud115_folder_info():
     """获取115云盘文件夹信息"""
     try:
-        # 参数获取
         file_id = request.args.get('file_id')
-        
         if not file_id:
             return jsonify({
                 'state': 0,
@@ -4127,52 +4889,61 @@ def cloud115_folder_info():
                 'message': '缺少文件夹ID参数'
             })
         
-        # 获取token
-        access_token = get_cloud115_valid_token()
-        if not access_token:
+        # 使用统一客户端
+        if CLOUD115_CLIENT is None:
             return jsonify({
                 'state': 0,
-                'code': 401,
-                'message': '未授权，请先登录115云盘'
+                'code': 503,
+                'message': '115客户端未初始化'
             })
         
-        # 发送请求获取文件夹信息
-        response = requests.get(
-            'https://proapi.115.com/open/folder/get_info',
-            params={'file_id': file_id},
-            headers={
-                'Authorization': f'Bearer {access_token}'
-            }
-        )
-        
-        app.logger.debug(f"115 folder info response status: {response.status_code}")
-        
-        # 解析响应
+        from modules.cloud115_client import Cloud115AuthError
         try:
-            response_data = response.json()
-            app.logger.debug(f"115 folder info response: {response_data}")
-            
-            # 返回文件夹信息
+            result = CLOUD115_CLIENT.get_folder_info(file_id)
             return jsonify({
                 'state': 1,
                 'code': 0,
                 'message': '',
-                'data': response_data.get('data', {})
+                'data': result.get('data', {})
             })
-        except Exception as e:
-            app.logger.error(f"Error parsing 115 folder info response: {str(e)}", exc_info=True)
+        except Cloud115AuthError as e:
+            app.logger.warning(f"115 认证失败: {e}")
             return jsonify({
                 'state': 0,
-                'code': 500,
-                'message': f'解析文件夹信息失败: {str(e)}'
+                'code': 401,
+                'message': f'未授权: {str(e)}'
             })
     except Exception as e:
-        app.logger.error(f"Error getting 115 folder info: {str(e)}", exc_info=True)
+        app.logger.error(f"获取115文件夹信息失败: {str(e)}", exc_info=True)
         return jsonify({
             'state': 0,
             'code': 500,
             'message': f'获取文件夹信息失败: {str(e)}'
         })
+
+@app.route('/cloud115/login')
+def cloud115_login_view():
+    """115云盘登录管理页面"""
+    return render_template('cloud115_login.html')
+
+
+@app.route('/explorer')
+def explorer_view():
+    """115网盘浏览器页面"""
+    return render_template('explorer.html')
+
+
+@app.route('/explorer/api/files', methods=['GET'])
+def explorer_api_files():
+    """115网盘浏览器文件列表API"""
+    return cloud115_files()
+
+
+@app.route('/explorer/api/folder_info', methods=['GET'])
+def explorer_api_folder_info():
+    """115网盘浏览器文件夹信息API"""
+    return cloud115_folder_info()
+
 
 @app.route('/api/cloud115/import_directory', methods=['POST'])
 def cloud115_import_directory_api():
@@ -4349,15 +5120,29 @@ def cloud115_video_play_url():
     """获取115云盘视频播放地址"""
     try:
         # 获取参数
+        pickcode = (request.args.get('pickcode') or '').strip()
+        if pickcode:
+            payload, status = _get_video_play_data_by_pickcode(pickcode)
+            if payload.get('success'):  # 补充标题信息（若前端有传 name 可复用）
+                title = request.args.get('title') or request.args.get('name')
+                if title:
+                    payload['title'] = title
+            return jsonify(payload), status
+
         file_id = request.args.get('file_id')
         if not file_id:
             return jsonify({
                 'success': False,
-                'message': '缺少文件ID参数'
+                'message': '缺少文件ID或pickcode参数'
             })
+
+        try:
+            file_id_int = int(file_id)
+        except (TypeError, ValueError):
+            file_id_int = file_id
         
         # 获取数据库中的文件信息，获取pick_code
-        file_info = db.get_cloud115_file(file_id)
+        file_info = db.get_cloud115_file(file_id_int)
         if not file_info:
             return jsonify({
                 'success': False,
@@ -4369,14 +5154,12 @@ def cloud115_video_play_url():
         
         # 如果pickcode为空，尝试从URL中提取
         if not pick_code:
-            # 从URL中提取pick_code
             url = file_info.get('url', '')
-            import re
-            pick_code_match = re.search(r'pickcode=([^&]+)', url)
+            pick_code_match = re.search(r'pickcode=([^&]+)', url) if url else None
             if pick_code_match:
                 pick_code = pick_code_match.group(1)
         
-        # 如果还是找不到pickcode，尝试使用file_id
+        # 如果还是找不到pickcode，尝试使用file_id字段
         if not pick_code:
             pick_code = file_info.get('file_id')
         
@@ -4386,58 +5169,301 @@ def cloud115_video_play_url():
                 'message': '无法获取文件的pick_code'
             })
         
-        # 获取token
-        access_token = get_cloud115_valid_token()
-        if not access_token:
-            return jsonify({
-                'success': False,
-                'message': '未授权，请先登录115云盘'
-            })
-        
-        # 请求视频播放地址
-        response = requests.get(
-            'https://proapi.115.com/open/video/play',
-            params={'pick_code': pick_code},
-            headers={
-                'Authorization': f'Bearer {access_token}'
-            }
-        )
-        
-        app.logger.debug(f"115 video play response status: {response.status_code}")
-        
-        try:
-            response_data = response.json()
-            app.logger.debug(f"115 video play response: {response_data}")
-            
-            if response_data.get('state') and response_data.get('data') and 'video_url' in response_data.get('data', {}):
-                # 更新播放计数
-                db.update_cloud115_play_count(file_id)
-                
-                # 返回视频播放信息
-                return jsonify({
-                    'success': True,
-                    'data': response_data.get('data'),
-                    'title': file_info.get('title', '')
-                })
-            else:
-                error_msg = response_data.get('message') or '获取播放地址失败'
-                app.logger.error(f"Error getting 115 video URL: {error_msg}")
-                return jsonify({
-                    'success': False,
-                    'message': error_msg
-                })
-        except Exception as e:
-            app.logger.error(f"Error parsing 115 video play response: {str(e)}", exc_info=True)
-            return jsonify({
-                'success': False,
-                'message': f'解析播放地址失败: {str(e)}'
-            })
+        payload, status = _get_video_play_data_by_pickcode(pick_code)
+        if payload.get('success'):
+            try:
+                db.update_cloud115_play_count(file_id_int)
+            except Exception as exc:
+                app.logger.warning(f"更新115播放次数失败: {exc}")
+            payload['title'] = file_info.get('title', '')
+        return jsonify(payload), status
     except Exception as e:
         app.logger.error(f"Error getting 115 video play URL: {str(e)}", exc_info=True)
         return jsonify({
             'success': False,
             'message': f'获取播放地址失败: {str(e)}'
         })
+
+
+@app.route('/api/cloud115/alist_play_info', methods=['GET'])
+def cloud115_alist_play_info():
+    """获取Alist播放所需信息"""
+    if not is_alist_configured():
+        return jsonify({
+            'success': False,
+            'message': 'Alist未配置或未启用'
+        }), 400
+
+    pickcode = (request.args.get('pickcode') or '').strip()
+    file_path = request.args.get('path')
+
+    if pickcode:
+        payload, status = _get_alist_info_from_pickcode(pickcode, file_path)
+        if not payload.get('success'):
+            return jsonify(payload), status
+
+        data = payload.get('data', {})
+        stream_params = {'pickcode': pickcode}
+        if data.get('relative_path'):
+            stream_params['path'] = data['relative_path']
+        data['proxy_url'] = url_for('cloud115_alist_stream', _external=False, **stream_params)
+        return jsonify({'success': True, 'data': data})
+
+    file_id = request.args.get('file_id')
+    if not file_id:
+        return jsonify({
+            'success': False,
+            'message': '缺少文件ID参数'
+        }), 400
+
+    try:
+        file_id_int = int(file_id)
+    except (TypeError, ValueError):
+        file_id_int = file_id
+
+    file_info = db.get_cloud115_file(file_id_int)
+    if not file_info:
+        return jsonify({
+            'success': False,
+            'message': '找不到指定的115文件记录'
+        }), 404
+
+    relative_path = resolve_cloud115_relative_path(file_info)
+    if not relative_path:
+        return jsonify({
+            'success': False,
+            'message': '无法确定文件路径，请确认已登录（Token 或 Cookie）'
+        }), 500
+
+    alist_path = build_alist_path(relative_path)
+    if not alist_path:
+        return jsonify({
+            'success': False,
+            'message': '无法构建Alist路径'
+        }), 500
+
+    app.logger.info(f"请求Alist播放路径: {alist_path}")
+    info = get_alist_file_info(alist_path)
+    if info.get('error'):
+        error_msg = str(info.get('error', '')).lower()
+        if 'object not found' in error_msg or 'not found' in error_msg:
+            app.logger.warning(f"Alist返回路径不存在,尝试从115 API刷新完整路径: {alist_path}")
+            new_relative_path = resolve_cloud115_relative_path(file_info, force_refresh=True)
+            if new_relative_path and new_relative_path != relative_path:
+                app.logger.info(f"获取到新的完整路径: {new_relative_path}")
+                alist_path = build_alist_path(new_relative_path)
+                if alist_path:
+                    info = get_alist_file_info(alist_path)
+        else:
+            info = get_alist_file_info(alist_path, force_refresh=True)
+    if info.get('error'):
+        return jsonify({
+            'success': False,
+            'message': f"从Alist获取播放信息失败: {info.get('error')}"
+        }), 502
+
+    if not info.get('raw_url'):
+        return jsonify({
+            'success': False,
+            'message': 'Alist未返回原始播放地址'
+        }), 502
+
+    data = info.get('data') or {}
+    file_name = data.get('name') or file_info.get('title') or file_info.get('filepath') or ''
+    file_size_text = file_info.get('size') or format_size_from_alist(data)
+    proxy_url = url_for('cloud115_alist_stream', file_id=file_id_int, _external=False)
+
+    response_payload = {
+        'success': True,
+        'data': {
+            'proxy_url': proxy_url,
+            'raw_url': info.get('raw_url'),
+            'alist_path': alist_path,
+            'relative_path': relative_path,
+            'file_name': file_name,
+            'file_size': file_size_text,
+            'file_size_bytes': data.get('size'),
+            'updated_at': data.get('modified') or data.get('mtime'),
+            'mode': 'alist'
+        }
+    }
+
+    return jsonify(response_payload)
+
+
+@app.route('/api/cloud115/alist/stream', methods=['GET'])
+def cloud115_alist_stream():
+    """通过WebServer代理Alist视频流,使用Alist的raw_url直接流式传输"""
+    if not is_alist_configured():
+        return jsonify({
+            'error': 'Alist未配置或未启用'
+        }), 400
+
+    pickcode = (request.args.get('pickcode') or '').strip()
+    file_path = request.args.get('path')
+
+    raw_url = None
+    alist_path = None
+    relative_path = None
+    filename_for_mime = None
+
+    if pickcode:
+        payload, status = _get_alist_info_from_pickcode(pickcode, file_path)
+        if not payload.get('success'):
+            return jsonify({'error': payload.get('message', '无法获取Alist播放信息')}), status
+        data = payload.get('data', {})
+        raw_url = data.get('raw_url')
+        alist_path = data.get('alist_path')
+        relative_path = data.get('relative_path')
+        filename_for_mime = data.get('file_name') or (relative_path.split('/')[-1] if relative_path else '')
+        app.logger.info(f"Alist流代理(直连模式)路径: {alist_path}")
+    else:
+        file_id = request.args.get('file_id')
+        if not file_id:
+            return jsonify({'error': '缺少文件ID或pickcode参数'}), 400
+
+        try:
+            file_id_int = int(file_id)
+        except (TypeError, ValueError):
+            file_id_int = file_id
+
+        file_info = db.get_cloud115_file(file_id_int)
+        if not file_info:
+            return jsonify({'error': '找不到指定的115文件记录'}), 404
+
+        relative_path = resolve_cloud115_relative_path(file_info)
+        if not relative_path:
+            return jsonify({'error': '无法确定文件路径'}), 500
+
+        alist_path = build_alist_path(relative_path)
+        if not alist_path:
+            return jsonify({'error': '无法构建Alist路径'}), 500
+
+        app.logger.info(f"Alist流代理路径: {alist_path}")
+        info = get_alist_file_info(alist_path)
+        if info.get('error'):
+            error_msg = str(info.get('error', '')).lower()
+            if 'object not found' in error_msg or 'not found' in error_msg:
+                app.logger.warning(f"Alist返回路径不存在,尝试从115 API刷新完整路径: {alist_path}")
+                new_relative_path = resolve_cloud115_relative_path(file_info, force_refresh=True)
+                if new_relative_path and new_relative_path != relative_path:
+                    app.logger.info(f"获取到新的完整路径: {new_relative_path}")
+                    alist_path = build_alist_path(new_relative_path)
+                    if alist_path:
+                        info = get_alist_file_info(alist_path)
+            else:
+                info = get_alist_file_info(alist_path, force_refresh=True)
+        if info.get('error'):
+            return jsonify({'error': f"无法从Alist获取播放地址: {info.get('error')}"}), 502
+
+        raw_url = info.get('raw_url')
+        if not raw_url:
+            return jsonify({'error': 'Alist未返回原始播放地址'}), 502
+
+        filename_for_mime = file_info.get('title', '') or relative_path
+
+    if not raw_url:
+        return jsonify({'error': '无法获取Alist播放地址'}), 502
+
+    config = get_alist_config()
+    timeout = config.get('timeout', 30)
+
+    app.logger.info(f"Alist raw_url代理: {raw_url[:100]}...")
+
+    headers = {}
+    range_header = request.headers.get('Range')
+    if range_header:
+        headers['Range'] = range_header
+
+    method = request.method.upper()
+    stream = method != 'HEAD'
+
+    try:
+        upstream = requests.request(
+            method,
+            raw_url,
+            headers=headers,
+            stream=stream,
+            timeout=timeout,
+            allow_redirects=True
+        )
+        app.logger.info(f"Alist upstream响应: status={upstream.status_code}")
+    except requests.RequestException as exc:
+        if alist_path:
+            clear_alist_file_cache(alist_path)
+        app.logger.error(f"代理Alist视频失败: {exc}")
+        return jsonify({'error': f'代理Alist视频失败: {exc}'}), 502
+
+    if upstream.status_code >= 400:
+        try:
+            error_preview = upstream.text[:500]
+        except Exception:
+            error_preview = '<non-text response>'
+        app.logger.error(f"Alist上游返回错误: status={upstream.status_code}, body={error_preview}")
+        if upstream.status_code in (403, 404) and alist_path:
+            clear_alist_file_cache(alist_path)
+        return jsonify({'error': f'Alist返回错误 {upstream.status_code}: {error_preview[:100]}'}), 502
+
+    def generate():
+        try:
+            for chunk in upstream.iter_content(chunk_size=8192):
+                if chunk:
+                    yield chunk
+        finally:
+            upstream.close()
+
+    if stream:
+        response = Response(stream_with_context(generate()), status=upstream.status_code)
+    else:
+        upstream.close()
+        response = Response(status=upstream.status_code)
+
+    passthrough_headers = [
+        'Content-Type',
+        'Content-Length',
+        'Content-Range',
+        'Accept-Ranges',
+        'Content-Disposition',
+        'ETag',
+        'Last-Modified',
+        'Cache-Control',
+        'Expires'
+    ]
+    for header in passthrough_headers:
+        value = upstream.headers.get(header)
+        if value:
+            response.headers[header] = value
+
+    original_content_type = response.headers.get('Content-Type')
+    if 'Content-Type' not in response.headers or not original_content_type:
+        filename = filename_for_mime or ''
+        lower_name = filename.lower()
+        if lower_name.endswith('.mp4'):
+            response.headers['Content-Type'] = 'video/mp4'
+        elif lower_name.endswith('.mkv'):
+            response.headers['Content-Type'] = 'video/x-matroska'
+        elif lower_name.endswith('.avi'):
+            response.headers['Content-Type'] = 'video/x-msvideo'
+        elif lower_name.endswith('.mov'):
+            response.headers['Content-Type'] = 'video/quicktime'
+        elif lower_name.endswith('.webm'):
+            response.headers['Content-Type'] = 'video/webm'
+        else:
+            response.headers['Content-Type'] = 'video/mp4'
+        app.logger.info(f"设置Content-Type为: {response.headers['Content-Type']} (文件名: {filename})")
+    else:
+        app.logger.info(f"使用原始Content-Type: {original_content_type}")
+
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Expose-Headers'] = ', '.join(passthrough_headers)
+    response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
+
+    is_secure = request.is_secure
+    request_scheme = request.scheme
+    app.logger.info(f"请求协议: {request_scheme} (is_secure: {is_secure}), Content-Type: {response.headers.get('Content-Type')}, Accept-Ranges: {response.headers.get('Accept-Ranges')}")
+
+    return response
 
 @app.route('/find_cloud115_by_video_id/<video_id>', methods=['GET'])
 def find_cloud115_by_video_id(video_id):
@@ -4580,6 +5606,8 @@ def cloud115_proxy_stream():
             
             # 设置内容类型
             proxy_response.headers["Content-Type"] = "application/vnd.apple.mpegurl"
+            # 添加缓存控制头，允许短期缓存以提高性能
+            proxy_response.headers["Cache-Control"] = "public, max-age=30"
             
         else:
             # 对于TS片段和其他二进制内容
@@ -4593,6 +5621,8 @@ def cloud115_proxy_stream():
             if is_ts_segment and "text" in content_type:
                 # 强制设置TS片段的内容类型
                 proxy_response.headers["Content-Type"] = "video/mp2t"
+                # TS 片段可以设置短期缓存以提高性能
+                proxy_response.headers["Cache-Control"] = "public, max-age=10"
             else:
                 proxy_response.headers["Content-Type"] = content_type
         
@@ -5716,16 +6746,42 @@ def jellyfin_player(item_id):
         except:
             movie_dict['actors'] = []
     
-    # 获取视频ID相关的影片信息
+    # 获取关联的电影详细信息
+    movie_detail = None
     video_id = movie_dict.get('video_id', '')
-    movie_info = None
+    app.logger.info(f"Jellyfin文件item_id={item_id}, video_id={video_id}")
     
     if video_id:
-        movie_info = get_movie_data(video_id)
+        # 直接查询数据库获取完整记录
+        try:
+            db.ensure_connection()
+            db.local.cursor.execute('''
+                SELECT id, cover, date, data 
+                FROM movies 
+                WHERE id = ?
+            ''', (video_id,))
+            result = db.local.cursor.fetchone()
+            
+            if result:
+                movie_detail = dict(result)
+                app.logger.info(f"找到电影记录: id={movie_detail.get('id')}, cover={movie_detail.get('cover')[:50] if movie_detail.get('cover') else 'None'}, date={movie_detail.get('date')}")
+                
+                # 解析 data 字段中的 JSON 数据
+                if movie_detail.get('data'):
+                    try:
+                        movie_data = json.loads(movie_detail['data']) if isinstance(movie_detail['data'], str) else movie_detail['data']
+                        movie_detail['parsed_data'] = movie_data
+                        app.logger.info(f"解析电影数据成功: stars={len(movie_data.get('stars', []))}, genres={len(movie_data.get('genres', []))}")
+                    except Exception as e:
+                        app.logger.warning(f"解析电影数据失败: {e}")
+            else:
+                app.logger.warning(f"未找到video_id={video_id}的电影记录")
+        except Exception as e:
+            app.logger.error(f"获取电影信息失败: {e}", exc_info=True)
     
     return render_template('jellyfin_player.html',
                           movie=movie_dict,
-                          movie_info=movie_info,
+                          movie_detail=movie_detail,
                           page_title=movie_dict.get('title', '影片播放'))
 
 @app.route('/api/jellyfin/connect', methods=['POST'])
@@ -5917,16 +6973,42 @@ def jellyfin_file_player(file_id):
             except:
                 file_dict['actors'] = []
         
-        # 获取视频ID相关的影片信息
+        # 获取关联的电影详细信息
+        movie_detail = None
         video_id = file_dict.get('video_id', '')
-        movie_info = None
+        app.logger.info(f"Jellyfin文件ID={file_id}, video_id={video_id}")
         
         if video_id:
-            movie_info = get_movie_data(video_id)
+            # 直接查询数据库获取完整记录
+            try:
+                db.ensure_connection()
+                db.local.cursor.execute('''
+                    SELECT id, cover, date, data 
+                    FROM movies 
+                    WHERE id = ?
+                ''', (video_id,))
+                result = db.local.cursor.fetchone()
+                
+                if result:
+                    movie_detail = dict(result)
+                    app.logger.info(f"找到电影记录: id={movie_detail.get('id')}, cover={movie_detail.get('cover')[:50] if movie_detail.get('cover') else 'None'}, date={movie_detail.get('date')}")
+                    
+                    # 解析 data 字段中的 JSON 数据
+                    if movie_detail.get('data'):
+                        try:
+                            movie_data = json.loads(movie_detail['data']) if isinstance(movie_detail['data'], str) else movie_detail['data']
+                            movie_detail['parsed_data'] = movie_data
+                            app.logger.info(f"解析电影数据成功: stars={len(movie_data.get('stars', []))}, genres={len(movie_data.get('genres', []))}")
+                        except Exception as e:
+                            app.logger.warning(f"解析电影数据失败: {e}")
+                else:
+                    app.logger.warning(f"未找到video_id={video_id}的电影记录")
+            except Exception as e:
+                app.logger.error(f"获取电影信息失败: {e}", exc_info=True)
         
         return render_template('jellyfin_player.html',
                              movie=file_dict,
-                             movie_info=movie_info,
+                             movie_detail=movie_detail,
                              page_title=file_dict.get('title', 'Jellyfin播放器'))
     
     except Exception as e:

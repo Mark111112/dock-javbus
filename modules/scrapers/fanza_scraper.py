@@ -541,30 +541,59 @@ class FanzaScraper(BaseScraper):
             
         Returns:
             str: 高质量图片URL
+            
+        URL模式说明：
+        - 封面小图: https://pics.dmm.co.jp/mono/movie/adult/1start310v/1start310vps.jpg
+        - 封面大图: https://pics.dmm.co.jp/mono/movie/adult/1start310v/1start310vpl.jpg
+        - 预览小图: https://pics.dmm.co.jp/digital/video/1start310v/1start310v-1.jpg
+        - 预览大图: https://pics.dmm.co.jp/digital/video/1start310v/1start310vjp-1.jpg
         """
         if not img_url:
             return None
-            
-        # DMM的图片URL模式：
-        # 缩略图: https://pics.dmm.co.jp/digital/video/abc00123/abc00123pt.jpg
-        # 封面图: https://pics.dmm.co.jp/digital/video/abc00123/abc00123pl.jpg
         
-        # 尝试转换为高质量图片
-        high_quality_url = img_url.replace('pt.jpg', 'pl.jpg')
+        # 模式1: 封面图转换 (ps.jpg -> pl.jpg)
+        if 'ps.jpg' in img_url:
+            return img_url.replace('ps.jpg', 'pl.jpg')
         
-        # 如果URL不变，可能有其他格式
-        if high_quality_url == img_url:
-            # 尝试其他常见格式
-            high_quality_url = img_url.replace('ps.jpg', 'pl.jpg')
-            
-            # 还是没变化，可能是预览图
-            if high_quality_url == img_url and 'jp-' in img_url:
-                # 预览图转换尝试
-                parts = img_url.split('jp-')
-                if len(parts) == 2:
-                    high_quality_url = parts[0] + 'pl.jpg'
+        # 模式2: 封面图转换 (pt.jpg -> pl.jpg)
+        if 'pt.jpg' in img_url:
+            return img_url.replace('pt.jpg', 'pl.jpg')
         
-        return high_quality_url
+        # 模式3: 预览图转换 (例如: 1start310v-1.jpg -> 1start310vjp-1.jpg)
+        # 匹配模式: /video/番号/番号-数字.jpg
+        import re
+        match = re.search(r'/video/([^/]+)/\1-(\d+)\.jpg', img_url)
+        if match:
+            video_id = match.group(1)
+            num = match.group(2)
+            # 构建大图URL
+            return img_url.replace(f'{video_id}-{num}.jpg', f'{video_id}jp-{num}.jpg')
+
+        # 如果没有匹配到任何模式，返回原URL
+        return img_url
+
+    @staticmethod
+    def _extract_text_with_line_breaks(element) -> str:
+        if element is None:
+            return ""
+
+        if hasattr(element, "get_text"):
+            raw_text = element.get_text(separator="\n")
+        else:
+            raw_text = str(element)
+
+        if not raw_text:
+            return ""
+
+        normalized = raw_text.replace("\r\n", "\n").replace("\r", "\n")
+        lines = [line.strip() for line in normalized.split("\n")]
+
+        while lines and lines[0] == "":
+            lines.pop(0)
+        while lines and lines[-1] == "":
+            lines.pop()
+
+        return "\n".join(lines)
     
     def extract_info_from_page(self, soup, movie_id, url):
         """从页面提取影片信息
@@ -634,22 +663,41 @@ class FanzaScraper(BaseScraper):
                     result["duration"] = duration_match.group(1) + "分钟"
                     
             elif "出演者" in label or "女優" in label:
-                # 演员
+                # 演员（包含名称和头像）
                 actresses = []
+                actress_with_images = []
                 actress_links = value_tag.find_all("a")
                 if actress_links:
                     for link in actress_links:
                         name = link.text.strip()
                         if name and name != "：":
                             actresses.append(name)
+                            # 尝试获取演员ID以构建头像URL
+                            actress_id = None
+                            href = link.get("href")
+                            if href:
+                                # 从URL中提取演员ID：/mono/person/-/id=9999/
+                                id_match = re.search(r'/id=(\d+)/', href)
+                                if id_match:
+                                    actress_id = id_match.group(1)
+                            
+                            # 构建演员信息（包含头像URL）
+                            actress_info = {"name": name}
+                            if actress_id:
+                                # DMM演员头像URL格式：https://pics.dmm.co.jp/mono/actjpgs/[actress_id].jpg
+                                actress_info["id"] = actress_id
+                                actress_info["avatar"] = f"https://pics.dmm.co.jp/mono/actjpgs/{actress_id}.jpg"
+                            actress_with_images.append(actress_info)
                 else:
                     # 无链接时直接获取文本
                     name = value_tag.text.strip()
                     if name and name != "：" and name != "----":
                         actresses.append(name)
+                        actress_with_images.append({"name": name})
                         
                 if actresses:
                     result["actresses"] = actresses
+                    result["actress_details"] = actress_with_images
                     
             elif "監督" in label:
                 # 导演
@@ -710,18 +758,30 @@ class FanzaScraper(BaseScraper):
                 
         # 5. 提取预览图
         thumbnails = []
-        thumbnail_links = soup.select("#sample-image-block img") or soup.select(".position-relative.detail-cap a img")
+        # 优先查找 #sample-image-block 中的图片
+        thumbnail_links = soup.select("#sample-image-block img")
+        if not thumbnail_links:
+            thumbnail_links = soup.select(".position-relative.detail-cap a img")
         
         if thumbnail_links:
             for img in thumbnail_links:
-                img_url = img.get("src") or img.get("data-src")
-                if img_url and not img_url.endswith("noimage.jpg"):
-                    # 转换缩略图为大图
-                    high_quality_url = self._convert_to_high_quality_image(img_url)
+                # 优先使用 data-lazy 属性（懒加载），其次是 data-src，最后是 src
+                img_url = img.get("data-lazy") or img.get("data-src") or img.get("src")
+                
+                # 过滤掉占位图和无效图片
+                if not img_url or img_url.endswith("noimage.jpg") or "dummy_ps.gif" in img_url:
+                    continue
+                
+                # 转换小图为大图
+                high_quality_url = self._convert_to_high_quality_image(img_url)
+                if high_quality_url:
                     thumbnails.append(high_quality_url)
                     
         if thumbnails:
             result["thumbnails"] = thumbnails
+            # 如果没有封面图，使用第一张预览图作为封面
+            if not result.get("cover") and thumbnails:
+                result["cover"] = thumbnails[0]
             
         # 6. 提取评分
         rating_element = soup.select_one(".d-review__average") or soup.select_one(".c-review__average") or soup.select_one(".c-rating-v2__average")
@@ -749,7 +809,7 @@ class FanzaScraper(BaseScraper):
             ]
 
             for p in paragraph_candidates:
-                text = (p.get_text() or "").strip()
+                text = self._extract_text_with_line_breaks(p)
                 if not text:
                     continue
                 # 过滤包含广告关键词或过短的段落
@@ -778,7 +838,7 @@ class FanzaScraper(BaseScraper):
             if not summary_text:
                 description_element = soup.select_one("#introduction-text") or soup.select_one(".mg-b20.lh4")
                 if description_element:
-                    paras = [t.get_text().strip() for t in description_element.select("p")]
+                    paras = [self._extract_text_with_line_breaks(t) for t in description_element.select("p")]
                     paras = [t for t in paras if t and len(t) >= 50 and not any(k in t for k in ad_keywords)]
                     if paras:
                         # 保持分段结构
@@ -787,7 +847,7 @@ class FanzaScraper(BaseScraper):
                         else:
                             summary_text = "\n\n".join(paras)
                     else:
-                        summary_text = (description_element.get_text() or "").strip()
+                        summary_text = self._extract_text_with_line_breaks(description_element)
             # 7.3 再兜底：meta 描述
             if not summary_text:
                 og_desc = soup.find("meta", attrs={"property": "og:description"})
@@ -801,7 +861,7 @@ class FanzaScraper(BaseScraper):
             # 出错时退回最初策略，保证不影响整体抓取
             description_element = soup.select_one("#introduction-text") or soup.select_one(".mg-b20.lh4")
             if description_element:
-                summary_text = (description_element.get_text() or "").strip()
+                summary_text = self._extract_text_with_line_breaks(description_element)
 
         if summary_text:
             result["summary"] = summary_text
@@ -1139,6 +1199,7 @@ class FanzaScraper(BaseScraper):
                 "    makerReleasedAt\n"
                 "    packageImage { largeUrl mediumUrl __typename }\n"
                 "    sampleImages { number imageUrl largeImageUrl __typename }\n"
+                "    performers { id name imageUrl __typename }\n"
                 "    maker { id name __typename }\n"
                 "    label { id name __typename }\n"
                 "    genres { id name __typename }\n"
@@ -1190,6 +1251,25 @@ class FanzaScraper(BaseScraper):
             if isinstance(duration_sec, int) and duration_sec > 0:
                 minutes = str(int(round(duration_sec / 60)))
                 result["duration"] = minutes + "分钟"
+
+            # 提取演员信息（包含头像）
+            performers = content.get("performers") or []
+            if performers:
+                actresses = []
+                actress_details = []
+                for performer in performers:
+                    name = performer.get("name")
+                    if name:
+                        actresses.append(name)
+                        actress_info = {
+                            "name": name,
+                            "id": performer.get("id", ""),
+                            "avatar": performer.get("imageUrl", "")
+                        }
+                        actress_details.append(actress_info)
+                if actresses:
+                    result["actresses"] = actresses
+                    result["actress_details"] = actress_details
 
             maker = (content.get("maker") or {}).get("name")
             if maker:
@@ -1355,136 +1435,3 @@ class FanzaScraper(BaseScraper):
         """基于 movie_id 推导 content_id 后调用 GraphQL"""
         content_id = self._build_video_dmm_id(movie_id)
         return self._fetch_video_dmm_content_by_content_id(content_id, movie_id)
-        """调用 video.dmm.co.jp GraphQL 接口获取内容并映射为统一结构"""
-        try:
-            content_id = self._build_video_dmm_id(movie_id)
-            if not content_id:
-                return None
-
-            graphql_url = "https://api.video.dmm.co.jp/graphql"
-
-            # 精简版查询，获取必要字段
-            query = (
-                "query Content($id: ID!) {\n"
-                "  ppvContent(id: $id) {\n"
-                "    id\n"
-                "    title\n"
-                "    description\n"
-                "    duration\n"
-                "    makerReleasedAt\n"
-                "    packageImage { largeUrl mediumUrl __typename }\n"
-                "    sampleImages { number imageUrl largeImageUrl __typename }\n"
-                "    maker { id name __typename }\n"
-                "    label { id name __typename }\n"
-                "    genres { id name __typename }\n"
-                "    makerContentId\n"
-                "    __typename\n"
-                "  }\n"
-                "  reviewSummary(contentId: $id) { average total __typename }\n"
-                "}"
-            )
-
-            payload = {
-                "operationName": "Content",
-                "query": query,
-                "variables": {"id": content_id}
-            }
-
-            session = self.create_session()
-            # GraphQL 需要JSON头与来源
-            session.headers.update({
-                'Accept': 'application/graphql-response+json, application/json',
-                'Content-Type': 'application/json',
-                'Origin': 'https://video.dmm.co.jp',
-                'Referer': 'https://video.dmm.co.jp/'
-            })
-
-            resp = session.post(graphql_url, data=json.dumps(payload), timeout=20)
-            if resp.status_code != 200:
-                self.logger.warning(f"GraphQL 请求失败，状态码: {resp.status_code}")
-                return None
-
-            data = resp.json()
-            content = (data or {}).get('data', {}).get('ppvContent')
-            if not content:
-                self.logger.info("GraphQL 无内容返回")
-                return None
-
-            # 映射到统一结构
-            url = self._video_dmm_url(content_id)
-            result = {
-                "source": "fanza",
-                "id": movie_id,
-                "url": url,
-                "title": content.get("title") or ""
-            }
-
-            # 日期
-            maker_released_at = content.get("makerReleasedAt") or ""
-            if maker_released_at:
-                result["release_date"] = maker_released_at.split("T")[0].replace("/", "-")
-
-            # 时长（单位：分钟）
-            duration_sec = content.get("duration")
-            if isinstance(duration_sec, int) and duration_sec > 0:
-                minutes = str(int(round(duration_sec / 60)))
-                result["duration"] = minutes + "分钟"
-
-            # 演员：该接口对素人作多为空，保持兼容
-            actresses = []
-            if actresses:
-                result["actresses"] = actresses
-
-            # 制作商/发行商
-            maker = (content.get("maker") or {}).get("name")
-            if maker:
-                result["maker"] = maker
-            label_name = (content.get("label") or {}).get("name")
-            if label_name:
-                result["label"] = label_name
-
-            # 品番
-            maker_content_id = content.get("makerContentId")
-            if maker_content_id:
-                result["product_code"] = maker_content_id
-
-            # 类型/标签
-            genres = [g.get("name") for g in (content.get("genres") or []) if g.get("name")]
-            if genres:
-                result["genres"] = genres
-
-            # 封面与预览图
-            package_image = content.get("packageImage") or {}
-            cover = package_image.get("largeUrl") or package_image.get("mediumUrl")
-            if cover:
-                result["cover"] = cover
-
-            thumbs = []
-            for img in (content.get("sampleImages") or []):
-                large = img.get("largeImageUrl") or img.get("imageUrl")
-                if large:
-                    thumbs.append(large)
-            if thumbs:
-                result["thumbnails"] = thumbs
-
-            # 评分
-            review = (data or {}).get('data', {}).get('reviewSummary') or {}
-            average = review.get('average')
-            if average is not None:
-                result["rating"] = str(average)
-
-            # 简介
-            desc = content.get("description")
-            if desc:
-                # 去掉可能的 <br>
-                result["summary"] = re.sub(r'<br\s*/?>', '\n', desc).strip()
-
-            self.logger.info("通过 GraphQL 成功获取详情")
-            return result
-
-        except requests.exceptions.RequestException as e:
-            self.logger.error(f"GraphQL 请求异常: {str(e)}")
-            return None
-        except Exception as e:
-            self.logger.error(f"GraphQL 解析异常: {str(e)}")
-            return None

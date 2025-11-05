@@ -1,0 +1,432 @@
+{% extends "base.html" %}
+{% block title %}115 Explorer{% endblock %}
+
+{% block head %}
+<style>
+    .breadcrumb {
+        background-color: #f8f9fa;
+        padding: 10px 15px;
+        border-radius: 5px;
+        margin-bottom: 1rem;
+    }
+    .file-table th {
+        white-space: nowrap;
+    }
+    .file-row {
+        cursor: default;
+    }
+    .file-row.folder-row {
+        cursor: pointer;
+    }
+    .file-name {
+        word-break: break-all;
+    }
+    .file-actions .btn {
+        margin-right: 6px;
+    }
+    .file-actions .btn:last-child {
+        margin-right: 0;
+    }
+    .state-message {
+        margin-top: 1rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h2 class="mb-0">
+                    <i class="bi bi-cloud"></i> 115网盘浏览器
+                </h2>
+                <div>
+                    <span id="loginStatusBadge" class="badge bg-secondary me-2">
+                        <i class="bi bi-hourglass-split"></i> 检查中
+                    </span>
+                    <a href="/cloud115/login" class="btn btn-outline-primary" target="_blank">
+                        <i class="bi bi-key"></i> 登录管理
+                    </a>
+                </div>
+            </div>
+
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb" id="breadcrumb">
+                    <li class="breadcrumb-item active">根目录</li>
+                </ol>
+            </nav>
+
+            <div class="card">
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle file-table">
+                            <thead>
+                                <tr>
+                                    <th scope="col" style="width: 60px;">#</th>
+                                    <th scope="col">名称</th>
+                                    <th scope="col" style="width: 140px;">大小</th>
+                                    <th scope="col" style="width: 180px;">修改时间</th>
+                                    <th scope="col" style="width: 160px;">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="fileTableBody"></tbody>
+                        </table>
+                    </div>
+                    <div id="emptyState" class="alert alert-info text-center d-none state-message">
+                        <i class="bi bi-info-circle"></i> 此文件夹为空
+                    </div>
+                    <div id="errorState" class="alert alert-danger text-center d-none state-message"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const filesApiUrl = "{{ url_for('explorer_api_files') }}";
+    const playerUrlBase = "{{ url_for('cloud115_player_direct') }}";
+
+    const breadcrumbEl = document.getElementById('breadcrumb');
+    const fileTableBody = document.getElementById('fileTableBody');
+    const emptyState = document.getElementById('emptyState');
+    const errorState = document.getElementById('errorState');
+
+    let currentPath = [];
+    let currentCid = '0';
+
+    const VIDEO_EXTENSIONS = [
+        'mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'ts', 'm2ts', 'mpg', 'mpeg',
+        'mp3', 'aac', 'wav', 'flac', 'ogg',
+        'webm', 'm4v', '3gp', 'rm', 'rmvb'
+    ];
+
+    function formatFileSize(bytes) {
+        const size = Number(bytes);
+        if (!size || Number.isNaN(size)) return '-';
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const exponent = Math.min(Math.floor(Math.log(size) / Math.log(1024)), units.length - 1);
+        const result = size / Math.pow(1024, exponent);
+        return `${result.toFixed(exponent === 0 ? 0 : 2)} ${units[exponent]}`;
+    }
+
+    function formatTimestamp(value) {
+        const timestamp = Number(value);
+        if (!timestamp || Number.isNaN(timestamp)) return '-';
+        return new Date(timestamp * 1000).toLocaleString('zh-CN');
+    }
+
+    function getFileIcon(filename) {
+        const ext = (filename.split('.').pop() || '').toLowerCase();
+        const iconMap = {
+            'mp4': 'bi-film',
+            'mkv': 'bi-film',
+            'avi': 'bi-film',
+            'mov': 'bi-film',
+            'wmv': 'bi-film',
+            'flv': 'bi-film',
+            'ts': 'bi-film',
+            'm2ts': 'bi-film',
+            'mpg': 'bi-film',
+            'mpeg': 'bi-film',
+            'webm': 'bi-film',
+            'mp3': 'bi-music-note',
+            'aac': 'bi-music-note',
+            'wav': 'bi-music-note',
+            'flac': 'bi-music-note',
+            'ogg': 'bi-music-note',
+            'jpg': 'bi-image',
+            'jpeg': 'bi-image',
+            'png': 'bi-image',
+            'gif': 'bi-image',
+            'bmp': 'bi-image',
+            'pdf': 'bi-filetype-pdf',
+            'doc': 'bi-filetype-doc',
+            'docx': 'bi-filetype-docx',
+            'xls': 'bi-file-earmark-spreadsheet',
+            'xlsx': 'bi-file-earmark-spreadsheet',
+            'ppt': 'bi-file-earmark-slides',
+            'pptx': 'bi-file-earmark-slides',
+            'txt': 'bi-filetype-txt',
+            'zip': 'bi-file-zip',
+            'rar': 'bi-file-zip',
+            '7z': 'bi-file-zip'
+        };
+        return iconMap[ext] || 'bi-file-earmark';
+    }
+
+    function isFolder(file) {
+        const flag = String(file?.fc ?? '');
+        return flag === '0';
+    }
+
+    function isVideoFile(file) {
+        if (!file) return false;
+        const videoFlag = String(file.isv ?? file.is_video ?? '').toLowerCase();
+        if (videoFlag === '1' || videoFlag === 'true') {
+            return true;
+        }
+        const extCandidate = String(file.ico ?? file.ext ?? '').toLowerCase().replace('.', '');
+        if (extCandidate && VIDEO_EXTENSIONS.includes(extCandidate)) {
+            return true;
+        }
+        const name = String(file.fn ?? file.file_name ?? file.name ?? '').toLowerCase();
+        return VIDEO_EXTENSIONS.some(ext => name.endsWith(`.${ext}`));
+    }
+
+    function getPickcode(file) {
+        return String(file?.pc || file?.pick_code || file?.pickcode || file?.p || '').trim();
+    }
+
+    function getFileId(file) {
+        return String(file?.fid || file?.file_id || file?.id || '').trim();
+    }
+
+    function buildFullPath(fileName) {
+        const segments = currentPath
+            .map(item => item.name)
+            .filter(name => name && name !== '根目录' && name !== '根目錄');
+        if (fileName) {
+            segments.push(fileName);
+        }
+        return segments.join('/');
+    }
+
+    function updateBreadcrumb() {
+        if (!breadcrumbEl) return;
+        breadcrumbEl.innerHTML = '';
+
+        const rootLi = document.createElement('li');
+        rootLi.className = currentPath.length === 0 ? 'breadcrumb-item active' : 'breadcrumb-item';
+        if (currentPath.length === 0) {
+            rootLi.textContent = '根目录';
+        } else {
+            const link = document.createElement('a');
+            link.href = '#';
+            link.textContent = '根目录';
+            link.addEventListener('click', event => {
+                event.preventDefault();
+                navigateToRoot();
+            });
+            rootLi.appendChild(link);
+        }
+        breadcrumbEl.appendChild(rootLi);
+
+        currentPath.forEach((item, index) => {
+            const li = document.createElement('li');
+            li.className = 'breadcrumb-item';
+            const isLast = index === currentPath.length - 1;
+            if (isLast) {
+                li.classList.add('active');
+                li.textContent = item.name || '未命名文件夹';
+            } else {
+                const link = document.createElement('a');
+                link.href = '#';
+                link.textContent = item.name || '未命名文件夹';
+                link.addEventListener('click', event => {
+                    event.preventDefault();
+                    navigateToPath(index);
+                });
+                li.appendChild(link);
+            }
+            breadcrumbEl.appendChild(li);
+        });
+    }
+
+    function showLoading() {
+        emptyState.classList.add('d-none');
+        errorState.classList.add('d-none');
+        fileTableBody.innerHTML = '';
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = 5;
+        cell.className = 'text-center py-4 text-muted';
+        cell.innerHTML = '<div class="spinner-border text-primary me-2" role="status"></div> 加载中...';
+        row.appendChild(cell);
+        fileTableBody.appendChild(row);
+    }
+
+    function showError(message) {
+        fileTableBody.innerHTML = '';
+        emptyState.classList.add('d-none');
+        errorState.textContent = message || '加载失败，请稍后重试';
+        errorState.classList.remove('d-none');
+    }
+
+    function renderFiles(files) {
+        fileTableBody.innerHTML = '';
+        emptyState.classList.add('d-none');
+        errorState.classList.add('d-none');
+
+        if (!Array.isArray(files) || files.length === 0) {
+            emptyState.classList.remove('d-none');
+            return;
+        }
+
+        files.sort((a, b) => {
+            const aFolder = isFolder(a);
+            const bFolder = isFolder(b);
+            if (aFolder === bFolder) {
+                return 0;
+            }
+            return aFolder ? -1 : 1;
+        });
+
+        files.forEach((file, index) => {
+            const folder = isFolder(file);
+            const video = !folder && isVideoFile(file);
+            const fileName = file.fn || file.file_name || file.name || '未命名';
+            const row = document.createElement('tr');
+            row.className = `file-row${folder ? ' folder-row' : ''}`;
+
+            const indexTd = document.createElement('td');
+            indexTd.textContent = index + 1;
+            row.appendChild(indexTd);
+
+            const nameTd = document.createElement('td');
+            const icon = document.createElement('i');
+            icon.className = folder ? 'bi bi-folder-fill text-warning me-2' : `bi ${getFileIcon(fileName)} text-secondary me-2`;
+            nameTd.appendChild(icon);
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'file-name';
+            nameSpan.textContent = fileName;
+            nameTd.appendChild(nameSpan);
+            row.appendChild(nameTd);
+
+            const sizeTd = document.createElement('td');
+            sizeTd.textContent = folder ? '-' : formatFileSize(file.fs ?? file.s ?? file.size ?? file.file_size);
+            row.appendChild(sizeTd);
+
+            const timeTd = document.createElement('td');
+            timeTd.textContent = formatTimestamp(file.upt ?? file.update_time ?? file.te ?? file.t);
+            row.appendChild(timeTd);
+
+            const actionTd = document.createElement('td');
+            actionTd.className = 'file-actions';
+            if (folder) {
+                const folderId = String(file.fid ?? file.cid ?? file.id ?? '0');
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'btn btn-outline-secondary btn-sm';
+                btn.innerHTML = '<i class="bi bi-folder-symlink me-1"></i>进入';
+                btn.addEventListener('click', event => {
+                    event.stopPropagation();
+                    openFolder(folderId, fileName);
+                });
+                actionTd.appendChild(btn);
+                row.addEventListener('click', () => openFolder(folderId, fileName));
+                row.addEventListener('dblclick', () => openFolder(folderId, fileName));
+            } else if (video) {
+                const pickcode = getPickcode(file);
+                const fileId = getFileId(file);
+                const playBtn = document.createElement('button');
+                playBtn.type = 'button';
+                playBtn.className = 'btn btn-outline-primary btn-sm';
+                playBtn.innerHTML = '<i class="bi bi-play-fill me-1"></i>播放';
+                playBtn.addEventListener('click', event => {
+                    event.stopPropagation();
+                    openPlayer({ pickcode, fileId, name: fileName, fullPath: buildFullPath(fileName) });
+                });
+                actionTd.appendChild(playBtn);
+                row.addEventListener('dblclick', () => openPlayer({ pickcode, fileId, name: fileName, fullPath: buildFullPath(fileName) }));
+            } else {
+                actionTd.textContent = '-';
+            }
+            row.appendChild(actionTd);
+
+            fileTableBody.appendChild(row);
+        });
+    }
+
+    function openPlayer({ pickcode, fileId, name, fullPath }) {
+        if (!pickcode) {
+            alert('该文件缺少pickcode，无法播放');
+            return;
+        }
+        const params = new URLSearchParams();
+        params.set('pickcode', pickcode);
+        if (fileId) {
+            params.set('file_id', fileId);
+        }
+        if (name) {
+            params.set('name', name);
+        }
+        if (fullPath) {
+            params.set('path', fullPath);
+        }
+        window.location.href = `${playerUrlBase}?${params.toString()}`;
+    }
+
+    function navigateToRoot() {
+        currentPath = [];
+        currentCid = '0';
+        updateBreadcrumb();
+        loadFiles(currentCid);
+    }
+
+    function navigateToPath(index) {
+        currentPath = currentPath.slice(0, index + 1);
+        const target = currentPath[index];
+        currentCid = target?.cid ?? '0';
+        updateBreadcrumb();
+        loadFiles(currentCid);
+    }
+
+    function openFolder(cid, name) {
+        const sanitizedCid = String(cid || '0');
+        const folderName = name || '未命名文件夹';
+        currentPath.push({ cid: sanitizedCid, name: folderName });
+        currentCid = sanitizedCid;
+        updateBreadcrumb();
+        loadFiles(sanitizedCid);
+    }
+
+    async function loadFiles(cid) {
+        showLoading();
+        try {
+            const response = await axios.get(filesApiUrl, { params: { cid } });
+            const payload = response.data || {};
+            if (Number(payload.state) !== 1) {
+                throw new Error(payload.message || '获取文件列表失败');
+            }
+            renderFiles(payload.data || []);
+        } catch (error) {
+            console.error('加载文件失败:', error);
+            showError(error.message || '加载文件失败');
+        }
+    }
+
+    // 检查登录状态
+    async function checkLoginStatus() {
+        const badge = document.getElementById('loginStatusBadge');
+        try {
+            const response = await axios.get('/api/cloud115/check_auth_status');
+            const result = response.data;
+            if (result.state === 1 && result.data) {
+                const { logged_in, active_method } = result.data;
+                if (logged_in) {
+                    badge.className = 'badge bg-success me-2';
+                    badge.innerHTML = `<i class="bi bi-check-circle"></i> 已登录 (${active_method === 'driver' ? 'Cookie' : 'Token'})`;
+                } else {
+                    badge.className = 'badge bg-danger me-2';
+                    badge.innerHTML = '<i class="bi bi-x-circle"></i> 未登录';
+                }
+            }
+        } catch (error) {
+            console.error('检查登录状态失败:', error);
+            badge.className = 'badge bg-warning me-2';
+            badge.innerHTML = '<i class="bi bi-exclamation-triangle"></i> 状态未知';
+        }
+    }
+
+    // 页面加载时检查登录状态
+    checkLoginStatus();
+    updateBreadcrumb();
+    loadFiles(currentCid);
+</script>
+{% endblock %}
+
+
+

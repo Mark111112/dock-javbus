@@ -8,8 +8,185 @@
 <!-- HLS.js support for video.js -->
 <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 <style>
+    /* 确保页面可以滚动 */
+    body {
+        overflow-y: auto !important;
+    }
+
+    .container {
+        max-width: 1440px;
+        padding-left: 20px;
+        padding-right: 20px;
+    }
+    
+    /* 为播放器内容区域添加更紧凑的布局 */
+    .player-wrapper {
+        max-width: 1440px;
+        margin: 0 auto;
+        padding-top: 20px;
+    }
+    
+    /* 左右分栏布局 */
+    .player-layout {
+        display: flex;
+        gap: 20px;
+        align-items: flex-start;
+        margin-bottom: 30px;
+    }
+    
+    /* 左侧电影信息栏 */
+    .movie-info-sidebar {
+        flex: 0 0 405px;
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        padding: 20px;
+        position: sticky;
+        top: 20px;
+        max-height: calc(100vh - 40px);
+        overflow-y: auto;
+    }
+    
+    /* 右侧播放器区域 */
+    .player-main-content {
+        flex: 1;
+        min-width: 0;
+    }
+    
+    /* 电影封面样式 */
+    .movie-info-sidebar .cover-image {
+        width: 100%;
+        max-width: 365px;
+        aspect-ratio: 800/536;
+        object-fit: contain;
+        border-radius: 8px;
+        margin-bottom: 20px;
+        display: block;
+        margin-left: auto;
+        margin-right: auto;
+        background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+        background-size: 200% 100%;
+        animation: shimmer 1.5s infinite;
+    }
+    
+    .movie-info-sidebar .cover-image.loaded {
+        background: none;
+        animation: none;
+    }
+    
+    @keyframes shimmer {
+        0% { background-position: 200% 0; }
+        100% { background-position: -200% 0; }
+    }
+    
+    /* 标签样式 */
+    .movie-info-sidebar .genre-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-bottom: 15px;
+    }
+    
+    .movie-info-sidebar .genre-tag {
+        display: inline-block;
+        padding: 4px 10px;
+        background: #007bff;
+        color: white;
+        border-radius: 4px;
+        font-size: 13px;
+        text-decoration: none;
+        transition: background 0.2s;
+    }
+    
+    .movie-info-sidebar .genre-tag:hover {
+        background: #0056b3;
+        color: white;
+    }
+    
+    /* 演员列表样式 */
+    .movie-info-sidebar .actors-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-bottom: 15px;
+    }
+    
+    .movie-info-sidebar .actor-link {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        background: #f8f9fa;
+        border-radius: 20px;
+        text-decoration: none;
+        color: #333;
+        transition: all 0.2s;
+        max-width: 180px;
+    }
+    
+    .movie-info-sidebar .actor-link:hover {
+        background: #e9ecef;
+        transform: translateY(-1px);
+    }
+    
+    .movie-info-sidebar .actor-link img {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        object-fit: cover;
+        flex-shrink: 0;
+        background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+        background-size: 200% 100%;
+        animation: shimmer 1.5s infinite;
+    }
+    
+    .movie-info-sidebar .actor-link img.loaded {
+        background: none;
+        animation: none;
+    }
+    
+    .movie-info-sidebar .actor-link span {
+        font-size: 13px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    
+    .movie-info-sidebar h5 {
+        font-size: 16px;
+        font-weight: 600;
+        margin-top: 20px;
+        margin-bottom: 10px;
+        color: #333;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    
+    .movie-info-sidebar h5:first-child {
+        margin-top: 0;
+    }
+    
+    .movie-info-sidebar p {
+        font-size: 14px;
+        line-height: 1.6;
+        color: #666;
+        margin-bottom: 10px;
+    }
+    
+    .movie-info-sidebar .description-text {
+        font-size: 0.85rem;
+        line-height: 1.7;
+        text-align: justify;
+    }
+    
+    /* 播放器容器 */
     #player-container {
         position: relative;
+        width: 100%;
+        background: #000;
+        border-radius: 8px;
+        overflow: hidden;
     }
     
     #loading-overlay {
@@ -49,16 +226,175 @@
     
     .transcode-controls {
         margin-top: 10px;
+        padding: 15px;
+        background: #f8f9fa;
+        border-radius: 0 0 8px 8px;
+    }
+    
+    /* 文件信息区域 */
+    .video-info {
+        margin-top: 20px;
+        padding: 20px;
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    .video-info strong {
+        font-size: 16px;
+        color: #333;
+    }
+    
+    .video-info p {
+        margin-bottom: 8px;
+        font-size: 14px;
+    }
+    
+    /* 标题栏 */
+    .player-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        padding: 15px 20px;
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    .player-header h3 {
+        margin: 0;
+        font-size: 20px;
+    }
+    
+    /* 移动端响应式 */
+    @media (max-width: 992px) {
+        .player-layout {
+            flex-direction: column;
+        }
+        
+        .movie-info-sidebar {
+            flex: none;
+            width: 100%;
+            position: static;
+            max-height: none;
+            order: 2;
+            margin-top: 20px;
+        }
+        
+        .player-main-content {
+            width: 100%;
+            order: 1;
+        }
     }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="container-fluid">
-    <div class="row">
-        <!-- Video player column -->
-        <div class="col-lg-9">
-            <div class="card mb-4">
+<div class="container">
+    <div class="player-wrapper">
+        <!-- 标题栏 -->
+        <div class="player-header">
+            <h3>
+                {% if movie.video_id %}
+                <span class="badge bg-success">{{ movie.video_id }}</span>
+                {% endif %}
+                {{ movie.title }}
+            </h3>
+            <div class="btn-group">
+                <a href="potplayer://{{ movie.play_url }}" class="btn btn-outline-primary btn-sm">
+                    <i class="fas fa-play-circle"></i> Potplayer播放
+                </a>
+                {% if movie.video_id %}
+                <a href="{{ url_for('movie_detail', movie_id=movie.video_id) }}" class="btn btn-outline-info btn-sm">
+                    <i class="fas fa-info-circle"></i> 详情
+                </a>
+                {% endif %}
+            </div>
+        </div>
+        
+        <!-- 左右分栏布局 -->
+        <div class="player-layout">
+            <!-- 左侧：电影信息 -->
+            <aside class="movie-info-sidebar">
+                {% if movie_detail %}
+                    {% set parsed_data = movie_detail.get('parsed_data', {}) %}
+                    
+                    <!-- 封面图 -->
+                    {% if movie.video_id %}
+                    <img src="/images/covers/{{ movie.video_id }}.jpg" 
+                         onerror="this.onerror=null; this.src='{{ movie_detail.get('cover', url_for('static', filename='img/no_image.jpg')) }}';" 
+                         alt="{{ movie.video_id }}"
+                         class="cover-image"
+                         onload="this.classList.add('loaded')">
+                    {% else %}
+                    <img src="{{ url_for('static', filename='img/no_image.jpg') }}" 
+                         alt="默认封面" 
+                         class="cover-image">
+                    {% endif %}
+                    
+                    <!-- 类别标签 -->
+                    {% if parsed_data.get('genres') and parsed_data.get('genres')|length > 0 %}
+                    <h5><i class="fas fa-tags"></i> 类别</h5>
+                    <div class="genre-tags">
+                        {% for genre in parsed_data.get('genres', []) %}
+                        <span class="genre-tag">{{ genre.get('name', genre) if genre is mapping else genre }}</span>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                    
+                    <!-- 演员列表 -->
+                    {% if parsed_data.get('stars') and parsed_data.get('stars')|length > 0 %}
+                    <h5><i class="fas fa-users"></i> 演员</h5>
+                    <div class="actors-list">
+                        {% for star in parsed_data.get('stars', []) %}
+                        <a href="{{ url_for('actor_detail', actor_id=star.get('id', '')) }}" class="actor-link">
+                            <img src="/images/actor/{{ star.get('id', '') }}.jpg" 
+                                 onerror="this.onerror=null; this.src='https://www.javbus.com/pics/actress/{{ star.get('id', '') }}_a.jpg';"
+                                 alt="{{ star.get('name', '') }}"
+                                 onload="this.classList.add('loaded')">
+                            <span>{{ star.get('name', '') }}</span>
+                        </a>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                    
+                    <!-- 发行日期 -->
+                    {% if movie_detail.get('date') %}
+                    <h5><i class="fas fa-calendar"></i> 发行日期</h5>
+                    <p>{{ movie_detail.get('date') }}</p>
+                    {% endif %}
+                    
+                    {% set original_description = parsed_data.get('description') or movie_detail.get('description') %}
+                    {% set translated_description = parsed_data.get('translated_description') or movie_detail.get('translated_description') %}
+
+                    {% if original_description %}
+                    <h5><i class="fas fa-info-circle"></i> 简介（原文）</h5>
+                    <div class="description-text" style="white-space: pre-line;">{{ original_description }}</div>
+                    {% endif %}
+
+                    {% if translated_description %}
+                    <h5><i class="fas fa-language"></i> 简介（翻译）</h5>
+                    <div class="description-text" style="white-space: pre-line;">{{ translated_description }}</div>
+                    {% endif %}
+                {% else %}
+                    <img src="{{ url_for('static', filename='img/no_image.jpg') }}" 
+                         alt="默认封面" 
+                         class="cover-image">
+                    <p class="text-muted text-center"><small>暂无电影详细信息</small></p>
+                    {% if movie.video_id %}
+                    <p class="text-center">
+                        <a href="{{ url_for('movie_detail', movie_id=movie.video_id) }}" class="btn btn-outline-info btn-sm">
+                            查看详情
+                        </a>
+                    </p>
+                    {% endif %}
+                {% endif %}
+            </aside>
+            
+            <!-- 右侧：播放器 -->
+            <div class="player-main-content">
+                <div class="card mb-3">
                 <div class="card-body p-0">
                     <!-- Video player container with loading overlay -->
                     <div id="player-container">
@@ -92,8 +428,8 @@
                     
                     <div id="error-container"></div>
                     
-                    <div class="transcode-controls p-2 bg-light">
-                        <div class="d-flex justify-content-between">
+                    <div class="transcode-controls">
+                        <div class="d-flex justify-content-between align-items-center">
                             <div>
                                 <span id="playback-info" class="text-muted"></span>
                             </div>
@@ -106,142 +442,26 @@
                 </div>
             </div>
             
-            <!-- Movie title and info -->
-            <div class="card mb-4">
-                <div class="card-body">
-                    <div class="d-flex justify-content-between align-items-center mb-3">
-                        <h3 class="card-title mb-0">
-                            {% if movie.video_id %}
-                            <span class="badge bg-success">{{ movie.video_id }}</span>
-                            {% endif %}
-                            {{ movie.title }}
-                        </h3>
-                        
-                        <div class="btn-group">
-                            <a href="potplayer://{{ movie.play_url }}" class="btn btn-outline-primary">
-                                <i class="fas fa-play-circle"></i> Potplayer播放
-                            </a>
-                            {% if movie.video_id %}
-                            <a href="{{ url_for('movie_detail', movie_id=movie.video_id) }}" class="btn btn-outline-info">
-                                <i class="fas fa-info-circle"></i> 详情
-                            </a>
-                            {% endif %}
+            <!-- 播放信息 -->
+            <div class="video-info">
+                <div class="d-flex flex-wrap gap-3 justify-content-between align-items-start">
+                    <div class="flex-grow-1">
+                        <strong>播放信息</strong>
+                        <div class="video-info-grid mt-2" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px 24px; font-size: 0.92rem;">
+                            <p style="margin: 0;"><strong>播放模式：</strong><span id="playbackMode">Jellyfin 播放</span></p>
+                            <p style="margin: 0;"><strong>路径：</strong><span id="filePath" class="text-break">{{ movie.path }}</span></p>
+                            <p style="margin: 0;"><strong>文件名：</strong><span id="fileName">{{ movie.path.split('/')[-1] if movie.path else '--' }}</span></p>
+                            <p style="margin: 0;"><strong>时长：</strong><span id="videoDuration">--:--</span></p>
+                            <p style="margin: 0;"><strong>分辨率：</strong><span id="videoResolution">-- x --</span></p>
+                            <p style="margin: 0;"><strong>文件大小：</strong><span id="fileSize">--</span></p>
                         </div>
                     </div>
-                    
-                    <div class="row">
-                        {% if movie.date or movie.actors %}
-                        <div class="col-md-6">
-                            <table class="table">
-                                <tbody>
-                                    {% if movie.date %}
-                                    <tr>
-                                        <th scope="row" style="width: 120px;">日期</th>
-                                        <td>{{ movie.date }}</td>
-                                    </tr>
-                                    {% endif %}
-                                    
-                                    {% if movie.actors and movie.actors|length > 0 %}
-                                    <tr>
-                                        <th scope="row">演员</th>
-                                        <td>
-                                            {% for actor in movie.actors %}
-                                                {{ actor }}{% if not loop.last %}, {% endif %}
-                                            {% endfor %}
-                                        </td>
-                                    </tr>
-                                    {% endif %}
-                                </tbody>
-                            </table>
-                        </div>
-                        {% endif %}
-                        
-                        <div class="col-md-6">
-                            <table class="table">
-                                <tbody>
-                                    <tr>
-                                        <th scope="row" style="width: 120px;">Jellyfin 库</th>
-                                        <td>{{ movie.library_name }}</td>
-                                    </tr>
-                                    <tr>
-                                        <th scope="row">文件路径</th>
-                                        <td class="text-truncate" style="max-width: 300px;" title="{{ movie.path }}">
-                                            {{ movie.path }}
-                                        </td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
+                    <div class="status-container" style="margin-left: auto; max-width: 340px; width: 100%;">
+                        <div id="jellyfinStatus" class="alert alert-info" style="display: none; margin: 0;"></div>
                     </div>
                 </div>
             </div>
         </div>
-        
-        <!-- Movie details column -->
-        <div class="col-lg-3">
-            {% if movie_info %}
-            <div class="card mb-4">
-                <div class="card-header">
-                    <h5 class="mb-0">影片详情</h5>
-                </div>
-                <div class="card-body">
-                    {% if movie.cover_image %}
-                    <img src="{{ movie.cover_image }}" class="img-fluid mb-3" alt="{{ movie_info.title }}">
-                    {% elif movie_info.img %}
-                    <img src="{{ movie_info.img }}" class="img-fluid mb-3" alt="{{ movie.title }}">
-                    {% endif %}
-                    
-                    <h5>{{ movie_info.title }}</h5>
-                    
-                    {% if movie_info.date %}
-                    <p class="text-muted">
-                        <i class="fas fa-calendar-alt"></i> {{ movie_info.date }}
-                    </p>
-                    {% endif %}
-                    
-                    {% if movie_info.stars and movie_info.stars|length > 0 %}
-                    <h6 class="mt-3">演员</h6>
-                    <div class="row row-cols-2 g-2 mb-3">
-                        {% for star in movie_info.stars %}
-                        <div class="col">
-                            <a href="{{ url_for('actor_detail', actor_id=star.id) }}" class="text-decoration-none">
-                                <div class="d-flex align-items-center">
-                                    {% if star.avatar %}
-                                    <img src="{{ star.avatar }}" class="rounded-circle me-2" width="40" height="40" alt="{{ star.name }}">
-                                    {% else %}
-                                    <div class="rounded-circle bg-secondary me-2 d-flex align-items-center justify-content-center" style="width: 40px; height: 40px;">
-                                        <i class="fas fa-user text-white"></i>
-                                    </div>
-                                    {% endif %}
-                                    <span>{{ star.name }}</span>
-                                </div>
-                            </a>
-                        </div>
-                        {% endfor %}
-                    </div>
-                    {% endif %}
-                    
-                    {% if movie_info.genre and movie_info.genre|length > 0 %}
-                    <h6>类别</h6>
-                    <div class="mb-3">
-                        {% for genre in movie_info.genre %}
-                        <span class="badge bg-secondary me-1 mb-1">{{ genre }}</span>
-                        {% endfor %}
-                    </div>
-                    {% endif %}
-                </div>
-            </div>
-            {% else %}
-            <div class="card mb-4">
-                <div class="card-body">
-                    {% if movie.video_id %}
-                    <p class="mb-0">影片信息未找到，请 <a href="{{ url_for('movie_detail', movie_id=movie.video_id) }}">点击此处</a> 查看详情。</p>
-                    {% else %}
-                    <p class="mb-0">未提取到影片ID，无法显示详细信息。</p>
-                    {% endif %}
-                </div>
-            </div>
-            {% endif %}
         </div>
     </div>
 </div>
@@ -344,6 +564,15 @@
                 });
             }
             
+            // Update metadata when loaded
+            player.on('loadedmetadata', function() {
+                updateVideoMetadata();
+            });
+            
+            player.on('canplay', function() {
+                updateVideoMetadata();
+            });
+            
             updatePlaybackInfo(!isTranscodingEnabled ? '直接播放' : '转码播放');
         }
         
@@ -372,7 +601,34 @@
         
         // Update playback info text
         function updatePlaybackInfo(mode) {
-            playbackInfo.textContent = `播放模式: ${mode}`;
+            const playbackModeEl = document.getElementById('playbackMode');
+            if (playbackModeEl) {
+                playbackModeEl.textContent = mode;
+            }
+        }
+        
+        // Update video metadata (duration and resolution)
+        function updateVideoMetadata() {
+            const videoEl = document.getElementById('jellyfin-player');
+            if (!videoEl) return;
+            
+            const durationEl = document.getElementById('videoDuration');
+            const resolutionEl = document.getElementById('videoResolution');
+            
+            if (durationEl && videoEl.duration && !isNaN(videoEl.duration)) {
+                const hours = Math.floor(videoEl.duration / 3600);
+                const minutes = Math.floor((videoEl.duration % 3600) / 60);
+                const seconds = Math.floor(videoEl.duration % 60);
+                if (hours > 0) {
+                    durationEl.textContent = `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+                } else {
+                    durationEl.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+                }
+            }
+            
+            if (resolutionEl && videoEl.videoWidth && videoEl.videoHeight) {
+                resolutionEl.textContent = `${videoEl.videoWidth} x ${videoEl.videoHeight}`;
+            }
         }
         
         // Get device profile for transcoding
