@@ -13,22 +13,45 @@
         white-space: nowrap;
     }
     .file-row {
-        cursor: default;
-    }
-    .file-row.folder-row {
         cursor: pointer;
+        transition: background-color 0.2s;
+    }
+    .file-row:hover {
+        background-color: rgba(0, 123, 255, 0.05);
     }
     .file-name {
         word-break: break-all;
     }
-    .file-actions .btn {
-        margin-right: 6px;
-    }
-    .file-actions .btn:last-child {
-        margin-right: 0;
-    }
     .state-message {
         margin-top: 1rem;
+    }
+    .sortable-header {
+        cursor: pointer;
+        user-select: none;
+        position: relative;
+        padding-right: 20px !important;
+    }
+    .sortable-header:hover {
+        background-color: rgba(0, 0, 0, 0.05);
+    }
+    .sortable-header .sort-icon {
+        position: absolute;
+        right: 8px;
+        top: 50%;
+        transform: translateY(-50%);
+        opacity: 0.3;
+        transition: opacity 0.2s;
+    }
+    .sortable-header.active .sort-icon {
+        opacity: 1;
+    }
+    .image-preview-modal .modal-dialog {
+        max-width: 90vw;
+    }
+    .image-preview-modal img {
+        max-width: 100%;
+        max-height: 80vh;
+        object-fit: contain;
     }
 </style>
 {% endblock %}
@@ -39,8 +62,8 @@
         <div class="col-12">
             <div class="d-flex justify-content-between align-items-center mb-4">
                 <h2 class="mb-0">
-                    <i class="bi bi-cloud"></i> 115网盘浏览器
-                </h2>
+                <i class="bi bi-cloud"></i> 115网盘浏览器
+            </h2>
                 <div>
                     <span id="loginStatusBadge" class="badge bg-secondary me-2">
                         <i class="bi bi-hourglass-split"></i> 检查中
@@ -64,10 +87,18 @@
                             <thead>
                                 <tr>
                                     <th scope="col" style="width: 60px;">#</th>
-                                    <th scope="col">名称</th>
-                                    <th scope="col" style="width: 140px;">大小</th>
-                                    <th scope="col" style="width: 180px;">修改时间</th>
-                                    <th scope="col" style="width: 160px;">操作</th>
+                                    <th scope="col" class="sortable-header" data-sort="name">
+                                        名称
+                                        <i class="bi bi-arrow-down-up sort-icon"></i>
+                                    </th>
+                                    <th scope="col" class="sortable-header" data-sort="size" style="width: 140px;">
+                                        大小
+                                        <i class="bi bi-arrow-down-up sort-icon"></i>
+                                    </th>
+                                    <th scope="col" class="sortable-header" data-sort="time" style="width: 180px;">
+                                        修改时间
+                                        <i class="bi bi-arrow-down-up sort-icon"></i>
+                                    </th>
                                 </tr>
                             </thead>
                             <tbody id="fileTableBody"></tbody>
@@ -77,6 +108,39 @@
                         <i class="bi bi-info-circle"></i> 此文件夹为空
                     </div>
                     <div id="errorState" class="alert alert-danger text-center d-none state-message"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 图片预览模态框 -->
+<div class="modal fade image-preview-modal" id="imagePreviewModal" tabindex="-1" aria-labelledby="imagePreviewModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="imagePreviewModalLabel">图片预览</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body text-center position-relative">
+                <!-- 上一张按钮 -->
+                <button type="button" class="btn btn-dark position-absolute top-50 start-0 translate-middle-y ms-2" 
+                        id="prevImageBtn" style="z-index: 10; opacity: 0.7;" title="上一张 (←)">
+                    <i class="bi bi-chevron-left"></i>
+                </button>
+                
+                <!-- 图片 -->
+                <img id="previewImage" src="" alt="Preview" class="img-fluid" style="max-height: 70vh;">
+                
+                <!-- 下一张按钮 -->
+                <button type="button" class="btn btn-dark position-absolute top-50 end-0 translate-middle-y me-2" 
+                        id="nextImageBtn" style="z-index: 10; opacity: 0.7;" title="下一张 (→)">
+                    <i class="bi bi-chevron-right"></i>
+                </button>
+                
+                <!-- 图片计数 -->
+                <div class="position-absolute bottom-0 start-50 translate-middle-x mb-2" style="z-index: 10;">
+                    <span class="badge bg-dark" id="imageCounter" style="opacity: 0.8;"></span>
                 </div>
             </div>
         </div>
@@ -96,11 +160,22 @@
 
     let currentPath = [];
     let currentCid = '0';
+    let currentFiles = [];
+    let sortConfig = { key: null, direction: 'asc' };
+    
+    // 图片导航相关变量
+    let imageFiles = [];  // 当前文件夹中的所有图片文件
+    let currentImageIndex = -1;  // 当前显示的图片索引
+    let imagePreviewModalInstance = null;  // 模态框实例
 
     const VIDEO_EXTENSIONS = [
         'mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'ts', 'm2ts', 'mpg', 'mpeg',
         'mp3', 'aac', 'wav', 'flac', 'ogg',
         'webm', 'm4v', '3gp', 'rm', 'rmvb'
+    ];
+
+    const IMAGE_EXTENSIONS = [
+        'jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg', 'ico', 'tiff', 'tif'
     ];
 
     function formatFileSize(bytes) {
@@ -174,6 +249,16 @@
         }
         const name = String(file.fn ?? file.file_name ?? file.name ?? '').toLowerCase();
         return VIDEO_EXTENSIONS.some(ext => name.endsWith(`.${ext}`));
+    }
+
+    function isImageFile(file) {
+        if (!file) return false;
+        const extCandidate = String(file.ico ?? file.ext ?? '').toLowerCase().replace('.', '');
+        if (extCandidate && IMAGE_EXTENSIONS.includes(extCandidate)) {
+            return true;
+        }
+        const name = String(file.fn ?? file.file_name ?? file.name ?? '').toLowerCase();
+        return IMAGE_EXTENSIONS.some(ext => name.endsWith(`.${ext}`));
     }
 
     function getPickcode(file) {
@@ -255,7 +340,51 @@
         errorState.classList.remove('d-none');
     }
 
-    function renderFiles(files) {
+    function sortFiles(files, key, direction) {
+        const sorted = [...files];
+        sorted.sort((a, b) => {
+            const aFolder = isFolder(a);
+            const bFolder = isFolder(b);
+            
+            // 文件夹始终排在前面
+            if (aFolder !== bFolder) {
+                return aFolder ? -1 : 1;
+            }
+
+            let aValue, bValue;
+            if (key === 'name') {
+                aValue = (a.fn || a.file_name || a.name || '').toLowerCase();
+                bValue = (b.fn || b.file_name || b.name || '').toLowerCase();
+            } else if (key === 'size') {
+                aValue = Number(a.fs ?? a.s ?? a.size ?? a.file_size ?? 0);
+                bValue = Number(b.fs ?? b.s ?? b.size ?? b.file_size ?? 0);
+            } else if (key === 'time') {
+                aValue = Number(a.upt ?? a.update_time ?? a.te ?? a.t ?? 0);
+                bValue = Number(b.upt ?? b.update_time ?? b.te ?? b.t ?? 0);
+            }
+
+            if (aValue < bValue) return direction === 'asc' ? -1 : 1;
+            if (aValue > bValue) return direction === 'asc' ? 1 : -1;
+            return 0;
+        });
+        return sorted;
+    }
+
+    function updateSortIcons(activeKey, direction) {
+        document.querySelectorAll('.sortable-header').forEach(header => {
+            const sortKey = header.getAttribute('data-sort');
+            const icon = header.querySelector('.sort-icon');
+            if (sortKey === activeKey) {
+                header.classList.add('active');
+                icon.className = direction === 'asc' ? 'bi bi-arrow-up sort-icon' : 'bi bi-arrow-down sort-icon';
+            } else {
+                header.classList.remove('active');
+                icon.className = 'bi bi-arrow-down-up sort-icon';
+            }
+        });
+    }
+
+    function renderFiles(files, skipSort = false) {
         fileTableBody.innerHTML = '';
         emptyState.classList.add('d-none');
         errorState.classList.add('d-none');
@@ -265,21 +394,29 @@
             return;
         }
 
-        files.sort((a, b) => {
-            const aFolder = isFolder(a);
-            const bFolder = isFolder(b);
-            if (aFolder === bFolder) {
-                return 0;
-            }
-            return aFolder ? -1 : 1;
-        });
+        currentFiles = files;
 
-        files.forEach((file, index) => {
+        // 应用排序
+        let displayFiles = files;
+        if (!skipSort && sortConfig.key) {
+            displayFiles = sortFiles(files, sortConfig.key, sortConfig.direction);
+        } else if (skipSort) {
+            // 默认排序：文件夹在前
+            displayFiles = [...files].sort((a, b) => {
+                const aFolder = isFolder(a);
+                const bFolder = isFolder(b);
+                if (aFolder === bFolder) return 0;
+                return aFolder ? -1 : 1;
+            });
+        }
+
+        displayFiles.forEach((file, index) => {
             const folder = isFolder(file);
             const video = !folder && isVideoFile(file);
+            const image = !folder && isImageFile(file);
             const fileName = file.fn || file.file_name || file.name || '未命名';
             const row = document.createElement('tr');
-            row.className = `file-row${folder ? ' folder-row' : ''}`;
+            row.className = 'file-row';
 
             const indexTd = document.createElement('td');
             indexTd.textContent = index + 1;
@@ -303,38 +440,21 @@
             timeTd.textContent = formatTimestamp(file.upt ?? file.update_time ?? file.te ?? file.t);
             row.appendChild(timeTd);
 
-            const actionTd = document.createElement('td');
-            actionTd.className = 'file-actions';
-            if (folder) {
-                const folderId = String(file.fid ?? file.cid ?? file.id ?? '0');
-                const btn = document.createElement('button');
-                btn.type = 'button';
-                btn.className = 'btn btn-outline-secondary btn-sm';
-                btn.innerHTML = '<i class="bi bi-folder-symlink me-1"></i>进入';
-                btn.addEventListener('click', event => {
-                    event.stopPropagation();
+            // 添加点击事件
+            row.addEventListener('click', () => {
+                if (folder) {
+                    const folderId = String(file.fid ?? file.cid ?? file.id ?? '0');
                     openFolder(folderId, fileName);
-                });
-                actionTd.appendChild(btn);
-                row.addEventListener('click', () => openFolder(folderId, fileName));
-                row.addEventListener('dblclick', () => openFolder(folderId, fileName));
-            } else if (video) {
-                const pickcode = getPickcode(file);
-                const fileId = getFileId(file);
-                const playBtn = document.createElement('button');
-                playBtn.type = 'button';
-                playBtn.className = 'btn btn-outline-primary btn-sm';
-                playBtn.innerHTML = '<i class="bi bi-play-fill me-1"></i>播放';
-                playBtn.addEventListener('click', event => {
-                    event.stopPropagation();
+                } else if (video) {
+                    const pickcode = getPickcode(file);
+                    const fileId = getFileId(file);
                     openPlayer({ pickcode, fileId, name: fileName, fullPath: buildFullPath(fileName) });
-                });
-                actionTd.appendChild(playBtn);
-                row.addEventListener('dblclick', () => openPlayer({ pickcode, fileId, name: fileName, fullPath: buildFullPath(fileName) }));
-            } else {
-                actionTd.textContent = '-';
-            }
-            row.appendChild(actionTd);
+                } else if (image) {
+                    const imageUrl = file.uo || file.u || '';
+                    const pickcode = getPickcode(file);
+                    openImage(imageUrl, pickcode, fileName);
+                }
+            });
 
             fileTableBody.appendChild(row);
         });
@@ -357,6 +477,88 @@
             params.set('path', fullPath);
         }
         window.location.href = `${playerUrlBase}?${params.toString()}`;
+    }
+
+    function openImage(imageUrl, pickcode, fileName) {
+        // 构建当前文件夹中的所有图片文件列表
+        imageFiles = currentFiles.filter(file => !isFolder(file) && isImageFile(file));
+        
+        // 找到当前图片的索引
+        currentImageIndex = imageFiles.findIndex(file => {
+            const filePickcode = getPickcode(file);
+            const fileUrl = file.uo || file.u || '';
+            return filePickcode === pickcode || fileUrl === imageUrl;
+        });
+        
+        if (currentImageIndex === -1 && imageFiles.length > 0) {
+            currentImageIndex = 0;
+        }
+        
+        // 显示图片
+        showImageAtIndex(currentImageIndex);
+    }
+    
+    function showImageAtIndex(index) {
+        if (index < 0 || index >= imageFiles.length) {
+            return;
+        }
+        
+        currentImageIndex = index;
+        const file = imageFiles[index];
+        const fileName = file.fn || file.file_name || file.name || '未命名';
+        const imageUrl = file.uo || file.u || '';
+        const pickcode = getPickcode(file);
+        
+        // 优先使用 uo 字段（原图URL/大图），如果没有则使用 pickcode 构建下载URL
+        let finalImageUrl = imageUrl;
+        if (!finalImageUrl && pickcode) {
+            finalImageUrl = `https://webapi.115.com/files/download?pickcode=${pickcode}`;
+        }
+        
+        if (!finalImageUrl) {
+            alert('该图片缺少URL和pickcode，无法预览');
+            return;
+        }
+        
+        const modalEl = document.getElementById('imagePreviewModal');
+        const modalTitle = document.getElementById('imagePreviewModalLabel');
+        const previewImage = document.getElementById('previewImage');
+        const imageCounter = document.getElementById('imageCounter');
+        const prevBtn = document.getElementById('prevImageBtn');
+        const nextBtn = document.getElementById('nextImageBtn');
+        
+        modalTitle.textContent = fileName;
+        previewImage.src = finalImageUrl;
+        previewImage.alt = fileName;
+        
+        // 更新计数器
+        imageCounter.textContent = `${currentImageIndex + 1} / ${imageFiles.length}`;
+        
+        // 更新按钮状态
+        prevBtn.disabled = currentImageIndex === 0;
+        nextBtn.disabled = currentImageIndex === imageFiles.length - 1;
+        prevBtn.style.opacity = currentImageIndex === 0 ? '0.3' : '0.7';
+        nextBtn.style.opacity = currentImageIndex === imageFiles.length - 1 ? '0.3' : '0.7';
+        
+        // 显示模态框
+        if (!imagePreviewModalInstance) {
+            imagePreviewModalInstance = new bootstrap.Modal(modalEl);
+            imagePreviewModalInstance.show();
+        } else if (!modalEl.classList.contains('show')) {
+            imagePreviewModalInstance.show();
+        }
+    }
+    
+    function showPreviousImage() {
+        if (currentImageIndex > 0) {
+            showImageAtIndex(currentImageIndex - 1);
+        }
+    }
+    
+    function showNextImage() {
+        if (currentImageIndex < imageFiles.length - 1) {
+            showImageAtIndex(currentImageIndex + 1);
+        }
     }
 
     function navigateToRoot() {
@@ -391,7 +593,7 @@
             if (Number(payload.state) !== 1) {
                 throw new Error(payload.message || '获取文件列表失败');
             }
-            renderFiles(payload.data || []);
+            renderFiles(payload.data || [], true); // skipSort=true，使用默认排序
         } catch (error) {
             console.error('加载文件失败:', error);
             showError(error.message || '加载文件失败');
@@ -421,7 +623,53 @@
         }
     }
 
+    // 添加排序事件监听
+    document.querySelectorAll('.sortable-header').forEach(header => {
+        header.addEventListener('click', () => {
+            const sortKey = header.getAttribute('data-sort');
+            
+            if (sortConfig.key === sortKey) {
+                // 切换排序方向
+                sortConfig.direction = sortConfig.direction === 'asc' ? 'desc' : 'asc';
+            } else {
+                // 新的排序键，默认升序
+                sortConfig.key = sortKey;
+                sortConfig.direction = 'asc';
+            }
+            
+            updateSortIcons(sortConfig.key, sortConfig.direction);
+            renderFiles(currentFiles, false);
+        });
+    });
+
     // 页面加载时检查登录状态
+    // 图片导航按钮事件监听
+    document.getElementById('prevImageBtn').addEventListener('click', showPreviousImage);
+    document.getElementById('nextImageBtn').addEventListener('click', showNextImage);
+    
+    // 键盘事件监听（方向键）
+    document.addEventListener('keydown', function(event) {
+        const modalEl = document.getElementById('imagePreviewModal');
+        // 只在模态框显示时响应键盘事件
+        if (modalEl && modalEl.classList.contains('show')) {
+            if (event.key === 'ArrowLeft') {
+                event.preventDefault();
+                showPreviousImage();
+            } else if (event.key === 'ArrowRight') {
+                event.preventDefault();
+                showNextImage();
+            } else if (event.key === 'Escape') {
+                // Escape 键关闭模态框（Bootstrap 默认行为）
+            }
+        }
+    });
+    
+    // 模态框关闭时清理
+    document.getElementById('imagePreviewModal').addEventListener('hidden.bs.modal', function() {
+        imageFiles = [];
+        currentImageIndex = -1;
+    });
+    
     checkLoginStatus();
     updateBreadcrumb();
     loadFiles(currentCid);

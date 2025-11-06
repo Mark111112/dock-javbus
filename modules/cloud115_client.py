@@ -365,6 +365,26 @@ class DriverClient:
         except (TypeError, ValueError):
             size_int = 0
 
+        # 图片URL字段处理：
+        # u = 缩略图URL (小图，_100)
+        # uo = 原图URL (大图，_0)
+        # 注意：Driver API 返回的 uo 可能是错误的（也是 _100），需要修正
+        image_url_original = str(item.get("uo") or "").strip()
+        image_url_thumb = str(item.get("u") or "").strip()
+        
+        # 修正图片URL：将 _100 替换为 _0 以获取原图
+        # 115的图片URL格式：http://thumb.115.com/thumb/.../xxx_100?... (缩略图)
+        #                   http://thumb.115.com/thumb/.../xxx_0?...   (原图)
+        if image_url_original and '_100?' in image_url_original:
+            # 将 _100? 替换为 _0? 以获取原图
+            image_url_original = image_url_original.replace('_100?', '_0?')
+        elif not image_url_original and image_url_thumb:
+            # 如果 uo 为空，从 u 转换
+            if '_100?' in image_url_thumb:
+                image_url_original = image_url_thumb.replace('_100?', '_0?')
+            else:
+                image_url_original = image_url_thumb
+        
         return {
             "aid": str(item.get("aid") or "").strip(),
             "cid": cid,
@@ -379,12 +399,16 @@ class DriverClient:
             "tp": item.get("tp") or item.get("create_time"),
             "t": item.get("t") or item.get("update_time"),
             "ut": item.get("t") or item.get("update_time"),
+            "upt": item.get("t") or item.get("update_time"),
+            "te": item.get("te") or item.get("t") or item.get("update_time"),
             "fs": size_int,
             "s": size_int,
             "size": size_int,
             "m": item.get("m"),
             "fl": item.get("fl") or item.get("labels") or [],
             "thumb": item.get("thumb") or "",
+            "uo": image_url_original,  # 原图URL (大图) - 优先使用
+            "u": image_url_thumb,      # 缩略图URL (小图)
             "fc": "1" if is_file else "0",
             "isv": 1 if ico.lower() in VIDEO_EXTENSIONS else 0,
         }

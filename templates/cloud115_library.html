@@ -294,9 +294,6 @@
                                     <i class="fas fa-circle-notch fa-spin me-2"></i>检查登录状态...
                                 </span>
                             </a></li>
-                            <li><a class="dropdown-item d-none" id="logout115Button" href="#" onclick="logout115()">
-                                <i class="fas fa-sign-out-alt me-2"></i>115退出登录
-                            </a></li>
                             <li>
                                 <a class="dropdown-item" href="#" id="update-cloud115-sizes-btn">
                                     <i class="fas fa-database me-2"></i>更新115文件信息
@@ -967,7 +964,6 @@
         const qrcodeContainer = document.getElementById('login115QRCode');
         const statusElement = document.getElementById('login115Status');
         const refreshButton = document.getElementById('login115RefreshBtn');
-        const logoutButton = document.getElementById('logout115Button');
         const successContainer = document.getElementById('loginSuccess115Container');
         let loginModal = null;
         let deviceUid = null;
@@ -1043,10 +1039,7 @@
                     const { logged_in, active_method, auth_status } = data.data;
                     
                     if (logged_in) {
-                        // User is logged in
-                        if (logoutButton) {
-                            logoutButton.classList.remove('d-none');
-                        }
+                    // User is logged in
                         
                         // Update status text with method info
                         const methodLabel = active_method === 'driver' ? 'Cookie' : 'Token';
@@ -1054,29 +1047,26 @@
                         if (loginStatusText) {
                             loginStatusText.innerHTML = `<i class="fas fa-check-circle text-success me-2"></i>已登录 (${methodLabel})`;
                         }
-                        
-                        // If modal is open, show success state
-                        if (successContainer) {
-                            statusElement.classList.add('d-none');
-                            qrcodeContainer.style.display = 'none';
-                            refreshButton.style.display = 'none';
-                            successContainer.classList.remove('d-none');
-                        }
-                    } else {
-                        // User is not logged in
-                        if (logoutButton) {
-                            logoutButton.classList.add('d-none');
-                        }
+                    
+                    // If modal is open, show success state
+                    if (successContainer) {
+                        statusElement.classList.add('d-none');
+                        qrcodeContainer.style.display = 'none';
+                        refreshButton.style.display = 'none';
+                        successContainer.classList.remove('d-none');
+                    }
+                } else {
+                    // User is not logged in
                         
                         if (loginStatusText) {
                             loginStatusText.innerHTML = '<i class="fas fa-times-circle text-danger me-2"></i>未登录';
                         }
-                        
-                        // Reset login modal to default state if it's open
-                        if (successContainer && successContainer.classList.contains('d-none') === false) {
-                            statusElement.classList.remove('d-none');
-                            qrcodeContainer.style.display = 'block';
-                            successContainer.classList.add('d-none');
+                    
+                    // Reset login modal to default state if it's open
+                    if (successContainer && successContainer.classList.contains('d-none') === false) {
+                        statusElement.classList.remove('d-none');
+                        qrcodeContainer.style.display = 'block';
+                        successContainer.classList.add('d-none');
                         }
                     }
                 }
@@ -1286,9 +1276,6 @@
                     statusElement.className = 'alert alert-success mb-3';
                     refreshButton.style.display = 'none';
                     
-                    // Update logout button state
-                    logoutButton.classList.remove('d-none');
-                    
                     // Reload the page after 1.5 seconds to reflect logged in state
                     setTimeout(() => {
                         console.log('Reloading page to update UI');
@@ -1352,57 +1339,6 @@
             requestDeviceCode();
             refreshButton.style.display = 'none';
         });
-        
-        // Handle logout button click
-        window.logout115 = async function() {
-            try {
-                const response = await fetch('/api/cloud115/logout', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    }
-                });
-                
-                const data = await response.json();
-                
-                if (data.state === 1) {
-                    // Logout successful
-                    logoutButton.classList.add('d-none');
-                    
-                    // Reset login modal state
-                    successContainer.classList.add('d-none');
-                    statusElement.classList.remove('d-none');
-                    
-                    // Show success message
-                    const alertElement = document.getElementById('loginStatusAlert');
-                    if (alertElement) {
-                        alertElement.classList.remove('d-none', 'alert-danger', 'alert-info');
-                        alertElement.classList.add('alert-success');
-                        alertElement.innerHTML = '<i class="fas fa-check-circle me-2"></i>已成功退出登录';
-                        
-                        // Hide message after 3 seconds
-                        setTimeout(() => {
-                            alertElement.classList.add('d-none');
-                        }, 3000);
-                    }
-                    
-                    // Reload the page to reflect logged out state
-                    setTimeout(() => {
-                        window.location.reload();
-                    }, 1500);
-                } else {
-                    throw new Error(data.message || '退出登录失败');
-                }
-            } catch (error) {
-                console.error('退出登录失败:', error);
-                const alertElement = document.getElementById('loginStatusAlert');
-                if (alertElement) {
-                    alertElement.classList.remove('d-none', 'alert-success', 'alert-info');
-                    alertElement.classList.add('alert-danger');
-                    alertElement.innerHTML = `<i class="fas fa-exclamation-circle me-2"></i>${error.message || '退出登录失败，请重试'}`;
-                }
-            }
-        };
     });
 
     // 115 Directory Browser

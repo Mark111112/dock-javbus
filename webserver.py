@@ -240,13 +240,13 @@ def load_config():
     
     # 确保 driver 配置存在
     driver_defaults = {
-        "enabled": False,
-        "cookie": "",
+            "enabled": False,
+            "cookie": "",
         "cookie_file": "data/cloud115_cookie.txt",
-        "user_agent": "Mozilla/5.0 115Browser/27.0.5.7",
-        "timeout": 15,
+            "user_agent": "Mozilla/5.0 115Browser/27.0.5.7",
+            "timeout": 15,
         "api_urls": ["https://webapi.115.com/files", "http://web.api.115.com/files"],
-        "login_check_interval": 300
+            "login_check_interval": 300
     }
     existing_driver_config = cloud115_config.get("driver", {}) or {}
     merged_driver_config = driver_defaults.copy()
@@ -259,20 +259,20 @@ def load_config():
     cloud115_config.setdefault("request_timeout", 15)
     
     alist_defaults = {
-        "enabled": True,
-        "base_url": "",
-        "root_path": "/115",
-        "username": "",
-        "password": "",
-        "timeout": 30,
-        "url_cache_seconds": 300
-    }
+            "enabled": True,
+            "base_url": "",
+            "root_path": "/115",
+            "username": "",
+            "password": "",
+            "timeout": 30,
+            "url_cache_seconds": 300
+        }
     existing_alist_config = cloud115_config.get("alist", {}) or {}
     merged_alist_config = alist_defaults.copy()
     merged_alist_config.update(existing_alist_config)
     cloud115_config["alist"] = merged_alist_config
     config["cloud115"] = cloud115_config
-    
+
     return config
 
 # Get current configuration
@@ -4207,8 +4207,43 @@ def cloud115_update_cookie():
                 logger=logging.getLogger('Cloud115Client'),
             )
             
-            # 测试新 Cookie 是否有效
-            CLOUD115_CLIENT.driver.ensure_login(force=True)
+            # 测试新 Cookie 是否有效（通过实际调用API验证）
+            if CLOUD115_CLIENT.driver:
+                try:
+                    # 直接调用115 API验证
+                    import requests
+                    params = {"_": str(int(time.time() * 1000))}
+                    response = CLOUD115_CLIENT.driver.session.get(
+                        CLOUD115_CLIENT.driver.STATUS_CHECK_URL, 
+                        params=params, 
+                        timeout=15
+                    )
+                    
+                    if response.status_code in (401, 511):
+                        raise Exception("Cookie已失效（HTTP 401/511）")
+                    
+                    payload = response.json()
+                    if payload.get("state") in (False, 0):
+                        raise Exception("Cookie已失效（API返回未登录状态）")
+                    
+                    # 再验证文件列表访问
+                    api_url = CLOUD115_CLIENT.driver.file_api_urls[0] if CLOUD115_CLIENT.driver.file_api_urls else "https://webapi.115.com/files"
+                    params = {
+                        "aid": "1",
+                        "cid": "0",
+                        "limit": "1",
+                        "show_dir": "1",
+                        "format": "json"
+                    }
+                    response = CLOUD115_CLIENT.driver.session.get(api_url, params=params, timeout=15)
+                    response.raise_for_status()
+                    payload = response.json()
+                    if payload.get("state") in (False, 0):
+                        raise Exception("无法访问文件列表")
+                        
+                except Exception as e:
+                    app.logger.error(f"Cookie验证失败: {e}")
+                    raise Exception(f"Cookie无效或已过期: {str(e)}")
             
             app.logger.info("115 客户端热更新成功")
             
@@ -4231,6 +4266,193 @@ def cloud115_update_cookie():
             
     except Exception as e:
         app.logger.error(f"更新 Cookie 失败: {str(e)}", exc_info=True)
+        return jsonify({
+            'state': 0,
+            'code': 500,
+            'message': f'更新失败: {str(e)}'
+        })
+
+@app.route('/api/cloud115/get_current_cookie', methods=['GET'])
+def cloud115_get_current_cookie():
+    """获取当前生效的115 driver cookie"""
+    try:
+        # 从配置中获取cookie
+        cloud115_config = CURRENT_CONFIG.get('cloud115', {})
+        driver_config = cloud115_config.get('driver', {})
+        current_cookie = driver_config.get('cookie', '').strip()
+        
+        return jsonify({
+            'state': 1,
+            'code': 0,
+            'message': '获取成功',
+            'data': {
+                'cookie': current_cookie,
+                'auth_mode': cloud115_config.get('auth_mode', 'openapi')
+            }
+        })
+    except Exception as e:
+        app.logger.error(f"获取当前cookie失败: {str(e)}")
+        return jsonify({
+            'state': 0,
+            'code': 500,
+            'message': f'获取失败: {str(e)}'
+        })
+
+@app.route('/api/cloud115/verify_cookie', methods=['POST'])
+def cloud115_verify_cookie():
+    """验证115 cookie是否真实有效（通过调用实际API测试）"""
+    try:
+        data = request.get_json() or {}
+        cookie = data.get('cookie', '').strip()
+        
+        if not cookie:
+            return jsonify({
+                'state': 0,
+                'code': 400,
+                'message': '缺少 Cookie 参数'
+            })
+        
+        # 验证 Cookie 格式
+        from modules.cloud115_client import DriverCredential, DriverClient, Cloud115ConfigError
+        try:
+            credential = DriverCredential.from_cookie(cookie)
+        except Cloud115ConfigError as e:
+            return jsonify({
+                'state': 0,
+                'code': 400,
+                'message': f'Cookie 格式错误: {str(e)}',
+                'data': {'valid': False}
+            })
+        
+        # 创建临时客户端测试Cookie是否真实有效
+        try:
+            driver_config = CURRENT_CONFIG.get('cloud115', {}).get('driver', {})
+            temp_client = DriverClient(
+                credential,
+                timeout=15,
+                user_agent=driver_config.get('user_agent', 'Mozilla/5.0 115Browser/27.0.5.7'),
+                api_urls=driver_config.get('api_urls'),
+                login_check_interval=300,
+            )
+            
+            # 直接调用115 API验证cookie，不使用list_files因为它会normalize结果
+            # 使用status check接口来验证登录状态
+            import requests
+            params = {"_": str(int(time.time() * 1000))}
+            response = temp_client.session.get(
+                temp_client.STATUS_CHECK_URL, 
+                params=params, 
+                timeout=15
+            )
+            
+            # 检查HTTP状态码
+            if response.status_code in (401, 511):
+                raise Exception("Cookie已失效（HTTP 401/511）")
+            
+            # 检查返回的JSON
+            try:
+                payload = response.json()
+                # 115的status接口，state为False或0表示未登录
+                if payload.get("state") in (False, 0):
+                    raise Exception("Cookie已失效（API返回未登录状态）")
+                
+                # 额外检查errno字段（某些接口用这个表示错误）
+                errno = payload.get('errno')
+                if errno and errno != 0:
+                    error_msg = payload.get('error') or payload.get('err_msg') or f'错误码: {errno}'
+                    raise Exception(f"API返回错误: {error_msg}")
+                    
+            except ValueError as e:
+                # JSON解析失败
+                raise Exception(f"API返回数据格式错误: {str(e)}")
+            
+            # 再次验证：尝试列出根目录
+            try:
+                api_url = temp_client.file_api_urls[0] if temp_client.file_api_urls else "https://webapi.115.com/files"
+                params = {
+                    "aid": "1",
+                    "cid": "0",
+                    "limit": "1",
+                    "show_dir": "1",
+                    "format": "json"
+                }
+                response = temp_client.session.get(api_url, params=params, timeout=15)
+                response.raise_for_status()
+                
+                payload = response.json()
+                # 检查原始API响应的state字段
+                if payload.get("state") in (False, 0):
+                    raise Exception("无法访问文件列表")
+                    
+            except Exception as e:
+                raise Exception(f"文件列表访问失败: {str(e)}")
+            
+            return jsonify({
+                'state': 1,
+                'code': 0,
+                'message': 'Cookie 有效',
+                'data': {'valid': True}
+            })
+        except Exception as e:
+            app.logger.debug(f"Cookie验证失败: {e}")
+            return jsonify({
+                'state': 0,
+                'code': 400,
+                'message': f'Cookie 无效或已过期: {str(e)}',
+                'data': {'valid': False}
+            })
+            
+    except Exception as e:
+        app.logger.error(f"验证 Cookie 失败: {str(e)}", exc_info=True)
+        return jsonify({
+            'state': 0,
+            'code': 500,
+            'message': f'验证失败: {str(e)}',
+            'data': {'valid': False}
+        })
+
+@app.route('/api/cloud115/update_auth_mode', methods=['POST'])
+def cloud115_update_auth_mode():
+    """单独更新认证模式，不修改cookie"""
+    global CLOUD115_CLIENT, CURRENT_CONFIG
+    
+    try:
+        data = request.get_json() or {}
+        auth_mode = data.get('auth_mode', '').strip()
+        
+        if not auth_mode or auth_mode not in ['driver', 'auto', 'openapi']:
+            return jsonify({
+                'state': 0,
+                'code': 400,
+                'message': '无效的认证模式'
+            })
+        
+        # 更新配置
+        cloud115_config = CURRENT_CONFIG.setdefault('cloud115', {})
+        cloud115_config['auth_mode'] = auth_mode
+        
+        # 保存到配置文件
+        try:
+            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+                json.dump(CURRENT_CONFIG, f, ensure_ascii=False, indent=2)
+            app.logger.info(f"认证模式已更新为: {auth_mode}")
+        except Exception as e:
+            app.logger.error(f"保存配置文件失败: {e}")
+        
+        # 更新客户端模式
+        if CLOUD115_CLIENT:
+            CLOUD115_CLIENT.mode = auth_mode
+            app.logger.info("115 客户端模式已更新")
+        
+        return jsonify({
+            'state': 1,
+            'code': 0,
+            'message': f'认证模式已切换为: {auth_mode}',
+            'data': {'auth_mode': auth_mode}
+        })
+            
+    except Exception as e:
+        app.logger.error(f"更新认证模式失败: {str(e)}", exc_info=True)
         return jsonify({
             'state': 0,
             'code': 500,
@@ -4955,14 +5177,14 @@ def cloud115_import_directory_api():
                 'success': False,
                 'message': '缺少文件夹ID'
             })
-        
+
         folder_id = data['folder_id']
         min_size_mb = data.get('min_size_mb', 50)  # 默认最小文件大小为50MB
         category_type = data.get('category_type', 'movies')  # 默认分类为电影
         
         # 将MB转换为字节
         min_size_bytes = min_size_mb * 1024 * 1024
-        
+
         app.logger.debug(f"导入115目录，文件夹ID：{folder_id}，最小文件大小：{min_size_mb}MB, 导入类别：{category_type}")
         
         # 获取token
@@ -4984,17 +5206,17 @@ def cloud115_import_directory_api():
         
         folder_info = folder_info_response.json().get('data', {})
         folder_name = folder_info.get('file_name', '未命名文件夹')
-        
+
         # 获取数据库中已有的115云盘文件ID列表，用于去重
         db.ensure_connection()
         db.local.cursor.execute('SELECT file_id FROM cloud115_library')
         existing_file_ids = {row['file_id'] for row in db.local.cursor.fetchall() if row['file_id']}
-        
+
         # 递归获取文件夹内所有视频文件
         video_files = []
         skipped_files = 0
         skipped_existing_files = 0
-        
+
         def get_videos_in_folder(folder_id, path=""):
             """递归获取文件夹中的视频文件"""
             nonlocal skipped_files, skipped_existing_files
@@ -5015,13 +5237,13 @@ def cloud115_import_directory_api():
                         'Authorization': f'Bearer {access_token}'
                     }
                 )
-                
+
                 files_data = files_response.json()
                 files = files_data.get('data', [])
                 
                 if not files:
                     break
-                
+
                 for file in files:
                     current_path = f"{path}/{file['fn']}" if path else file['fn']
                     
@@ -5036,7 +5258,7 @@ def cloud115_import_directory_api():
                                 skipped_existing_files += 1
                                 app.logger.debug(f"跳过已存在文件：{file['fn']}，ID：{file['fid']}")
                                 continue
-                                
+
                             # 获取文件详情，获取正确的pickcode和文件大小
                             file_details_response = requests.get(
                                 'https://proapi.115.com/open/folder/get_info',
@@ -5070,7 +5292,7 @@ def cloud115_import_directory_api():
                                             skipped_files += 1
                                             app.logger.debug(f"跳过小文件：{file['fn']}，大小：{file_size_bytes/1024/1024:.2f}MB")
                                             continue
-                            
+
                             video_files.append({
                                 'file_id': file['fid'],
                                 'title': file['fn'],
@@ -5080,12 +5302,12 @@ def cloud115_import_directory_api():
                                 'thumbnail': file.get('thumb', ''),
                                 'pick_code': pick_code  # 添加pick_code字段
                             })
-                
+
                 # 更新偏移量
                 offset += len(files)
                 if len(files) < limit:
                     break
-        
+
         # 开始收集视频文件
         get_videos_in_folder(folder_id)
         
@@ -5098,7 +5320,7 @@ def cloud115_import_directory_api():
                     imported_count += 1
             except Exception as e:
                 app.logger.error(f"Error importing video {video['title']}: {str(e)}", exc_info=True)
-        
+
         return jsonify({
             'success': True,
             'message': f'成功导入{imported_count}个视频文件，跳过{skipped_files}个小于{min_size_mb}MB的文件，跳过{skipped_existing_files}个已存在的文件',
@@ -5107,7 +5329,7 @@ def cloud115_import_directory_api():
             'skipped_size': skipped_files,
             'skipped_existing': skipped_existing_files
         })
-        
+
     except Exception as e:
         app.logger.error(f"Error importing 115 directory: {str(e)}", exc_info=True)
         return jsonify({

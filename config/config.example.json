@@ -1,5 +1,5 @@
 {
-  "api_url": "http://192.168.1.246:8922/api",
+  "api_url": "http://your-javbus-api-server/api",
   "watch_url_prefix": "https://missav.ai",
   "base_url": "https://www.javbus.com",
   "translation": {
@@ -7,16 +7,16 @@
     "source_lang": "日语",
     "target_lang": "中文",
     "api_token": "",
-    "model": "THUDM/glm-4-9b-chat"
+    "model": "THUDM/GLM-Z1-9B-0414"
   },
   "cloud115": {
     "default_folder_id": "",
-    "auth_mode": "auto",
+    "auth_mode": "openapi",
     "token_file": "data/cloud115_token.json",
     "request_timeout": 15,
     "driver": {
-      "enabled": true,
-      "cookie": "UID=19973517_A1_1762265912; CID=e0e09ef0037f3c28558e5476a13386ad; SEID=01fc8ef66b145b8a04bbd97746b2654d90e1f488513edab7a43ede2030f5c8388f6f37571dbb780e3c775b821258a82eeaa2341ee609d97a31e39a0d; KID=0f21413088797da82a279abc21f077d6",
+      "enabled": false,
+      "cookie": "",
       "cookie_file": "data/cloud115_cookie.txt",
       "user_agent": "Mozilla/5.0 115Browser/27.0.5.7",
       "timeout": 15,
@@ -32,8 +32,8 @@
       "default_delay_seconds": 5
     },
     "alist": {
-      "enabled": true,
-      "base_url": "",
+      "enabled": false,
+      "base_url": "http://your-alist-server:5244",
       "root_path": "/115",
       "username": "",
       "password": "",
@@ -59,3 +59,4 @@
     }
   }
 }
+
