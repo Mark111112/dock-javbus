@@ -16,7 +16,7 @@
     "request_timeout": 15,
     "driver": {
       "enabled": true,
-      "cookie": "UID=19973517_A1_1762265912; CID=e0e09ef0037f3c28558e5476a13386ad; SEID=01fc8ef66b145b8a04bbd97746b2654d90e1f488513edab7a43ede2030f5c8388f6f37571dbb780e3c775b821258a82eeaa2341ee609d97a31e39a0d; KID=0f21413088797da82a279abc21f077d6",
+      "cookie": "",
       "cookie_file": "data/cloud115_cookie.txt",
       "user_agent": "Mozilla/5.0 115Browser/27.0.5.7",
       "timeout": 15,
