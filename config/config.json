@@ -33,9 +33,9 @@
     },
     "alist": {
       "enabled": true,
-      "base_url": "",
+      "base_url": "http://192.168.1.246:5244",
       "root_path": "/115",
-      "username": "",
+      "username": "admin",
       "password": "",
       "timeout": 30,
       "url_cache_seconds": 300

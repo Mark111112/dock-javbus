@@ -308,7 +308,7 @@ ALIST_CACHE_LOCK = threading.Lock()
 
 # Initialize 115 Cloud Client
 try:
-    from modules.cloud115_client import Cloud115Client
+    from modules.cloud115_client import Cloud115Client, Cloud115AuthError
     cloud115_config = CURRENT_CONFIG.get("cloud115", {})
     driver_config = cloud115_config.get("driver", {})
     
@@ -3565,7 +3565,9 @@ def cloud115_player(file_id):
         if relative_path:
             file_info['filepath'] = relative_path
         alist_available = is_alist_configured()
-        initial_mode = 'alist' if alist_available else 'cloud115'
+        pickcode = _extract_pickcode_from_file_info(file_info)
+
+        initial_mode = 'alist' if alist_available else ('direct' if pickcode else 'cloud115')
         
         # 获取关联的电影详细信息
         movie_detail = None
@@ -3612,8 +3614,8 @@ def cloud115_player(file_id):
             alist_enabled=alist_available,
             initial_mode=initial_mode,
             play_mode='library',
-            direct_pickcode=None,
-            direct_path=None
+            direct_pickcode=pickcode,
+            direct_path=relative_path or file_info.get('filepath') or file_info.get('title')
         )
     except Exception as e:
         app.logger.error(f"Error rendering 115 player page: {str(e)}", exc_info=True)
@@ -3648,7 +3650,7 @@ def cloud115_player_direct():
     app.logger.info(f"未在cloud115_library中找到记录 (file_id={file_id_115}, pickcode={pickcode}), 使用直接播放模式")
 
     alist_available = is_alist_configured()
-    initial_mode = 'alist' if alist_available else 'cloud115'
+    initial_mode = 'direct' if pickcode else ('alist' if alist_available else 'cloud115')
 
     return render_template(
         'cloud115_player.html',
@@ -4907,24 +4909,153 @@ def _get_alist_info_from_pickcode(pickcode, file_path=None, force_refresh=False)
     return (result, 200)
 
 
+def _extract_pickcode_from_file_info(file_info):
+    if not isinstance(file_info, dict):
+        return ''
+
+    pickcode = (
+        file_info.get('pickcode')
+        or file_info.get('pick_code')
+        or file_info.get('pc')
+    )
+
+    if not pickcode:
+        url = file_info.get('url') or ''
+        if url:
+            match = re.search(r'pickcode=([^&]+)', url)
+            if match:
+                pickcode = match.group(1)
+
+    return (pickcode or '').strip()
+
+
+def _format_download_size(size_value):
+    if size_value in (None, ''):
+        return (None, None)
+
+    size_int = None
+    if isinstance(size_value, (int, float)):
+        size_int = int(size_value)
+    else:
+        try:
+            size_int = int(size_value)
+        except (TypeError, ValueError):
+            try:
+                size_int = int(float(size_value))
+            except (TypeError, ValueError):
+                size_int = None
+
+    if size_int is None:
+        return (None, None)
+
+    size_text = format_size_from_alist({'size': size_int}, None)
+    if not size_text:
+        size_text = f"{size_int} B"
+
+    return (size_int, size_text)
+
+
+def _get_direct_download_data_by_pickcode(pickcode, *, use_android_api=False, user_agent=None):
+    if not pickcode:
+        return ({'success': False, 'message': '缺少pickcode参数'}, 400)
+
+    if CLOUD115_CLIENT is None or getattr(CLOUD115_CLIENT, 'driver', None) is None:
+        return ({'success': False, 'message': '115 driver 未配置或未登录，请先设置 Cookie 并确保账户有效'}, 503)
+
+    try:
+        info = CLOUD115_CLIENT.get_download_info(
+            pickcode,
+            user_agent=user_agent,
+            use_android_api=use_android_api,
+        )
+    except Cloud115AuthError as exc:
+        app.logger.warning(f"115 driver 鉴权失败 (pickcode={pickcode}): {exc}")
+        return ({'success': False, 'message': f'115 认证失败: {exc}'}, 401)
+    except Exception as exc:
+        app.logger.error(f"115 driver 获取直链失败 (pickcode={pickcode}): {exc}", exc_info=True)
+        return ({'success': False, 'message': f'获取直链失败: {exc}'}, 500)
+
+    download_url = info.get('url')
+    if not download_url:
+        app.logger.warning(f"115 driver 返回的数据中没有下载链接 (pickcode={pickcode})")
+        return ({'success': False, 'message': '115 未返回下载链接，请稍后重试'}, 502)
+
+    file_size_bytes, file_size_text = _format_download_size(info.get('file_size'))
+
+    raw_data = info.get('raw') if isinstance(info.get('raw'), dict) else {}
+    url_info = raw_data.get('url') if isinstance(raw_data.get('url'), dict) else {}
+    auth_cookie = url_info.get('auth_cookie') if isinstance(url_info, dict) else None
+
+    payload = {
+        'success': True,
+        'data': {
+            'download_url': download_url,
+            'file_name': info.get('file_name'),
+            'file_size': file_size_text,
+            'file_size_bytes': file_size_bytes,
+            'pickcode': info.get('pick_code') or pickcode,
+            'client': info.get('client'),
+            'oss_id': info.get('oss_id'),
+            'android_api': bool(use_android_api),
+            'auth_cookie': auth_cookie,
+            'request_headers': info.get('request_headers'),
+            'response_payload': info.get('response_payload'),
+            'decoded_data': info.get('decoded_data'),
+            'raw': raw_data,
+            'encoded_data': info.get('encoded_data'),
+        }
+    }
+
+    app.logger.info(f"成功通过115 driver获取直链 (pickcode={pickcode})")
+    return (payload, 200)
+
+
 def _get_video_play_data_by_pickcode(pickcode):
-    """直接通过 pickcode 获取 115 视频播放信息。"""
+    """直接通过 pickcode 获取 115 视频播放信息。
+    
+    优先使用 115 客户端（支持 Token 或 Cookie 认证），失败时回退到 Alist。
+    """
 
     if not pickcode:
         return ({'success': False, 'message': '缺少pickcode参数'}, 400)
 
-    access_token = get_cloud115_valid_token()
-    if not access_token:
-        # 无 Token 时，回退到 Alist 原始地址，封装为与 OpenAPI 相同的数据结构
+    # 尝试使用115客户端（支持OpenAPI Token 或 driver Cookie）
+    if CLOUD115_CLIENT is not None:
+        try:
+            payload = CLOUD115_CLIENT.get_video_play(pickcode)
+            
+            # 检查返回数据
+            data = payload.get('data') if isinstance(payload, dict) else None
+            if payload.get('state') and isinstance(data, dict) and 'video_url' in data:
+                app.logger.info(f"成功通过115客户端获取视频播放地址 (pickcode={pickcode})")
+                return ({'success': True, 'data': data}, 200)
+            
+            # 返回格式不符合预期
+            message = ''
+            if isinstance(payload, dict):
+                message = payload.get('message') or payload.get('msg') or ''
+            message = message or '获取播放地址失败'
+            app.logger.warning(f"115客户端返回数据格式异常: {message}")
+            
+        except Exception as exc:
+            # 115客户端调用失败，记录日志并继续尝试Alist
+            app.logger.warning(f"115客户端获取视频播放地址失败: {exc}")
+    else:
+        app.logger.debug("CLOUD115_CLIENT未初始化")
+
+    # 回退到 Alist 原始地址，封装为与 OpenAPI 相同的数据结构
+    if is_alist_configured():
+        app.logger.info(f"尝试通过Alist获取视频播放地址 (pickcode={pickcode})")
         alist_payload, alist_status = _get_alist_info_from_pickcode(pickcode)
         if alist_status == 200 and alist_payload.get('success'):
             data = alist_payload.get('data') or {}
             raw_url = data.get('raw_url') or data.get('proxy_url')
             if raw_url:
+                app.logger.info(f"成功通过Alist获取视频播放地址 (pickcode={pickcode})")
                 return ({
                     'success': True,
                     'data': {
-                        # 用一个“原画(100)”清晰度承载 raw_url，兼容前端 UI
+                        # 用一个"原画(100)"清晰度承载 raw_url，兼容前端 UI
                         'video_url': [
                             {
                                 'definition': 100,
@@ -4934,35 +5065,9 @@ def _get_video_play_data_by_pickcode(pickcode):
                         ]
                     }
                 }, 200)
-        # 如果 Alist 也不可用，提示需要登录
-        return ({'success': False, 'message': '未登录115云盘，请使用 Cookie 或扫码登录'}, 401)
-
-    try:
-        response = requests.get(
-            'https://proapi.115.com/open/video/play',
-            params={'pick_code': pickcode},
-            headers={'Authorization': f'Bearer {access_token}'},
-            timeout=15
-        )
-    except requests.RequestException as exc:
-        return ({'success': False, 'message': f'获取播放地址失败: {exc}'}, 502)
-
-    try:
-        payload = response.json()
-    except ValueError as exc:
-        return ({'success': False, 'message': f'解析播放地址失败: {exc}'}, 502)
-
-    data = payload.get('data') if isinstance(payload, dict) else None
-    if payload.get('state') and isinstance(data, dict) and 'video_url' in data:
-        return ({'success': True, 'data': data}, 200)
-
-    message = ''
-    if isinstance(payload, dict):
-        message = payload.get('message') or payload.get('msg') or ''
-    message = message or '获取播放地址失败'
-
-    status = response.status_code if response.status_code >= 400 else 200
-    return ({'success': False, 'message': message}, status)
+    
+    # 所有方法都失败，提示需要登录
+    return ({'success': False, 'message': '未登录115云盘或Alist不可用，请使用 Cookie 或扫码登录'}, 401)
 
 
 # 数据库辅助方法
@@ -5407,6 +5512,62 @@ def cloud115_video_play_url():
         })
 
 
+@app.route('/api/cloud115/direct_download', methods=['GET'])
+def cloud115_direct_download():
+    """获取115云盘文件的直链下载信息。"""
+    try:
+        pickcode = (request.args.get('pickcode') or '').strip()
+        file_id = request.args.get('file_id')
+        user_agent = (request.args.get('user_agent') or '').strip() or None
+        use_android_api = (request.args.get('android_api') or '').strip().lower() in ('1', 'true', 'yes', 'on')
+        include_debug = (request.args.get('debug') or '').strip().lower() in ('1', 'true', 'yes', 'on')
+
+        file_info = None
+
+        if not pickcode and file_id:
+            try:
+                file_id_value = int(file_id)
+            except (TypeError, ValueError):
+                file_id_value = file_id
+
+            file_info = db.get_cloud115_file(file_id_value)
+            if file_info:
+                pickcode = _extract_pickcode_from_file_info(file_info)
+
+        if not pickcode:
+            return jsonify({
+                'success': False,
+                'message': '缺少pickcode或无法根据文件ID解析pickcode'
+            }), 400
+
+        payload, status = _get_direct_download_data_by_pickcode(
+            pickcode,
+            use_android_api=use_android_api,
+            user_agent=user_agent,
+        )
+
+        if status == 200 and payload.get('success'):
+            data = payload.get('data', {})
+
+            if file_info:
+                data.setdefault('file_name', file_info.get('title') or file_info.get('filepath'))
+                if not data.get('file_size') and file_info.get('size'):
+                    data['file_size'] = file_info.get('size')
+            data.setdefault('pickcode', pickcode)
+
+            if not include_debug:
+                for key in ('raw', 'request_headers', 'encoded_data'):
+                    data.pop(key, None)
+
+        return jsonify(payload), status
+    except Exception as exc:
+        app.logger.error(f"Error getting 115 direct download info: {exc}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': f'获取115直链失败: {str(exc)}'
+        }), 500
+
+
 @app.route('/api/cloud115/alist_play_info', methods=['GET'])
 def cloud115_alist_play_info():
     """获取Alist播放所需信息"""
@@ -5718,6 +5879,11 @@ def find_cloud115_by_video_id(video_id):
 def cloud115_proxy_stream():
     """专用于115云盘的视频流代理，处理HLS流和TS片段"""
     stream_url = request.args.get('url')
+    cookie_name = request.args.get('cookie_name')
+    cookie_value = request.args.get('cookie_value')
+    cookie_path = request.args.get('cookie_path') or '/'
+    cookie_expire = request.args.get('cookie_expire')
+    pickcode = request.args.get('pickcode')
     logging.info(f"115云盘视频流代理请求: {stream_url}")
     
     if not stream_url:
@@ -5747,27 +5913,59 @@ def cloud115_proxy_stream():
         base_domain = f"{url_parts.scheme}://{url_parts.netloc}"
         
         # 设置115云盘专用请求头
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        session_headers = {
             "Accept": "*/*",
             "Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
             "Origin": "https://115.com",
-            "Referer": "https://115.com/"
+            "Referer": f"https://115.com/?ct=play&pickcode={pickcode}" if pickcode else "https://115.com/",
+        }
+
+        target_headers = {
+            "Accept": "*/*",
+            "Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Origin": "https://115.com",
+            "Referer": f"https://115.com/?ct=play&pickcode={pickcode}" if pickcode else "https://115.com/",
         }
         
         # 传递一些重要的请求头
         important_headers = ["Range", "If-Modified-Since", "If-None-Match", "If-Range", "Cache-Control"]
         for header in important_headers:
             if header.lower() in request.headers:
-                headers[header] = request.headers[header.lower()]
+                target_headers[header] = request.headers[header.lower()]
         
         # 检测是否为TS片段请求
         is_ts_segment = decoded_url.endswith('.ts') or '.ts?' in decoded_url
         
+        # 构建会话并携带 driver cookies
+        session = requests.Session()
+        if CLOUD115_CLIENT is not None and getattr(CLOUD115_CLIENT, 'driver', None) is not None:
+            driver_session = CLOUD115_CLIENT.driver.session
+            session.headers.update(driver_session.headers)
+            session.cookies.update(driver_session.cookies)
+            session_headers["User-Agent"] = driver_session.headers.get("User-Agent", session_headers.get("User-Agent", "Mozilla/5.0 115Browser/27.0.5.7"))
+        else:
+            session_headers["User-Agent"] = "Mozilla/5.0 115Browser/27.0.5.7"
+
+        target_headers["User-Agent"] = session_headers["User-Agent"]
+
+        if cookie_name and cookie_value:
+            try:
+                session.cookies.set(
+                    cookie_name,
+                    cookie_value,
+                    domain=url_parts.netloc,
+                    path=cookie_path or '/',
+                    expires=int(cookie_expire) if cookie_expire and cookie_expire.isdigit() else None,
+                )
+            except Exception as exc:
+                logging.warning(f"设置115直链cookie失败: {exc}")
+
+        session.headers.update(session_headers)
+
         # 发送请求
-        response = requests.get(
+        response = session.get(
             decoded_url,
-            headers=headers,
+            headers=target_headers,
             stream=True,
             timeout=10,
             verify=False

@@ -20,6 +20,8 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tupl
 import requests
 from requests.cookies import create_cookie
 
+from modules import m115_crypto
+
 
 __all__ = [
     "Cloud115Client",
@@ -227,6 +229,8 @@ class DriverClient:
     )
     FILE_INFO_URL = "https://webapi.115.com/files/get_info"
     FOLDER_INFO_URL = "https://webapi.115.com/category/get"
+    DOWNLOAD_API_URL = "https://proapi.115.com/app/chrome/downurl"
+    DOWNLOAD_ANDROID_API_URL = "https://proapi.115.com/android/2.0/ufile/download"
 
     def __init__(
         self,
@@ -332,6 +336,117 @@ class DriverClient:
         response.raise_for_status()
         payload = response.json()
         return self._normalize_file_info(payload)
+
+    def get_download_info(
+        self,
+        pickcode: str,
+        *,
+        user_agent: Optional[str] = None,
+        use_android_api: bool = False,
+    ) -> Dict[str, Any]:
+        """通过 m115 加密协议获取文件下载信息。"""
+
+        if not pickcode:
+            raise ValueError("pickcode 不能为空")
+
+        self.ensure_login()
+
+        request_payload = {"pickcode": pickcode}
+        endpoint = self.DOWNLOAD_API_URL
+        if use_android_api:
+            request_payload = {"pick_code": pickcode}
+            endpoint = self.DOWNLOAD_ANDROID_API_URL
+
+        key = m115_crypto.generate_key()
+        encoded_data = m115_crypto.encode(json.dumps(request_payload, ensure_ascii=False).encode("utf-8"), key)
+
+        params = {"t": str(int(time.time()))}
+        form_data = {"data": encoded_data}
+
+        headers = dict(self.session.headers)
+        headers["Content-Type"] = "application/x-www-form-urlencoded; charset=UTF-8"
+        if user_agent:
+            headers["User-Agent"] = user_agent
+
+        logging.getLogger("Cloud115Client").debug(
+            "115 download request: endpoint=%s params=%s data_length=%s",
+            endpoint,
+            params,
+            len(encoded_data),
+        )
+
+        with self._lock:
+            response = self.session.post(
+                endpoint,
+                params=params,
+                data=form_data,
+                headers=headers,
+                timeout=self.timeout,
+            )
+
+        response.raise_for_status()
+        payload = response.json()
+
+        if not payload.get("state"):
+            message = (
+                payload.get("msg")
+                or payload.get("message")
+                or payload.get("error")
+                or payload.get("errtype")
+                or "115 driver 获取下载信息失败"
+            )
+            code = payload.get("msg_code") or payload.get("errNo") or payload.get("errno") or ""
+            raise RuntimeError(f"115 driver 获取下载信息失败: {message} (code={code})")
+
+        encoded_response = payload.get("data")
+        if not encoded_response:
+            raise RuntimeError("115 driver 返回的数据为空，无法解析下载信息")
+
+        try:
+            decrypted = m115_crypto.decode(str(encoded_response), key)
+        except Exception as exc:  # pragma: no cover - defensive
+            raise RuntimeError(f"115 driver 下载信息解密失败: {exc}") from exc
+
+        try:
+            download_data = json.loads(decrypted.decode("utf-8"))
+        except Exception as exc:  # pragma: no cover - defensive
+            raise RuntimeError(f"115 driver 下载信息解析JSON失败: {exc}") from exc
+
+        if not isinstance(download_data, dict):
+            raise RuntimeError("115 driver 下载信息格式异常")
+
+        for info in download_data.values():
+            if not isinstance(info, dict):
+                continue
+            file_size = info.get("file_size")
+            try:
+                file_size_int = int(file_size)
+            except (TypeError, ValueError):
+                file_size_int = -1
+
+            if file_size_int < 0:
+                raise RuntimeError("115 driver 返回的文件大小无效，可能下载任务失败")
+
+            result = {
+                "file_name": info.get("file_name"),
+                "file_size": file_size_int,
+                "pick_code": info.get("pick_code"),
+                "url": info.get("url", {}).get("url") if isinstance(info.get("url"), dict) else info.get("url"),
+                "client": info.get("url", {}).get("client") if isinstance(info.get("url"), dict) else None,
+                "oss_id": info.get("url", {}).get("oss_id") if isinstance(info.get("url"), dict) else None,
+                "raw": info,
+                "decoded_data": download_data,
+                "encoded_data": encoded_response,
+                "response_payload": payload,
+                "request_headers": dict(response.request.headers),
+            }
+
+            if not result["url"]:
+                raise RuntimeError("115 driver 返回的数据中没有下载链接")
+
+            return result
+
+        raise RuntimeError("115 driver 下载信息中未找到文件记录")
 
     def _normalize_list_response(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         files = payload.get("data") or []
@@ -461,6 +576,79 @@ class DriverClient:
         }
         return {"state": 1, "code": 0, "message": "", "data": data}
 
+    def get_video_play(self, pickcode: str) -> Dict[str, Any]:
+        """通过 driver 获取视频下载地址（使用内部 API）。
+        
+        注意：driver 无法获取多清晰度，只能获取原始文件的下载地址。
+        
+        Args:
+            pickcode: 文件的 pickcode
+            
+        Returns:
+            包含视频播放信息的字典，格式与 OpenAPI 兼容
+        """
+        self.ensure_login()
+        
+        # 115 内部 API 的下载地址获取端点
+        url = "https://webapi.115.com/files/download"
+        params = {"pickcode": pickcode}
+        
+        try:
+            response = self.session.get(url, params=params, timeout=self.timeout)
+            response.raise_for_status()
+            payload = response.json()
+        except requests.RequestException as exc:
+            raise RuntimeError(f"115 driver 获取下载地址失败: {exc}")
+        except ValueError as exc:
+            raise RuntimeError(f"115 driver 解析响应失败: {exc}")
+        
+        # 检查返回状态
+        if not payload.get("state"):
+            error_msg = payload.get("message") or payload.get("error") or payload.get("errNo") or "获取下载地址失败"
+            raise RuntimeError(f"115 driver 获取下载地址失败: {error_msg}")
+        
+        # 提取下载URL - 115的下载API返回格式通常是 data.url 或 data[pickcode].url
+        data = payload.get("data") or {}
+        download_url = None
+        
+        # 尝试多种可能的返回格式
+        if isinstance(data, dict):
+            # 格式1: data.url.url
+            if "url" in data and isinstance(data["url"], dict):
+                download_url = data["url"].get("url")
+            # 格式2: data.url (直接是字符串)
+            elif "url" in data and isinstance(data["url"], str):
+                download_url = data["url"]
+            # 格式3: data[pickcode].url
+            elif pickcode in data and isinstance(data[pickcode], dict):
+                url_data = data[pickcode].get("url", {})
+                if isinstance(url_data, dict):
+                    download_url = url_data.get("url")
+                elif isinstance(url_data, str):
+                    download_url = url_data
+            # 格式4: data.download_url
+            else:
+                download_url = data.get("download_url") or data.get("file_url")
+        elif isinstance(data, str):
+            download_url = data
+        
+        if not download_url:
+            raise RuntimeError(f"115 driver 返回的数据中未找到下载地址，返回数据: {payload}")
+        
+        # 规范化为与 OpenAPI 兼容的格式（只有一个"原画"清晰度）
+        return {
+            "state": 1,
+            "data": {
+                "video_url": [
+                    {
+                        "definition": 100,
+                        "title": "原画",
+                        "url": download_url
+                    }
+                ]
+            }
+        }
+
 
 # ============================================================================
 # 统一客户端（组合 OpenAPI 和 Driver）
@@ -579,7 +767,12 @@ class Cloud115Client:
         return self.openapi.get_file_info_by_pickcode(*args, **kwargs)
 
     def get_video_play(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
-        # driver 暂不支持
-        return self.openapi.get_video_play(*args, **kwargs)
+        # driver 现在支持视频播放地址获取
+        return self._call("get_video_play", *args, **kwargs)
+
+    def get_download_info(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        if not self.driver:
+            raise Cloud115ConfigError("115driver 未配置，无法获取下载信息")
+        return self.driver.get_download_info(*args, **kwargs)
 
 
