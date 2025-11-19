@@ -566,7 +566,7 @@
                     const resp = await fetch('/api/download_mp4', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ movie_id: movieId, quality: '720p', filename: movieId + '.mp4' })
+                        body: JSON.stringify({ movie_id: movieId, filename: movieId + '.mp4' })
                     });
                     const data = await resp.json();
                     if (!data.success) throw new Error(data.message || '启动下载失败');

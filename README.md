@@ -1,747 +1,592 @@
-# BUS115影片库管理系统
+# BUS115 影片库管理系统使用说明 / BUS115 Usage Guide
 
-**更新2025106**
+> 本文侧重介绍 **功能和用法**，有意省略内部实现细节。  
+> For technical internals please refer to `readme.md` or `README_zh_en.md`.
 
-115浏览器页面。登录后可以查看115网盘文件，播放视频文件和查看图片。
+---
 
-115认证方式增加了cookie。openapi限流严重，文件浏览体验不好。
+## 一、应用整体功能（中文）
 
-115视频播放功能增加了alist直链播放和利用cookie认证的直链播放，兼容的mp4格式跳转速度极佳。但不兼容的格式（avi/wmv/hvec等）还是需要切换回115转码播放。
+BUS115 是一个在本机或私有服务器上运行的 **网页影片库管理与播放系统**。  
+它可以把散落在各处的 JAV 资源集中起来统一管理：
 
-统一并优化播放器界面；修正了有问题的scraper，影片简介中把fanza的用户评论也拉进来了。
+- 通过 **番号 / 影片 ID / 关键字** 搜索影片  
+- 自动从多个网站抓取 **封面、截图、简介、演员、标签** 等元数据  
+- 整合多个片源：
+  - **115 网盘**（文件浏览、在线播放、离线下载后一键入库）
+  - **本地 / 远程 STRM 文件库**
+  - **Jellyfin 媒体库**
+- 使用统一的播放器界面，在浏览器中直接播放：
+  - 正常 HTTP / HLS 流
+  - 115 官方播放（多清晰度）
+  - 115 直链播放（可配合本地转码，重点见下文）
+  - 通过 Alist 的代理播放
+- 自动翻译影片标题与简介（需要配置翻译服务）
+- 收藏夹、最近影片等便捷入口
 
-**后期更新计划**
+---
 
-· 增加类似alist的播放方式，抛弃alist播放；**（已完成）**
+## 二、Web 界面主要入口
 
-· 集成javbusapi（这个有点麻烦，api的速度没得说，切换到python后端可能会降低效率）。
+打开浏览器访问：`http://服务器IP:8080`（本机默认是 `http://localhost:8080`）。
 
-## 项目简介
+常用入口：
 
-这是一个基于Python Flask开发的JAV影片管理系统，提供了视频搜索、元数据管理、在线播放、115网盘集成、Jellyfin媒体库集成和STRM文件库等功能。
+- **首页**：最近添加/更新的影片简要列表
+- **搜索页**：顶部搜索框可以输入番号或关键字
+- **影片详情页**：展示单部影片完整信息与可用片源
+- **115 片库**：浏览 115 网盘中的目录与文件
+- **STRM 片库**：浏览本地 STRM 文件映射的片库
+- **Jellyfin 片库**：将 Jellyfin 中的影片呈现在同一个界面中
+- **收藏夹**：管理自己收藏的影片列表
 
-## 主要功能
+---
 
-### 1. 影片管理
+## 三、搜索与影片详情
 
-- 影片搜索与浏览
-- 在bus网站提供的元数据基础上加入了多来源的影片简介（强力！）
-- bus未收录影片的元数据刮削（kin8等）（强力！）
-- 影片标题、简介自动翻译(支持多种翻译API)
+### 3.1 搜索影片
 
-### 2. 视频播放
+1. 在顶部输入框中输入 **番号或关键字**：
+   - 例如：`SSIS-406`、`ABW-123`、`HEYZO-1234` 等
+2. 点击搜索后，系统会：
+   - 先从本地数据库中查找是否已有记录
+   - 若没有，则尝试从配置好的数据源（如 JavBus / FANZA / DMM 等）抓取信息并缓存
 
-- 支持在线HLS流播放
-- 在线网站清洁播放（强力！）、网站播放
-- STR片库在线播放
-- **统一美观的播放器界面**（强力！）
-  - 支持115和Jellyfin片库在线转码播放（自动HLS推流）
-  - **支持Alist代理播放模式**，稳定流畅，支持断点续传（需要预先用alist挂载115网盘并配置config对应内容）
-  - **支持115直链播放**（类似alist的方法，需要cookie，但不是特别稳）
-  - **支持115官方多清晰度播放**（标清/高清/超清/1080P/4K/原画，需要openapi登录）
-  - 智能播放模式切换（Alist播放/115直链/115转码）
-  - 播放进度保存、清晰度记忆
-  - 响应式设计，适配各种设备
-- 多清晰度切换
+如果搜索的是演员，在搜索结果里也会出现演员信息及其相关影片列表。
 
-### 3. 115网盘/Jellyfin影片库
+### 3.2 影片详情页
 
-- **115网盘文件浏览器**（强力！）
-  - 完整的目录浏览和文件管理功能
-  - 支持文件搜索、目录切换
-  - 实时显示文件大小、修改时间等信息
-  - 支持直接播放云盘视频文件
-- 视频文件识别与关联
-- 数据库方式对影片库的管理
-- **双重登录认证方式**（强力！）
-  - **OpenAPI扫码登录**：使用115官方API，安全便捷
-  - **Cookie登录（115driver）**：绕过OpenAPI限流，高速稳定
-    - 解决频繁403限流问题
-    - 支持热更新Cookie，无需重启服务
-    - 自动故障转移：OpenAPI失败时自动使用Driver
-  - **统一登录管理界面**：实时查看登录状态，灵活切换登录方式
-- **增加导入Jellyfin影片库功能，和115影片库完美融合，你的一体化终极影片库！**
-- **在线播放云盘视频（包括115和Jellyfin，自动转码hls推流）**
-  - **Alist播放模式**：通过Alist代理，稳定流畅，支持大文件播放
-  - **115官方播放模式**：多清晰度选择，适合115转码视频
-  - 智能路径解析：支持Token和Cookie两种认证方式
-- **浏览搜索影片一键离线下载并加入片库播放** （强力！）
-  - 自动添加到默认目录添加到115网盘影片库、自动提取影片ID并关联元数据
-  - 一键后10秒即可播放！
+点击任意一部影片，可以进入详情页，通常包括：
 
-### 4. STRM文件影片库
+- 标题 / 番号 / 日期 / 厂牌 / 系列 等基本信息
+- 原始封面与样本截图
+- 影片简介（summary）与中文译文（如已配置翻译）
+- 演员列表与标签
+- 可用片源：
+  - STRM 文件
+  - 115 网盘文件
+  - Jellyfin 媒体
+- 收藏按钮：可以把影片加入收藏夹
 
-- STRM文件生成与管理
-- 在线播放各来源视频
-- 目录自动扫描
-- 数据库方式对影片库的管理
+在简介区域，可以展开/收起原文与译文，并通过按钮触发翻译或刷新译文。
 
-## 技术特点
+---
 
-- 基于Flask框架开发
-- 使用SQLite数据库存储数据
-- 支持多种API接口(JavBus、DMM等)
-- 灵活应用多种在线播放可能性
-- 支持多种翻译API(OpenAI及兼容接口、Ollama等)
-- 实现了完整的缓存机制
-- **115driver集成**：基于逆向工程的115内部API，绕过官方OpenAPI限流
-- **Alist集成**：支持通过Alist代理播放115视频，提升稳定性
-- **统一播放器架构**：美观的播放界面，支持多种播放源和清晰度切换
-- 支持Docker部署
+## 四、115 网盘功能与 115 直链转码播放（重点）
 
-## 系统要求（docker方式部署可跳过）
+115 集成是本应用的一大核心，包含 **文件管理** 和 **多种播放方式**，尤其是 **115 直链 + 本地转码**。
 
-- Python 3.6+
-- 必要的Python包(requirements.txt)
-- SQLite3
-- 足够的磁盘空间(用于缓存图片和元数据)
+### 4.1 登录与基础配置
 
-## 目录结构
+要使用 115 功能，需要先在配置中完成登录信息设置（详情见原始 `readme.md`），通常包括：
 
-```
-.
-├── buspic/         # 图片缓存目录
-├── config/         # 配置文件目录
-├── data/           # 数据文件目录
-├── logs/           # 日志目录
-├── modules/        # 模块目录
-├── static/         # 静态文件
-├── templates/      # 模板文件
-├── webserver.py    # 主程序
-└── requirements.txt # 依赖包列表
-```
+- 选择认证模式：
+  - 使用 115 官方 OpenAPI（扫码登录）
+  - 使用浏览器复制的 Cookie（通过“driver”模式访问）
+  - 或自动模式：优先使用 Cookie，失败时回退到 OpenAPI
+- 可选：配置 Alist，用于「Alist 播放」模式  
+- 确保运行环境中已安装 `ffmpeg` / `ffprobe`（Docker 镜像中已包含）
 
-## 配置说明
+完成配置并重启服务后，即可在 Web 界面使用 115 片库与播放功能。
 
-系统配置存储在`config/config.json`文件中，主要配置项包括：
+### 4.2 115 文件浏览与一键播放
 
-```json
-{
-  "api_url": "API server address", //Requires valid API from javbus-api
-  "watch_url_prefix": "Video playback prefix", //e.g., missav.ai
-  "base_url": "Data source URL", //Defaults to javbus.com
-  "translation": {
-    "api_url": "Translation API URL", //Ollama/OpenAI-compatible endpoint
-    "source_lang": "Source language",
-    "target_lang": "Target language",
-    "api_token": "API key", //Required for non-Ollama APIs
-    "model": "Translation model"
-  },
-  "cloud115": {
-    "default_folder_id": "0", //Target directory ID (viewable via 115)
-    "auth_mode": "auto", //Authentication mode: "openapi", "driver", or "auto"
-    "token_file": "data/cloud115_token.json", //OpenAPI token storage
-    "request_timeout": 15, //Request timeout in seconds
-    "driver": {
-      "enabled": true, //Enable 115driver client
-      "cookie": "", //115 browser cookies (UID=xxx; CID=xxx; SEID=xxx; KID=xxx)
-      "cookie_file": "data/cloud115_cookie.txt", //Cookie file path
-      "user_agent": "Mozilla/5.0 115Browser/27.0.5.7", //User agent for driver requests
-      "timeout": 15, //Driver request timeout
-      "api_urls": [
-        "https://webapi.115.com/files",
-        "http://web.api.115.com/files"
-      ], //115 internal API endpoints
-      "login_check_interval": 300 //Cookie validity check interval (seconds)
-    },
-    "library_settings": {
-      "category": "other",
-      "min_file_size_mb": 50, //Set to 200 to filter small ad videos
-      "default_delay_seconds": 5 //Adjust accordingly to reduce idle time
-    },
-    "alist": {
-      "enabled": true, //Enable Alist playback integration
-      "base_url": "http://localhost:5244", //Alist server URL
-      "root_path": "/115", //115 mount path in Alist
-      "username": "", //Alist username (optional)
-      "password": "", //Alist password (optional)
-      "timeout": 30, //Alist request timeout
-      "url_cache_seconds": 300 //Alist URL cache duration
-    }
-  },
-  "jellyfin": {
-    "server_url": "Your Jellyfin server URL", //e.g., http://192.168.1.100:8096
-    "username": "Your Jellyfin username",
-    "password": "Your Jellyfin password",
-    "api_key": "Your Jellyfin API key",
-    "client_name": "BusPre",
-    "client_id": "buspre-web-player",
-    "device_name": "Web Browser",
-    "device_id": "buspre-web-player-01",
-    "transcoding": {
-      "enable_auto_transcoding": true,
-      "max_streaming_bitrate": 20000000,
-      "preferred_video_codec": "h264",
-      "preferred_audio_codec": "aac",
-      "container": "ts"
-    }
-  }
-}
-```
+1. 在导航栏中进入 **115 片库** 页面。  
+2. 可以像在 115 官方网页中一样：
+   - 浏览文件夹、切换目录
+   - 查看文件大小、修改时间等信息
+   - 搜索文件（按名称）
+3. 对于识别为视频文件的条目，点击后会进入 **115 播放器页面**。
 
-### 115云盘配置
+### 4.3 115 播放器页面的三种播放模式
 
-`cloud115`配置项用于控制115云盘的所有功能：
+在 115 播放器页面底部，你会看到 **“播放模式切换”** 按钮组：
 
-#### 基础配置
+- **Alist 播放**
+  - 前提：已在配置中正确设置 Alist 服务器并挂载了 115 网盘。
+  - 作用：通过 Alist 提供的直链进行播放，适合大文件、断点续传场景。
 
-- `default_folder_id`: 设置默认的115文件夹ID，下载任务将保存到此目录
-  - 可以通过115网盘获取文件夹ID，默认为"0"(根目录)
-- `auth_mode`: 认证模式
-  - `"openapi"`: 仅使用OpenAPI（扫码登录）
-  - `"driver"`: 仅使用115driver（Cookie登录）
-  - `"auto"`: 自动模式，优先使用driver，失败时自动回退到OpenAPI（推荐）
-- `token_file`: OpenAPI token存储文件路径
-- `request_timeout`: 请求超时时间（秒）
+- **115 直链**
+  - 利用你的 115 登录信息，从服务器端获取 **直接下载 URL**。
+  - 适合浏览器原生支持的格式（MP4 等），在不转码的前提下速度非常快。
+  - 若结合本地转码功能，可在不依赖 115 官方播放器的情况下播放更多编码/封装格式。
 
-#### Driver配置（115driver - 解决限流问题）
+- **115 播放**
+  - 调用 115 官方的在线播放接口，支持多清晰度切换（标清 / 高清 / 超清 / 1080P / 4K 等）。
+  - 对已转码到 115 官方格式的视频最为稳妥。
 
-- `driver.enabled`: 是否启用115driver客户端
-- `driver.cookie`: 115浏览器Cookie字符串（格式：`UID=xxx; CID=xxx; SEID=xxx; KID=xxx`）
-  - 如何获取Cookie：
-    1. 打开115网盘网页版（https://115.com）
-    2. 登录你的账号
-    3. 打开浏览器开发者工具（F12）
-    4. 在Console中运行：`document.cookie`
-    5. 复制输出的Cookie字符串，粘贴到配置中
-- `driver.cookie_file`: Cookie文件路径（可选，如果配置了cookie字段则优先使用）
-- `driver.user_agent`: 请求使用的User-Agent
-- `driver.timeout`: Driver请求超时时间
-- `driver.api_urls`: 115内部API端点列表（通常无需修改）
-- `driver.login_check_interval`: Cookie有效性检查间隔（秒）
+当前使用中的模式会在 **“播放信息”** 区域的「播放模式」字段中显示，如：
 
-**优势**：
+- `Alist 播放`
+- `115 直链播放`
+- `115 播放`
 
-- ✅ 绕过OpenAPI的403限流问题
-- ✅ 更快的目录浏览和文件操作速度
-- ✅ 支持热更新Cookie，无需重启服务
-- ✅ 自动故障转移机制
+### 4.4 115 直链 + 本地转码播放（重点说明）
 
-#### Alist播放配置
+很多视频在 115中的原始封装或编码并不完全适合浏览器直接播放，  
+或者你希望 **不依赖 115 官方转码**、直接用本机服务器以更灵活的方式转码。  
+这时可以使用 BUS115 的 **115 直链转码** 功能。
 
-- `alist.enabled`: 是否启用Alist播放功能
-- `alist.base_url`: Alist服务器地址
-- `alist.root_path`: 115在Alist中的挂载路径（通常是`/115`）
-- `alist.username`: Alist用户名（可选，如果Alist未设置密码则不需要）
-- `alist.password`: Alist密码（可选）
-- `alist.timeout`: Alist请求超时时间
-- `alist.url_cache_seconds`: Alist播放URL缓存时长
+#### 4.4.1 工作方式（用户视角）
 
-**Alist播放优势**：
+1. 在 115 片库中点击视频，进入 **115 播放器页面**。
+2. 在「播放模式切换」中点击 **“115 直链”**：
+   - 系统会根据当前文件的封装 / 编码情况，判断是否需要转码：
+     - 如果认为可以直接播放，则直接使用 115 提供的下载 URL 播放；
+     - 如果需要转码，或你手动触发转码，系统会：
+       - 通过已配置的 115 登录信息获取该文件的直链下载地址；
+       - 在服务器上启动一个转码任务（使用 ffmpeg），将直链流式转为 **HLS 分片**；
+       - 播放器会使用一个自定义的进度条播放这个 HLS 流。
+3. 页面底部会显示转码相关状态信息，例如：
+   - “正在请求转码服务…”
+   - “转码处理中，请稍候…”
+   - 转码完成后自动开始播放，并更新总时长、缓冲进度等信息。
 
-- ✅ 稳定性更好，支持断点续传
-- ✅ 适合大文件播放
-- ✅ 网络条件较差时表现更好
-- ✅ 可以缓存播放URL，提升响应速度
+整个过程对用户是透明的：  
+你只需要选择「115 直链」，其余由系统自动决定是 **直接播放**，还是 **通过本地转码播放**。
 
-#### 片库设置
+#### 4.4.2 自定义进度条与转码进度
 
-- `library_settings.category`: 文件分类，可选值为"movies"、"tv"或"other"
-- `library_settings.min_file_size_mb`: 最小文件大小(MB)，小于此大小的文件将被忽略
-- `library_settings.default_delay_seconds`: 添加离线下载后等待的时间(秒)
+当使用 115 直链转码播放时：
 
-### Jellyfin Configuration
+- 播放器会隐藏浏览器原生进度条，启用自定义控制条；
+- 自定义进度条可以显示：
+  - 已播放部分
+  - 已转码但尚未播放的缓冲部分
+  - 还未转码的部分在进度条上会有明显界限
+- 你可以拖动进度条进行快进，播放器会根据当前转码状态决定是否立即跳转或等待转码。
 
-- `server_url`: Your Jellyfin server URL (required for transcoding)
-- `username`: Jellyfin account username
-- `password`: Jellyfin account password
-- `api_key`: API key generated from Jellyfin dashboard
-- `transcoding`: Settings for automatic transcoding of unsupported formats
-  - `enable_auto_transcoding`: Toggle for auto-transcoding feature
-  - `max_streaming_bitrate`: Maximum bitrate for transcoded streams
-  - `preferred_video_codec`: Preferred video codec for transcoding (h264 recommended)
-  - `preferred_audio_codec`: Preferred audio codec for transcoding
-  - `container`: Container format for transcoded streams
+#### 4.4.3 转码任务管理
 
-## 使用方法
+在 115 播放器页面中，还有一组 **“转码控制”** 按钮：
 
-1. 安装依赖：
-   
-   ```bash
-   pip install -r requirements.txt
-   ```
+- **停止转码**：对当前任务发送停止指令（适合误触或不再需要转码时）
+- **转码管理**：跳转到 `/cloud115/transcode/tasks` 管理页面
 
-2. 配置系统：
-   编辑`config/config.json`文件，设置必要的API地址和密钥。其中：
-   
-   - `api_url`为必选项，否则首页的搜索功能不可用。请通过docker或vercel等方式部署javbus-api。感谢原作者：[ovnrain/javbus-api: 一个自我托管的 JavBus API 服务](https://github.com/ovnrain/javbus-api)
-   
-   - **115云盘登录配置**（二选一或同时使用）：
-     
-     - **方式1：OpenAPI扫码登录**（推荐新手）
-       1. 启动服务后，访问 `http://localhost:8080/cloud115/login`
-       2. 点击"扫码登录"按钮
-       3. 使用115手机APP扫描二维码
-       4. 登录成功后，Token会自动保存
-     - **方式2：Cookie登录**（推荐，解决限流问题）
-       1. 在浏览器中打开 https://115.com 并登录
-       2. 按F12打开开发者工具，在Console中输入：`document.cookie`
-       3. 复制输出的Cookie字符串
-       4. 在登录管理页面（`/cloud115/login`）粘贴Cookie并保存
-       5. 或者直接编辑`config/config.json`，在`cloud115.driver.cookie`字段中填入Cookie
-     - **推荐配置**：同时配置两种方式，设置`auth_mode: "auto"`，系统会自动选择最佳认证方式
-   
-   - **Alist播放配置**（可选，但强烈推荐）：
-     
-     1. 确保已部署Alist服务，并将115网盘挂载到Alist
-     2. 在`config/config.json`中配置`cloud115.alist`相关参数
-     3. 配置后，播放器会自动显示"Alist播放"和"115播放"两个选项
+在 **转码管理页面** 中，你可以：
 
-3. 启动服务：
-   
-   ```bash
-   python webserver.py
-   ```
+- 查看所有当前/历史转码任务
+- 查看每个任务的状态、文件名、开始时间、最近更新时间、时长、进程 ID 等
+- 对任务执行：
+  - 停止
+  - 删除（包括清理临时文件）
 
-### 使用Docker部署：
+> 小提示：如果经常使用 115 直链转码播放，建议定期检查转码任务列表，清理不再需要的历史任务和临时文件，以节省磁盘空间。
 
-```bash
-docker run -d -p 9080:8080 \
-  -e API_URL=your_api_url \
-  -v ./data:/app/data \
-  -v ./buspic:/app/buspic \
-  -v ./config:/app/confc \
-  -v ./logs:/app/logs \
-  --name dock-2_javbus furey79:dock-2_javbus
-```
+#### 4.4.4 使用前提和建议
+
+为了顺利使用 115 直链转码功能，建议确保：
+
+- 服务端能访问 115（网络与账号状态正常）
+- 配置中已填入有效的 115 Cookie 或已完成 OpenAPI 登录
+- 环境中有可用的 `ffmpeg` / `ffprobe`（Docker 镜像已经预装）
+- 磁盘空间足够用于存储转码产生的缓存文件
+
+如果转码启动失败，页面状态栏通常会给出简单的错误提示，可据此排查配置问题。
+
+---
+
+## 五、STRM 与 Jellyfin 片库用法
+
+### 5.1 STRM 片库
+
+STRM 文件是一种「链接占位符」，文件本身只有一个播放 URL，而不保存视频内容。  
+BUS115 可以把 STRM 文件当作影片条目来统一管理和播放。
+
+典型步骤：
+
+1. 在配置中指定 STRM 根目录；
+2. 将包含番号的 STRM 文件放在对应路径；
+3. 在 Web 界面的 **STRM 片库** 中浏览和播放；
+4. 系统会尝试根据 STRM 文件名匹配对应的影片元数据（例如番号），并在详情页中展示。
+
+### 5.2 Jellyfin 片库
+
+如果你已经在运行 Jellyfin，可以在 BUS115 中配置：
+
+- Jellyfin 服务器地址（URL）
+- 用户名 / 密码
+- API Key
+
+配置完成后，在 BUS115 中可以：
+
+- 浏览 Jellyfin 中的影片列表；
+- 在影片详情页中看到来自 Jellyfin 的片源入口；
+- 尝试通过 Jellyfin 的转码能力提供 HLS 流，在 BUS115 的统一播放器中观看。
+
+---
+
+## 六、翻译功能
+
+在影片详情页，如果系统检测到尚未生成译文，会显示「翻译」按钮：
+
+- 点击后，系统会调用配置好的翻译服务（如 OpenAI 接口、Ollama 等）：
+  - 翻译标题
+  - 翻译影片简介
+- 翻译结果会缓存到数据库，下次访问同一影片时直接读取。
+
+你也可以使用「刷新翻译」按钮来重新生成译文（比如更新到了更好的模型）。
+
+---
+
+## 七、启动与初次配置（简要）
+
+### 7.1 Docker 方式
+
+1. 安装 Docker 与 docker‑compose  
+2. 在项目根目录执行：
 
 ```bash
 docker-compose up -d
 ```
 
-## 使用指南
+3. 默认浏览器访问：`http://localhost:8080`
 
-### 115网盘文件浏览器
+### 7.2 本地 Python 方式
 
-1. 访问 `http://localhost:8080/explorer` 进入115网盘文件浏览器
-2. 浏览目录结构，点击文件夹进入子目录
-3. 点击视频文件可直接播放
-4. 顶部显示当前登录状态，点击"登录管理"可进入登录管理页面
-
-### 115登录管理
-
-1. 访问 `http://localhost:8080/cloud115/login` 或从文件浏览器点击"登录管理"
-2. 查看当前登录状态：
-   - OpenAPI状态：显示Token登录状态
-   - Driver状态：显示Cookie登录状态
-   - 当前使用方式：显示系统当前使用的认证方式
-3. 登录方式：
-   - **扫码登录**：点击"开始扫码登录"，使用115手机APP扫描二维码
-   - **Cookie登录**：在输入框中粘贴Cookie，选择认证模式，点击"更新Cookie"
-4. 热更新：Cookie更新后无需重启服务，立即生效
-
-### 视频播放
-
-1. 从影片库或文件浏览器选择视频文件
-2. 播放器自动加载，显示播放模式选择：
-   - **Alist播放**：通过Alist代理播放，稳定流畅（推荐）
-   - **115播放**：使用115官方HLS流播放，支持多清晰度
-3. 如果配置了Alist，播放器默认显示Alist播放选项
-4. 如果没有Token但有Cookie，115播放会自动使用Alist原始地址作为"原画"清晰度播放
-
-### 故障排除
-
-#### 115登录问题
-
-- **OpenAPI登录失败**：检查网络连接，确保可以访问115官方API
-- **Cookie登录失败**：
-  1. 确认Cookie格式正确（包含UID、CID、SEID、KID）
-  2. 检查Cookie是否过期（重新获取）
-  3. 查看日志文件了解详细错误信息
-
-#### 播放问题
-
-- **无法获取播放地址**：
-  1. 检查115登录状态（Token或Cookie至少一个有效）
-  2. 如果使用Alist播放，确保Alist服务正常运行
-  3. 检查文件路径是否正确（系统会自动尝试解析完整路径）
-- **Alist播放失败**：
-  1. 确认Alist配置正确（`base_url`、`root_path`）
-  2. 检查115是否在Alist中正确挂载
-  3. 测试Alist API是否可访问
-
-#### 限流问题
-
-- 如果遇到频繁的403错误，建议：
-  1. 启用115driver（Cookie登录）
-  2. 设置`auth_mode: "auto"`让系统自动切换
-  3. 使用Alist播放模式，减少对115 API的依赖
-
-## 注意事项
-
-- 请确保网络环境科学，或预先在可访问的科学环境中部署可以不科学访问的API
-- 建议使用反向代理来保护服务
-- 定期备份数据库文件
-- 注意配置文件中的敏感信息安全（Cookie、Token等）
-- 使用115播放和离线下载功能需要先登录115云盘（Token或Cookie至少一个有效）
-- **推荐配置**：同时配置OpenAPI和Driver两种登录方式，启用Alist播放，设置`auth_mode: "auto"`，获得最佳体验和稳定性
-
-## License
-
-MIT License
-
-# BUS115 Video Lib Management System
-
-## Project Overview
-
-A JAV video management system developed with Python Flask, offering video search, metadata management, online playback, 115 Cloud integration, Jellyfin Media Lib integration, STRM file library, and more.
-
-## Core Features
-
-### 1. Video Management
-
-- Video search and browsing
-- Enhanced multi-source video descriptions (complements BUS website metadata) (Powerful!)
-- Metadata scraping for non-BUS indexed videos (e.g., kin8) (Powerful!)
-- Automatic title/description translation (supports multiple translation APIs)
-
-### 2. Video Playback
-
-- Online HLS streaming
-- Clean ad-free playback from source websites (Powerful!)
-- STRM library streaming
-- **Unified and Beautiful Player Interface** (Powerful!)
-  - 115 and Jellyfin Cloud video streaming (auto HLS transcoding)
-  - **Alist proxy playback mode** - stable, smooth, supports resume
-  - **115 official multi-quality playback** (SD/HD/Full HD/1080P/4K/Original)
-  - Smart playback mode switching (Alist/115)
-  - Playback progress saving, quality memory
-  - Responsive design, adapts to various devices
-- Multi-quality switching
-
-### 3. 115 Cloud & Jellyfin Integration
-
-- **115 Cloud File Explorer** (Powerful!)
-  - Complete directory browsing and file management
-  - File search and directory navigation
-  - Real-time file size and modification time display
-  - Direct playback of cloud video files
-- Video file recognition and metadata association
-- Database-driven library management
-- **Dual Authentication Methods** (Powerful!)
-  - **OpenAPI QR Code Login**: Uses official 115 API, secure and convenient
-  - **Cookie Login (115driver)**: Bypasses OpenAPI rate limits, fast and stable
-    - Solves frequent 403 rate limiting issues
-    - Supports hot-reload cookies without restart
-    - Automatic failover: falls back to Driver when OpenAPI fails
-  - **Unified Login Management Interface**: Real-time status view, flexible login switching
-- ​**​Jellyfin library import feature for seamless integration with 115 Cloud library - your ultimate unified video library!​**​
-- ​**​Online cloud video playback (supports 115 Cloud & Jellyfin, auto HLS transcoding)​**
-  - **Alist Playback Mode**: Via Alist proxy, stable and smooth, supports large files
-  - **115 Official Playback Mode**: Multi-quality selection, suitable for 115 transcoded videos
-  - Smart path resolution: supports both Token and Cookie authentication
-- ​**​One-click offline download & library integration​**​ (Powerful!)
-  - Auto-saves to default directory
-  - Auto-adds to 115 Cloud library
-  - Auto-extracts video ID for metadata association
-  - Ready to play in 10 seconds!
-
-### 4. STRM File Library
-
-- STRM file generation and management
-- Multi-source video streaming
-- Automatic directory scanning
-- Database-driven library management
-
-## Technical Highlights
-
-- Built with Flask framework
-- SQLite database for data storage
-- Multi-API support (JavBus, DMM, etc.)
-- Flexible online playback solutions
-- Translation API compatibility (OpenAI, Ollama, etc.)
-- Comprehensive caching mechanism
-- **115driver Integration**: Based on reverse-engineered 115 internal APIs, bypasses official OpenAPI rate limits
-- **Alist Integration**: Supports Alist proxy playback for 115 videos, improves stability
-- **Unified Player Architecture**: Beautiful playback interface, supports multiple playback sources and quality switching
-- Docker deployment support
-
-## System Requirements (Skip for Docker Deployments)
-
-- Python 3.6+
-- Required Python packages (see `requirements.txt`)
-- SQLite3
-- Sufficient disk space (for image/metadata caching)
-
-## Directory Structure
-
-```
-.
-├── buspic/         # Image cache
-├── config/         # Configuration files
-├── data/           # Database files
-├── logs/           # Log files
-├── modules/        # Core modules
-├── static/         # Static assets
-├── templates/      # HTML templates
-├── webserver.py    # Main entrypoint
-└── requirements.txt # Dependencies
-```
-
-## Configuration
-
-System settings are stored in `config/config.json`:
-
-```json
-{
-  "api_url": "API server address", //Requires valid API from javbus-api
-  "watch_url_prefix": "Video playback prefix", //e.g., missav.ai
-  "base_url": "Data source URL", //Defaults to javbus.com
-  "translation": {
-    "api_url": "Translation API URL", //Ollama/OpenAI-compatible endpoint
-    "source_lang": "Source language",
-    "target_lang": "Target language",
-    "api_token": "API key", //Required for non-Ollama APIs
-    "model": "Translation model"
-  },
-  "cloud115": {
-    "default_folder_id": "0", //Target directory ID (viewable via 115)
-    "auth_mode": "auto", //Authentication mode: "openapi", "driver", or "auto"
-    "token_file": "data/cloud115_token.json", //OpenAPI token storage
-    "request_timeout": 15, //Request timeout in seconds
-    "driver": {
-      "enabled": true, //Enable 115driver client
-      "cookie": "", //115 browser cookies (UID=xxx; CID=xxx; SEID=xxx; KID=xxx)
-      "cookie_file": "data/cloud115_cookie.txt", //Cookie file path
-      "user_agent": "Mozilla/5.0 115Browser/27.0.5.7", //User agent for driver requests
-      "timeout": 15, //Driver request timeout
-      "api_urls": [
-        "https://webapi.115.com/files",
-        "http://web.api.115.com/files"
-      ], //115 internal API endpoints
-      "login_check_interval": 300 //Cookie validity check interval (seconds)
-    },
-    "library_settings": {
-      "category": "other",
-      "min_file_size_mb": 50, //Set to 200 to filter small ad videos
-      "default_delay_seconds": 5 //Adjust accordingly to reduce idle time
-    },
-    "alist": {
-      "enabled": true, //Enable Alist playback integration
-      "base_url": "http://localhost:5244", //Alist server URL
-      "root_path": "/115", //115 mount path in Alist
-      "username": "", //Alist username (optional)
-      "password": "", //Alist password (optional)
-      "timeout": 30, //Alist request timeout
-      "url_cache_seconds": 300 //Alist URL cache duration
-    }
-  },
-  "jellyfin": {
-    "server_url": "Your Jellyfin server URL", //e.g., http://192.168.1.100:8096
-    "username": "Your Jellyfin username",
-    "password": "Your Jellyfin password",
-    "api_key": "Your Jellyfin API key",
-    "client_name": "BusPre",
-    "client_id": "buspre-web-player",
-    "device_name": "Web Browser",
-    "device_id": "buspre-web-player-01",
-    "transcoding": {
-      "enable_auto_transcoding": true,
-      "max_streaming_bitrate": 20000000,
-      "preferred_video_codec": "h264",
-      "preferred_audio_codec": "aac",
-      "container": "ts"
-    }
-  }
-}
-```
-
-### 115 Cloud Configuration
-
-The `cloud115` configuration controls all 115 Cloud features:
-
-#### Basic Configuration
-
-- `default_folder_id`: Default directory ID for downloads (use "0" for root)
-- `auth_mode`: Authentication mode
-  - `"openapi"`: Use OpenAPI only (QR code login)
-  - `"driver"`: Use 115driver only (Cookie login)
-  - `"auto"`: Auto mode, prioritize driver, fallback to OpenAPI on failure (recommended)
-- `token_file`: OpenAPI token storage file path
-- `request_timeout`: Request timeout in seconds
-
-#### Driver Configuration (115driver - Solves Rate Limiting)
-
-- `driver.enabled`: Enable 115driver client
-- `driver.cookie`: 115 browser cookie string (format: `UID=xxx; CID=xxx; SEID=xxx; KID=xxx`)
-  - How to get cookies:
-    1. Open 115 Cloud web version (https://115.com)
-    2. Login to your account
-    3. Open browser developer tools (F12)
-    4. Run in Console: `document.cookie`
-    5. Copy the output cookie string and paste into config
-- `driver.cookie_file`: Cookie file path (optional, cookie field takes priority if configured)
-- `driver.user_agent`: User-Agent for requests
-- `driver.timeout`: Driver request timeout
-- `driver.api_urls`: List of 115 internal API endpoints (usually no need to modify)
-- `driver.login_check_interval`: Cookie validity check interval (seconds)
-
-**Advantages**:
-
-- ✅ Bypasses OpenAPI 403 rate limiting
-- ✅ Faster directory browsing and file operations
-- ✅ Supports hot-reload cookies without restart
-- ✅ Automatic failover mechanism
-
-#### Alist Playback Configuration
-
-- `alist.enabled`: Enable Alist playback feature
-- `alist.base_url`: Alist server address
-- `alist.root_path`: 115 mount path in Alist (usually `/115`)
-- `alist.username`: Alist username (optional, not needed if Alist has no password)
-- `alist.password`: Alist password (optional)
-- `alist.timeout`: Alist request timeout
-- `alist.url_cache_seconds`: Alist playback URL cache duration
-
-**Alist Playback Advantages**:
-
-- ✅ Better stability, supports resume
-- ✅ Suitable for large file playback
-- ✅ Better performance under poor network conditions
-- ✅ Can cache playback URLs, improves response speed
-
-#### Library Settings
-
-- `library_settings.category`: File category (`movies`, `tv`, or `other`)
-- `library_settings.min_file_size_mb`: Minimum file size (MB), files smaller than this will be ignored
-- `library_settings.default_delay_seconds`: Wait time after triggering downloads
-
-### Jellyfin Configuration
-
-- `server_url`: Your Jellyfin server URL (required for transcoding)
-- `username`: Jellyfin account username
-- `password`: Jellyfin account password
-- `api_key`: API key generated from Jellyfin dashboard
-- `transcoding`: Settings for automatic transcoding of unsupported formats
-  - `enable_auto_transcoding`: Toggle for auto-transcoding feature
-  - `max_streaming_bitrate`: Maximum bitrate for transcoded streams
-  - `preferred_video_codec`: Preferred video codec for transcoding (h264 recommended)
-  - `preferred_audio_codec`: Preferred audio codec for transcoding
-  - `container`: Container format for transcoded streams
-
-## Usage
-
-1. Install dependencies:
-   
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. Configure system:  
-   Edit `config/config.json`. ​**​Required​**​:
-   
-   - `api_url`: Deploy javbus-api separately. Thanks to the original author: [ovnrain/javbus-api: A self-hosted JavBus API service](https://github.com/ovnrain/javbus-api)
-   
-   - **115 Cloud Login Configuration** (choose one or both):
-     
-     - **Method 1: OpenAPI QR Code Login** (recommended for beginners)
-       1. After starting the service, visit `http://localhost:8080/cloud115/login`
-       2. Click "Start QR Code Login" button
-       3. Use 115 mobile APP to scan the QR code
-       4. After successful login, token will be automatically saved
-     - **Method 2: Cookie Login** (recommended, solves rate limiting)
-       1. Open https://115.com in browser and login
-       2. Press F12 to open developer tools, enter in Console: `document.cookie`
-       3. Copy the output cookie string
-       4. Paste cookie in login management page (`/cloud115/login`) and save
-       5. Or directly edit `config/config.json`, fill cookie in `cloud115.driver.cookie` field
-     - **Recommended Configuration**: Configure both methods, set `auth_mode: "auto"`, system will automatically choose the best authentication method
-   
-   - **Alist Playback Configuration** (optional, but highly recommended):
-     
-     1. Ensure Alist service is deployed and 115 Cloud is mounted in Alist
-     2. Configure `cloud115.alist` related parameters in `config/config.json`
-     3. After configuration, player will automatically display "Alist Playback" and "115 Playback" options
-
-3. Start service:
-   
-   ```bash
-   python webserver.py
-   ```
-
-### Docker Deployment
+1. 安装 Python 3.9+ 与 ffmpeg  
+2. 在项目根目录执行：
 
 ```bash
-docker run -d -p 9080:8080 \
-  -e API_URL=your_api_url \
-  -v ./data:/app/data \
-  -v ./buspic:/app/buspic \
-  -v ./config:/app/config \
-  -v ./logs:/app/logs \
-  --name bus115-system furey79/bus115-system
+pip install -r requirements.txt
+python webserver.py
 ```
 
-```bash
-docker-compose up -d
-```
+3. 浏览器访问 `http://localhost:8080`
 
-## Usage Guide
+### 7.3 初次配置建议
 
-### 115 Cloud File Explorer
+1. 打开 `config/config.json`，至少检查：
+   - JavBus / 数据源 URL 是否可访问
+   - 115 配置（认证方式、默认目录）
+   - 是否启用 Alist（如有）
+   - 翻译服务配置（可选）
+2. 修改后重启服务，使配置生效。
 
-1. Visit `http://localhost:8080/explorer` to enter 115 Cloud file explorer
-2. Browse directory structure, click folders to enter subdirectories
-3. Click video files to play directly
-4. Top bar shows current login status, click "Login Management" to enter login management page
+---
 
-### 115 Login Management
+## 八、常见使用问题（简短 FAQ）
 
-1. Visit `http://localhost:8080/cloud115/login` or click "Login Management" from file explorer
-2. View current login status:
-   - OpenAPI Status: Shows token login status
-   - Driver Status: Shows cookie login status
-   - Current Method: Shows currently used authentication method
-3. Login methods:
-   - **QR Code Login**: Click "Start QR Code Login", use 115 mobile APP to scan QR code
-   - **Cookie Login**: Paste cookie in input box, select authentication mode, click "Update Cookie"
-4. Hot Reload: Cookie updates take effect immediately without restart
+- **115 直链/转码按钮是灰色的或不可用？**  
+  - 检查是否已经配置 115 登录信息；  
+  - 确认当前文件是否从 115 片库页面进入，而不是其他来源。
 
-### Video Playback
+- **点击 115 直链后提示无法获取直链或转码启动失败？**  
+  - 检查 Cookie 是否过期，或 OpenAPI 是否仍然有效；  
+  - 服务器是否能直接访问 115 网站；  
+  - 是否安装了 `ffmpeg` / `ffprobe`。
 
-1. Select video file from library or file explorer
-2. Player automatically loads, displays playback mode selection:
-   - **Alist Playback**: Via Alist proxy, stable and smooth (recommended)
-   - **115 Playback**: Use 115 official HLS stream, supports multiple qualities
-3. If Alist is configured, player defaults to Alist playback option
-4. If no token but cookie exists, 115 playback will automatically use Alist raw URL as "Original" quality
+- **115 官方播放卡顿或画质不理想？**  
+  - 可以尝试改用「Alist 播放」或「115 直链（配合转码）」模式。
 
-### Troubleshooting
+---
 
-#### 115 Login Issues
+## 九、JavBus 数据源模式（内部 Scraper / 外部 API）
 
-- **OpenAPI login failure**: Check network connection, ensure 115 official API is accessible
-- **Cookie login failure**:
-  1. Confirm cookie format is correct (contains UID, CID, SEID, KID)
-  2. Check if cookie has expired (re-obtain)
-  3. Check log files for detailed error information
+本应用的「番号搜索 / 影片详情」主要依赖 JavBus 数据，可以通过两种方式获取：
 
-#### Playback Issues
+1. **内部 Scraper 模式（默认）**
+   - 配置示例（`config/config.json` 中）：
+     ```json
+     "javbus": {
+       "mode": "internal",
+       "external_api_url": "",
+       "timeout": 10,
+       "page_size": 30,
+       "allow_external_fallback": false
+     }
+     ```
+   - 特点：
+     - 不需要额外部署服务，由本应用直接抓取 javbus.com 网页并解析；  
+     - 适合内网 / 无法访问外部 API 的环境；  
+     - 可配合本地数据库缓存，减轻对 JavBus 网站的压力。
 
-- **Cannot get playback URL**:
-  1. Check 115 login status (at least one of token or cookie must be valid)
-  2. If using Alist playback, ensure Alist service is running normally
-  3. Check if file path is correct (system will automatically try to resolve full path)
-- **Alist playback failure**:
-  1. Confirm Alist configuration is correct (`base_url`, `root_path`)
-  2. Check if 115 is correctly mounted in Alist
-  3. Test if Alist API is accessible
+2. **外部 API 模式（使用独立的 javbus-api 服务）**
+   - 配置示例：
+     ```json
+     "javbus": {
+       "mode": "external",
+       "external_api_url": "http://your-javbus-api-server/api",
+       "timeout": 10,
+       "page_size": 30
+     }
+     ```
+   - 含义：
+     - 所有 JavBus 搜索 / 详情请求会转发到你自己部署的 **javbus-api** 服务，本应用只作为 HTTP 客户端使用；  
+     - 可以减轻本机的爬虫负担，也更容易复用同一套 JavBus 数据给多个前端。
+   - 外部 API 部署建议：
+     - 推荐使用原作者的开源项目：  
+       **ovnrain/javbus-api：一个自我托管的 JavBus API 服务**  
+       GitHub：<https://github.com/ovnrain/javbus-api>
+     - 简单做法（详细请以该仓库 README 为准）：
+       - 使用 Docker 启动，或部署到 Vercel 等平台；  
+       - 确保 HTTP 访问路径形如：`http://你的服务器:端口/api`；  
+       - 把这个地址填入本项目的 `javbus.external_api_url`。
 
-#### Rate Limiting Issues
+3. **混合模式：内部为主，外部兜底**
+   - 如果你同时部署了外部 API，又希望 **优先使用内部 Scraper**，可以：
+     ```json
+     "javbus": {
+       "mode": "internal",
+       "external_api_url": "http://your-javbus-api-server/api",
+       "page_size": 30,
+       "allow_external_fallback": true,
+       "internal": {
+         "enabled": true,
+         "cache_ttl_seconds": 3600,
+         "allow_external_fallback": true
+       }
+     }
+     ```
+   - 行为：
+     - 正常情况下使用内部 Scraper；  
+     - 当内部抓取失败或超时时，会尝试回退到外部 `javbus-api` 服务获取结果。
 
-- If encountering frequent 403 errors, recommend:
-  1. Enable 115driver (Cookie login)
-  2. Set `auth_mode: "auto"` to let system automatically switch
-  3. Use Alist playback mode to reduce dependency on 115 API
+> 兼容说明：旧版本配置中的顶层 `api_url` 字段仍然会被自动识别并映射到 `javbus.external_api_url`，但推荐今后统一使用 `javbus` 小节中的配置。
 
-## Notes
+---
 
-- Ensure proper network configuration for external API access
-- Use reverse proxy for production deployments
-- Regularly back up database files
-- Protect sensitive configuration data (cookies, tokens, etc.)
-- 115 Cloud features require active 115 account login (at least one of token or cookie must be valid)
-- **Recommended Configuration**: Configure both OpenAPI and Driver login methods, enable Alist playback, set `auth_mode: "auto"` for best experience and stability
+# BUS115 Usage Guide (English)
 
-## License
+This English section mirrors the Chinese content but is slightly more concise.
 
-MIT License
+---
+
+## 1. What the App Does
+
+BUS115 is a self‑hosted web application for **managing and playing JAV videos**.  
+It unifies:
+
+- Metadata from multiple sites (e.g. JavBus, FANZA/DMM)
+- Video sources from:
+  - 115 cloud drive
+  - STRM files
+  - Jellyfin
+
+into a single web UI where you can:
+
+- Search by movie ID or keyword
+- Browse rich metadata (cover, samples, summary, cast, tags)
+- Play videos directly in the browser using different pipelines
+- Translate titles and summaries
+- Maintain a favorites list
+
+---
+
+## 2. Main UI Entrances
+
+- **Home** – recently added / updated movies  
+- **Search** – search by movie ID or keyword  
+- **Movie Detail** – full metadata and available sources for a single title  
+- **115 Library** – browse your 115 cloud drive and open videos  
+- **STRM Library** – manage and play STRM‑based entries  
+- **Jellyfin Library** – integrate existing Jellyfin collections  
+- **Favorites** – quick access to bookmarked movies
+
+---
+
+## 3. Searching & Movie Details
+
+- Use the top search box to enter an ID like `SSIS-406`, `ABW-123`, `HEYZO-1234`, etc.  
+- The app first checks the local database; if missing, it fetches metadata from the configured sources and caches it.
+
+The detail page shows:
+
+- Basic info (ID, title, date, maker, series)  
+- Cover and sample images  
+- Summary and translated summary (if enabled)  
+- Cast and tags  
+- Links to available sources (115, STRM, Jellyfin)  
+- A button to add/remove the movie from favorites
+
+---
+
+## 4. 115 Cloud & Direct‑Link Transcoding (Highlight)
+
+### 4.1 Login & Basic Setup
+
+To use 115 features you need to configure:
+
+- An authentication method:
+  - Official OpenAPI (QR‑code login), or
+  - Browser cookie string (“driver” mode), or
+  - Auto mode (prefer cookie, fall back to OpenAPI)
+- Optional Alist server for the “Alist playback” mode  
+- `ffmpeg` / `ffprobe` installed on the server (already included in the Docker image)
+
+After editing `config/config.json`, restart the app.
+
+### 4.2 Browsing 115 and Opening the Player
+
+In the **115 Library** page you can:
+
+- Browse folders and files  
+- See size and modification time  
+- Search by file name  
+- Click on a video to open the **115 player page**.
+
+### 4.3 Three Playback Modes on the 115 Player Page
+
+On the bottom of the player page there is a **playback mode selector**:
+
+- **Alist playback** – uses your Alist server to proxy 115 and provide direct links (good for large files and resume).
+- **115 direct link** – obtains a direct HTTP download URL from 115 and plays it in the browser; can be combined with local transcoding (see below).
+- **115 playback** – uses the official 115 online player with multiple quality levels.
+
+The current mode is shown in the “Playback info” area as:
+
+- `Alist 播放` (Alist)  
+- `115 直链播放` (direct link)  
+- `115 播放` (official 115)
+
+### 4.4 115 Direct‑Link with Local Transcoding
+
+Some 115 videos are not in a browser‑friendly format, or you may prefer not to rely on 115’s own transcoding.  
+BUS115 can **fetch the direct download URL and transcode it to HLS on your server**.
+
+User‑level behavior:
+
+1. Open a video from the 115 library – the 115 player page appears.  
+2. Select **“115 直链”** in the playback mode selector.
+3. The app:
+   - Fetches the direct download URL for this file using your 115 login;  
+   - Decides whether it can be played as‑is or should be transcoded;  
+   - If transcoding is needed, creates a background ffmpeg task that converts the stream to HLS segments;  
+   - Starts playback using a custom progress bar once enough data is ready.
+4. Status messages at the bottom show:
+   - “Requesting transcoding service…”
+   - “Transcoding in progress…”  
+   - Errors if something goes wrong.
+
+When direct‑link transcoding is active:
+
+- The built‑in HTML video controls are hidden;  
+- A custom control bar shows playback progress and, as far as possible, the converted portion of the stream;  
+- You can seek within the part that has already been transcoded, and the player will request additional segments as they become available.
+
+There is also a **“Transcoding control”** group:
+
+- **Stop transcoding** – sends a stop signal to the current transcoding task  
+- **Transcode management** – opens `/cloud115/transcode/tasks`, where you can:
+  - View task list and status
+  - Stop individual tasks
+  - Delete tasks and their temporary files
+
+Requirements and tips:
+
+- A working 115 login (cookie or OpenAPI)  
+- Reachable 115 servers from your host  
+- `ffmpeg`/`ffprobe` installed  
+- Sufficient disk space for temporary transcoding files  
+- If you see repeated errors, check the status messages and adjust your configuration.
+
+---
+
+## 5. STRM & Jellyfin Libraries
+
+- **STRM**: point STRM files at your video URLs, let BUS115 scan them, and play them from the STRM Library page. The app tries to match STRM names with movie IDs to attach metadata.
+- **Jellyfin**: configure your Jellyfin server (URL, username, password, API key). BUS115 can list Jellyfin movies, and in many cases reuse Jellyfin’s own transcoding to provide an HLS stream into the unified player.
+
+---
+
+## 6. Translation
+
+On the movie detail page, a **Translate** button can be used to:
+
+- Translate the title  
+- Translate the summary
+
+The translated text is stored in the local database for subsequent visits. A **Refresh translation** button can regenerate the translation if you change the translation backend.
+
+---
+
+## 7. Running the App (Short Version)
+
+- **Docker**:
+  ```bash
+  docker-compose up -d
+  # browse http://localhost:8080
+  ```
+
+- **Native Python**:
+  ```bash
+  pip install -r requirements.txt
+  python webserver.py
+  # browse http://localhost:8080
+  ```
+
+Edit `config/config.json` for:
+
+- Data sources (JavBus, etc.)  
+- 115 settings (auth mode, default folder, Alist if used)  
+- Jellyfin settings  
+- Translation backend
+
+After editing, restart the app.
+
+---
+
+## 8. JavBus Data Sources (Internal Scraper vs External API)
+
+The movie search/detail features rely heavily on **JavBus**. There are two ways to get this data:
+
+1. **Internal scraper mode (default)**
+   - Example in `config/config.json`:
+     ```json
+     "javbus": {
+       "mode": "internal",
+       "external_api_url": "",
+       "timeout": 10,
+       "page_size": 30,
+       "allow_external_fallback": false
+     }
+     ```
+   - The app scrapes javbus.com directly and parses HTML.  
+   - No extra service is required, good for offline / LAN‑only setups.  
+   - Results are cached in the local database to reduce load on JavBus.
+
+2. **External API mode (using a separate javbus-api service)**
+   - Example:
+     ```json
+     "javbus": {
+       "mode": "external",
+       "external_api_url": "http://your-javbus-api-server/api",
+       "timeout": 10,
+       "page_size": 30
+     }
+     ```
+   - Behavior:
+     - All search/detail calls go to your own **javbus-api** server; this app just acts as an HTTP client.  
+     - Useful if you already maintain a central JavBus API for multiple frontends.
+   - Recommended external API implementation:
+     - Original project: **ovnrain/javbus-api – A self‑hosted JavBus API service**  
+       GitHub: <https://github.com/ovnrain/javbus-api>
+     - Typical steps (see that repo’s README for details):
+       - Run the service via Docker or deploy to a platform like Vercel;  
+       - Expose an endpoint like `http://your-host:port/api`;  
+       - Put that URL into this project’s `javbus.external_api_url`.
+
+3. **Hybrid mode: internal first, external as fallback**
+   - If you want to keep the internal scraper but also have an external API as backup:
+     ```json
+     "javbus": {
+       "mode": "internal",
+       "external_api_url": "http://your-javbus-api-server/api",
+       "page_size": 30,
+       "allow_external_fallback": true,
+       "internal": {
+         "enabled": true,
+         "cache_ttl_seconds": 3600,
+         "allow_external_fallback": true
+       }
+     }
+     ```
+   - Behavior:
+     - The app will try the internal scraper first.  
+     - If scraping fails or times out, it will fall back to the external `javbus-api` service.
+
+> Compatibility note: the legacy top‑level `api_url` config key is still recognized and mapped to `javbus.external_api_url`, but new deployments are encouraged to configure JavBus under the `javbus` section instead.
+
+---
+
+If you’d like, I can further tailor this usage guide to your personal workflow (e.g., only 115 + STRM, no Jellyfin),或者根据你常用的操作场景补充更多例子。 

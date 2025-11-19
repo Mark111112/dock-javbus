@@ -42,6 +42,165 @@
         object-fit: contain;
     }
     
+    /* 隐藏原生控件的进度条（仅在使用转码流时） */
+    #direct115Player.custom-progress-bar::-webkit-media-controls-timeline,
+    #direct115Player.custom-progress-bar::-webkit-media-controls-current-time-display,
+    #direct115Player.custom-progress-bar::-webkit-media-controls-time-remaining-display {
+        display: none !important;
+    }
+
+    /* 完全隐藏原生控件（用于自定义控制条模式） */
+    #direct115Player.custom-no-native-controls::-webkit-media-controls-enclosure {
+        display: none !important;
+    }
+    
+    /* 自定义进度条容器 */
+    .custom-progress-container {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 64px;
+        background: linear-gradient(to top, rgba(0,0,0,0.8), transparent);
+        display: flex;
+        align-items: center;
+        padding: 0 15px;
+        z-index: 10;
+        pointer-events: none;
+        gap: 8px;
+    }
+    
+    .custom-progress-container.active {
+        pointer-events: all;
+    }
+
+    .custom-controls-left,
+    .custom-controls-right {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-shrink: 0;
+    }
+
+    .custom-controls-left {
+        margin-right: 4px;
+    }
+
+    .custom-controls-right {
+        margin-left: 4px;
+    }
+
+    .custom-control-button {
+        border: none;
+        background: rgba(0, 0, 0, 0.4);
+        color: #fff;
+        border-radius: 4px;
+        padding: 3px 6px;
+        font-size: 12px;
+        line-height: 1;
+        cursor: pointer;
+    }
+
+    .custom-control-button:hover {
+        background: rgba(255, 255, 255, 0.15);
+    }
+
+    .custom-volume-slider {
+        width: 80px;
+    }
+    
+    /* 自定义进度条 */
+    .custom-progress-bar {
+        width: 100%;
+        height: 6px;
+        background: rgba(255, 255, 255, 0.3);
+        border-radius: 3px;
+        position: relative;
+        cursor: pointer;
+        margin: 0 10px;
+    }
+    
+    .custom-progress-bar:hover {
+        height: 8px;
+    }
+    
+    .custom-progress-filled {
+        height: 100%;
+        background: #007bff;
+        border-radius: 3px;
+        position: relative;
+        transition: width 0.1s linear;
+    }
+    
+    .custom-progress-bar:hover .custom-progress-filled {
+        background: #0056b3;
+    }
+    
+    .custom-progress-buffer {
+        position: absolute;
+        top: 0;
+        left: 0;
+        height: 100%;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 3px;
+        pointer-events: none;
+    }
+    
+    .custom-progress-handle {
+        position: absolute;
+        top: 50%;
+        right: -8px;
+        width: 16px;
+        height: 16px;
+        background: #fff;
+        border-radius: 50%;
+        transform: translateY(-50%);
+        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        opacity: 0;
+        transition: opacity 0.2s;
+        pointer-events: none;
+    }
+    
+    .custom-progress-bar:hover .custom-progress-handle {
+        opacity: 1;
+    }
+
+    /* 进度条悬停提示 */
+    .custom-progress-tooltip {
+        position: absolute;
+        bottom: 100%;
+        transform: translateX(-50%);
+        padding: 2px 6px;
+        font-size: 11px;
+        color: #fff;
+        background: rgba(0, 0, 0, 0.8);
+        border-radius: 3px;
+        white-space: nowrap;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.15s;
+    }
+
+    .custom-progress-tooltip.visible {
+        opacity: 1;
+    }
+    
+    /* 时间显示 */
+    .custom-time-display {
+        color: #fff;
+        font-size: 12px;
+        font-weight: 500;
+        text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+        white-space: nowrap;
+        min-width: 80px;
+        text-align: right;
+    }
+    
+    .custom-time-display.current {
+        text-align: left;
+        min-width: 80px;
+    }
+    
     .video-info {
         padding: 1rem;
         background-color: #f8f9fa;
@@ -592,6 +751,26 @@
                                             要查看此视频，请启用JavaScript并使用支持HTML5视频的浏览器
                                         </p>
                                     </video>
+                                    <!-- 自定义进度条和控制条（仅在使用转码流时显示） -->
+                                    <div id="customProgressContainer" class="custom-progress-container" style="display: none;">
+                                        <div class="custom-controls-left">
+                                            <button id="customPlayPauseBtn" class="custom-control-button" type="button">▶</button>
+                                            <button id="customMuteBtn" class="custom-control-button" type="button">🔊</button>
+                                            <input id="customVolumeSlider" class="custom-volume-slider" type="range" min="0" max="1" step="0.05" value="1">
+                                        </div>
+                                        <div class="custom-time-display current" id="customCurrentTime">00:00</div>
+                                        <div class="custom-progress-bar" id="customProgressBar">
+                                            <div class="custom-progress-tooltip" id="customProgressTooltip">00:00</div>
+                                            <div class="custom-progress-buffer" id="customProgressBuffer"></div>
+                                            <div class="custom-progress-filled" id="customProgressFilled">
+                                                <div class="custom-progress-handle"></div>
+                                            </div>
+                                        </div>
+                                        <div class="custom-time-display" id="customTotalTime">00:00</div>
+                                        <div class="custom-controls-right">
+                                            <button id="customFullscreenBtn" class="custom-control-button" type="button">⛶</button>
+                                        </div>
+                                    </div>
                                     <div id="direct-loading-overlay" class="loading-overlay">
                                         <div class="spinner-border text-light mb-3" role="status">
                                             <span class="visually-hidden">加载中...</span>
@@ -658,14 +837,18 @@
                         </div>
                         
                         <div class="transcode-controls" style="margin-top: 10px; padding: 15px; background: #f8f9fa; border-radius: 0 0 8px 8px;">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <div>
+                            <div class="d-flex justify-content-start align-items-center gap-2 flex-wrap">
+                                <div class="me-3">
                                     <span id="playback-info" class="text-muted"></span>
                                 </div>
-                                <div>
+                                <div class="btn-group" role="group" aria-label="播放模式切换">
                                     <button id="alist-play-btn" class="btn btn-sm {% if initial_mode == 'alist' %}btn-secondary{% else %}btn-outline-primary{% endif %}" {% if not alist_enabled %}disabled{% endif %}>Alist 播放</button>
                                     <button id="direct115-play-btn" class="btn btn-sm {% if initial_mode == 'direct' %}btn-secondary{% else %}btn-outline-primary{% endif %}" {% if not (direct_pickcode or file_id) %}disabled{% endif %}>115 直链</button>
                                     <button id="cloud115-play-btn" class="btn btn-sm {% if initial_mode not in ['alist', 'direct'] %}btn-secondary{% else %}btn-outline-primary{% endif %}">115 播放</button>
+                                </div>
+                                <div class="btn-group ms-2" role="group" aria-label="转码控制">
+                                    <button id="stop-transcode-btn" class="btn btn-sm btn-outline-danger" style="display:none;">停止转码</button>
+                                    <a id="open-transcode-admin-btn" href="/cloud115/transcode/tasks" class="btn btn-sm btn-outline-secondary" target="_blank">转码管理</a>
                                 </div>
                             </div>
                         </div>
@@ -840,6 +1023,63 @@
         let cloud115Initialized = false;
         let directInitialized = false;
         let lastDirectAuthCookie = null;
+        let directTranscodeInfo = null;
+        let directTranscodePollingTimer = null;
+        let directUsingTranscode = false;
+        let directHlsInstance = null;
+        let directTranscodeFallbackTriggered = false;
+        const stopTranscodeBtn = document.getElementById('stop-transcode-btn');
+        const openTranscodeAdminBtn = document.getElementById('open-transcode-admin-btn');
+        
+        // 自定义进度条相关元素
+        const customProgressContainer = document.getElementById('customProgressContainer');
+        const customProgressBar = document.getElementById('customProgressBar');
+        const customProgressFilled = document.getElementById('customProgressFilled');
+        const customProgressBuffer = document.getElementById('customProgressBuffer');
+        const customProgressTooltip = document.getElementById('customProgressTooltip');
+        const customCurrentTime = document.getElementById('customCurrentTime');
+        const customTotalTime = document.getElementById('customTotalTime');
+        const customPlayPauseBtn = document.getElementById('customPlayPauseBtn');
+        const customMuteBtn = document.getElementById('customMuteBtn');
+        const customVolumeSlider = document.getElementById('customVolumeSlider');
+        const customFullscreenBtn = document.getElementById('customFullscreenBtn');
+        
+        // 自定义进度条状态
+        let customProgressTotalDuration = 0; // 视频总时长（秒）
+        let customProgressIsDragging = false;
+        let customProgressOffset = 0; // 当前转码流起始偏移（秒）
+        let pendingSeekTarget = null;
+
+        const ACTIVE_STATUSES = ['queued','starting','running','ready'];
+
+        function updateTranscodeButtons() {
+            if (!stopTranscodeBtn) return;
+            const hasTaskId = directTranscodeInfo && (directTranscodeInfo.task_id || directTranscodeInfo.id);
+            // 显示/隐藏
+            stopTranscodeBtn.style.display = hasTaskId ? 'inline-block' : 'none';
+            // 启用/禁用（仅当任务处于活跃状态时可点击）
+            if (hasTaskId) {
+                const status = (directTranscodeInfo.status || '').toLowerCase();
+                const enabled = ACTIVE_STATUSES.includes(status);
+                stopTranscodeBtn.disabled = !enabled;
+                stopTranscodeBtn.classList.toggle('btn-outline-danger', enabled);
+                stopTranscodeBtn.classList.toggle('btn-secondary', !enabled);
+                stopTranscodeBtn.textContent = '停止转码';
+            } else {
+                stopTranscodeBtn.disabled = true;
+            }
+        }
+
+        function setDirectNativeControlsEnabled(enabled) {
+            if (!directPlayer) return;
+            if (enabled) {
+                directPlayer.setAttribute('controls', '');
+                directPlayer.classList.remove('custom-no-native-controls');
+            } else {
+                directPlayer.removeAttribute('controls');
+                directPlayer.classList.add('custom-no-native-controls');
+            }
+        }
 
         function formatTime(seconds) {
             if (!seconds || isNaN(seconds)) return '--:--';
@@ -856,9 +1096,44 @@
 
         function updateDurationAndResolution(element) {
             if (!element) return;
-            if (element.duration && !isNaN(element.duration) && videoDurationEl) {
-                videoDurationEl.textContent = formatTime(element.duration);
+            
+            // 优先使用检测到的时长（如果存在）- 这是 ffprobe 检测到的总时长
+            let durationToUse = null;
+            if (directTranscodeInfo && directTranscodeInfo.duration && !isNaN(directTranscodeInfo.duration)) {
+                durationToUse = parseFloat(directTranscodeInfo.duration);
+            } else if (element.duration && !isNaN(element.duration)) {
+                durationToUse = element.duration;
             }
+            
+            // 如果存在检测到的总时长，强制设置到 video element 上
+            // 这样进度条才能显示完整范围，允许跳转到未转码部分
+            if (directTranscodeInfo && directTranscodeInfo.duration && !isNaN(directTranscodeInfo.duration)) {
+                const totalDuration = parseFloat(directTranscodeInfo.duration);
+                if (totalDuration > 0) {
+                    // 使用 Object.defineProperty 覆盖只读的 duration 属性
+                    try {
+                        Object.defineProperty(element, 'duration', {
+                            get: function() { return totalDuration; },
+                            configurable: true
+                        });
+                    } catch (e) {
+                        console.warn('[Duration] 无法覆盖 duration 属性:', e);
+                    }
+                    
+                    // 对于 HLS.js，尝试通过 level 设置总时长
+                    if (directHlsInstance && directHlsInstance.levels && directHlsInstance.levels.length > 0) {
+                        const level = directHlsInstance.levels[0];
+                        if (level && (level.totalduration === undefined || level.totalduration < totalDuration)) {
+                            level.totalduration = totalDuration;
+                        }
+                    }
+                }
+            }
+            
+            if (durationToUse && durationToUse > 0 && videoDurationEl) {
+                videoDurationEl.textContent = formatTime(durationToUse);
+            }
+            
             if (element.videoWidth && element.videoHeight && videoResolutionEl) {
                 videoResolutionEl.textContent = `${element.videoWidth} x ${element.videoHeight}`;
             }
@@ -914,6 +1189,535 @@
             return `/api/cloud115/proxy?${params.toString()}`;
         }
 
+        function stopDirectTranscodePolling() {
+            if (directTranscodePollingTimer) {
+                clearTimeout(directTranscodePollingTimer);
+                directTranscodePollingTimer = null;
+            }
+        }
+
+        function clearDirectHlsInstance() {
+            if (directHlsInstance && typeof directHlsInstance.destroy === 'function') {
+                try {
+                    directHlsInstance.destroy();
+                } catch (err) {
+                    console.warn('销毁 direct HLS 实例失败:', err);
+                }
+            }
+            directHlsInstance = null;
+        }
+
+        // 初始化自定义进度条
+        function initCustomProgressBar() {
+            if (!customProgressBar || !directPlayer) return;
+            
+            function updateTooltip(e) {
+                if (!customProgressTooltip || !customProgressTotalDuration || customProgressTotalDuration <= 0) return;
+                const rect = customProgressBar.getBoundingClientRect();
+                const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+                const percentage = x / rect.width;
+                const hoverTime = percentage * customProgressTotalDuration;
+                customProgressTooltip.style.left = `${(percentage * 100)}%`;
+                customProgressTooltip.textContent = formatTime(hoverTime);
+                customProgressTooltip.classList.add('visible');
+            }
+
+            function hideTooltip() {
+                if (!customProgressTooltip) return;
+                customProgressTooltip.classList.remove('visible');
+            }
+
+            // 点击进度条跳转
+            customProgressBar.addEventListener('click', function(e) {
+                if (!customProgressTotalDuration || customProgressTotalDuration <= 0) return;
+                
+                const rect = customProgressBar.getBoundingClientRect();
+                const clickX = e.clientX - rect.left;
+                const percentage = Math.max(0, Math.min(1, clickX / rect.width));
+                const targetTime = percentage * customProgressTotalDuration;
+                
+                // 跳转到目标时间
+                seekToTime(targetTime);
+            });
+
+            customProgressBar.addEventListener('mousemove', function(e) {
+                updateTooltip(e);
+            });
+
+            customProgressBar.addEventListener('mouseleave', function() {
+                hideTooltip();
+            });
+            
+            // 拖拽进度条
+            let isDragging = false;
+            customProgressBar.addEventListener('mousedown', function(e) {
+                if (!customProgressTotalDuration || customProgressTotalDuration <= 0) return;
+                isDragging = true;
+                customProgressIsDragging = true;
+                updateProgressOnDrag(e);
+                updateTooltip(e);
+            });
+            
+            document.addEventListener('mousemove', function(e) {
+                if (isDragging && customProgressIsDragging) {
+                    updateProgressOnDrag(e);
+                    updateTooltip(e);
+                }
+            });
+            
+            document.addEventListener('mouseup', function() {
+                if (isDragging && customProgressIsDragging) {
+                    isDragging = false;
+                    customProgressIsDragging = false;
+                    hideTooltip();
+                }
+            });
+            
+            function updateProgressOnDrag(e) {
+                if (!customProgressBar || !customProgressTotalDuration) return;
+                const rect = customProgressBar.getBoundingClientRect();
+                const dragX = e.clientX - rect.left;
+                const percentage = Math.max(0, Math.min(1, dragX / rect.width));
+                const targetTime = percentage * customProgressTotalDuration;
+                
+                // 更新进度条显示
+                updateCustomProgress(targetTime, customProgressTotalDuration);
+            }
+        }
+        
+        // 更新自定义进度条
+        function updateCustomProgress(currentTime, totalDuration) {
+            if (!customProgressFilled || !customCurrentTime || !customTotalTime) return;
+            
+            if (totalDuration > 0) {
+                const playbackTime = Math.max(0, Math.min(totalDuration, currentTime + customProgressOffset));
+                const percentage = (playbackTime / totalDuration) * 100;
+                customProgressFilled.style.width = percentage + '%';
+                customCurrentTime.textContent = formatTime(playbackTime);
+                customTotalTime.textContent = formatTime(totalDuration);
+            }
+        }
+
+        // 自定义播放/暂停、音量和全屏控制
+        if (customPlayPauseBtn && directPlayer) {
+            customPlayPauseBtn.addEventListener('click', function() {
+                if (directPlayer.paused) {
+                    directPlayer.play().catch(() => {});
+                } else {
+                    directPlayer.pause();
+                }
+            });
+
+            directPlayer.addEventListener('play', function() {
+                customPlayPauseBtn.textContent = '⏸';
+            });
+
+            directPlayer.addEventListener('pause', function() {
+                customPlayPauseBtn.textContent = '▶';
+            });
+        }
+
+        if (customVolumeSlider && directPlayer) {
+            // 初始化显示
+            customVolumeSlider.value = typeof directPlayer.volume === 'number' ? directPlayer.volume : 1;
+
+            customVolumeSlider.addEventListener('input', function() {
+                const v = parseFloat(customVolumeSlider.value);
+                if (!isNaN(v)) {
+                    directPlayer.volume = v;
+                    if (customMuteBtn) {
+                        customMuteBtn.textContent = v === 0 ? '🔇' : '🔊';
+                    }
+                }
+            });
+        }
+
+        if (customMuteBtn && directPlayer) {
+            customMuteBtn.addEventListener('click', function() {
+                directPlayer.muted = !directPlayer.muted;
+                if (directPlayer.muted) {
+                    customMuteBtn.textContent = '🔇';
+                    if (customVolumeSlider) customVolumeSlider.value = 0;
+                } else {
+                    customMuteBtn.textContent = '🔊';
+                    if (customVolumeSlider && parseFloat(customVolumeSlider.value) === 0) {
+                        customVolumeSlider.value = 1;
+                        directPlayer.volume = 1;
+                    }
+                }
+            });
+        }
+
+        if (customFullscreenBtn && directPlayer) {
+            customFullscreenBtn.addEventListener('click', function() {
+                const container = document.getElementById('direct115Section') || directPlayer.parentElement || directPlayer;
+                if (!document.fullscreenElement) {
+                    if (container.requestFullscreen) {
+                        container.requestFullscreen().catch(() => {});
+                    } else if (container.webkitRequestFullscreen) {
+                        container.webkitRequestFullscreen();
+                    }
+                } else {
+                    if (document.exitFullscreen) {
+                        document.exitFullscreen().catch(() => {});
+                    } else if (document.webkitExitFullscreen) {
+                        document.webkitExitFullscreen();
+                    }
+                }
+            });
+        }
+        
+        // 显示/隐藏自定义进度条和自定义控制条
+        function showCustomProgressBar(show, totalDuration, offset = 0) {
+            if (!customProgressContainer || !directPlayer) return;
+            
+            if (show && totalDuration > 0) {
+                customProgressTotalDuration = totalDuration;
+                customProgressOffset = Math.max(0, offset);
+                customProgressContainer.style.display = 'flex';
+                customProgressContainer.classList.add('active');
+                // 隐藏原生控件的进度条
+                setDirectNativeControlsEnabled(false);
+                // 更新总时长显示
+                if (customTotalTime) {
+                    customTotalTime.textContent = formatTime(totalDuration);
+                }
+                if (customCurrentTime) {
+                    customCurrentTime.textContent = formatTime(customProgressOffset);
+                }
+            } else {
+                customProgressContainer.style.display = 'none';
+                customProgressContainer.classList.remove('active');
+                setDirectNativeControlsEnabled(true);
+                customProgressTotalDuration = 0;
+                customProgressOffset = 0;
+            }
+        }
+        
+        // 跳转到指定时间
+        function seekToTime(targetTime) {
+            if (!directUsingTranscode || !directTranscodeInfo) return;
+            
+            const taskId = directTranscodeInfo.task_id || directTranscodeInfo.id;
+            if (!taskId) return;
+            
+            console.log(`[CustomProgress] 跳转到 ${targetTime.toFixed(2)} 秒`);
+            
+            pendingSeekTarget = targetTime;
+            stopDirectTranscodePolling();
+            
+            // 更新进度条显示，使用户能看到目标位置
+            if (customProgressTotalDuration > 0) {
+                updateCustomProgress(targetTime, customProgressTotalDuration);
+            }
+            
+            // 暂停播放并清空当前缓冲
+            try {
+                directPlayer.pause();
+                directPlayer.removeAttribute('src');
+                directPlayer.load();
+            } catch (err) {
+                console.warn('清空播放器状态失败:', err);
+            }
+            
+            // 销毁当前 HLS 实例，避免继续请求旧的片段
+            clearDirectHlsInstance();
+            directUsingTranscode = false;
+            
+            setAlert(directStatus, `<i class="fas fa-spinner fa-spin"></i> 正在跳转到 ${formatTime(targetTime)}...`, 'info');
+            
+            fetch(`/api/cloud115/transcode/seek/${taskId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ time: targetTime }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data && data.success) {
+                    console.log(`[CustomProgress] 转码服务已跳转到 ${targetTime.toFixed(2)} 秒`);
+                    
+                     // 更新任务信息
+                    if (data.task) {
+                        directTranscodeInfo = Object.assign({}, directTranscodeInfo || {}, data.task);
+                    }
+                    
+                    if (typeof data.target_time === 'number') {
+                        pendingSeekTarget = data.target_time;
+                    }
+                    
+                    // 重新开始轮询转码状态，等待新的播放列表就绪
+                    if (directTranscodeInfo && directTranscodeInfo.status_url) {
+                        pollDirectTranscodeStatus(directTranscodeInfo.status_url);
+                    } else {
+                        // 如果没有状态 URL，尝试直接重新加载
+                        startDirectTranscodePlayback(directTranscodeInfo);
+                    }
+                } else {
+                    console.warn(`[CustomProgress] 跳转失败: ${data && data.message ? data.message : '未知错误'}`);
+                    setAlert(directStatus, `<i class="fas fa-exclamation-triangle"></i> 跳转失败: ${data && data.message ? data.message : '未知错误'}`, 'danger');
+                }
+            })
+            .catch(err => {
+                console.error(`[CustomProgress] 跳转请求失败: ${err.message}`);
+                setAlert(directStatus, `<i class="fas fa-exclamation-triangle"></i> 跳转请求失败: ${err.message}`, 'danger');
+            });
+        }
+
+        function startDirectTranscodePlayback(info) {
+            if (!info || !info.stream_url || !directPlayer) {
+                return;
+            }
+            directUsingTranscode = true;
+            directTranscodeInfo = Object.assign({}, directTranscodeInfo || {}, info);
+            const startOffset = parseFloat(info.start_offset || 0) || 0;
+            customProgressOffset = startOffset;
+            if (pendingSeekTarget !== null && pendingSeekTarget !== undefined) {
+                customProgressOffset = pendingSeekTarget;
+                pendingSeekTarget = null;
+            }
+            stopDirectTranscodePolling();
+            clearDirectHlsInstance();
+
+            const streamUrl = info.stream_url;
+            lastDirectSource = info.abs_stream_url || streamUrl;
+            updatePotplayerLink(lastDirectSource);
+            setAlert(directStatus, '<i class="fas fa-spinner fa-spin"></i> 正在加载转码流，请稍候...', 'info');
+
+            // 如果转码任务信息中包含时长，先更新 UI 显示的时长
+            if (info.duration && !isNaN(info.duration) && videoDurationEl) {
+                const durationSeconds = parseFloat(info.duration);
+                if (durationSeconds > 0) {
+                    videoDurationEl.textContent = formatTime(durationSeconds);
+                    // 显示自定义进度条
+                    showCustomProgressBar(true, durationSeconds, customProgressOffset);
+                    updateCustomProgress(0, durationSeconds);
+                }
+            }
+
+            if (typeof Hls !== 'undefined' && Hls.isSupported()) {
+                directHlsInstance = new Hls({
+                    enableWorker: true,
+                    lowLatencyMode: true,
+                    xhrSetup: function(xhr, url) {
+                        // 拦截 m3u8 请求，获取响应头中的总时长
+                        xhr.addEventListener('load', function() {
+                            const durationHeader = xhr.getResponseHeader('X-Video-Duration');
+                            if (durationHeader && !isNaN(durationHeader)) {
+                                const totalDuration = parseFloat(durationHeader);
+                                if (totalDuration > 0) {
+                                    // 更新 directTranscodeInfo 中的 duration
+                                    if (directTranscodeInfo) {
+                                        directTranscodeInfo.duration = totalDuration;
+                                    }
+                                    
+                                    // 更新 UI 显示的时长
+                                    if (videoDurationEl) {
+                                        videoDurationEl.textContent = formatTime(totalDuration);
+                                    }
+                                    
+                                    console.log(`[Duration] 从响应头获取总时长: ${totalDuration} 秒`);
+                                }
+                            }
+                        });
+                    }
+                });
+                directHlsInstance.loadSource(streamUrl);
+                directHlsInstance.attachMedia(directPlayer);
+                directHlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+                    setAlert(directStatus, '<i class="fas fa-check-circle"></i> 已切换到转码播放', 'success');
+                    
+                    // 立即设置总时长（如果存在），这样进度条就能显示完整范围
+                    if (info.duration && !isNaN(info.duration)) {
+                        const totalDuration = parseFloat(info.duration);
+                        if (totalDuration > 0) {
+                            // 更新 directTranscodeInfo 中的 duration
+                            if (directTranscodeInfo) {
+                                directTranscodeInfo.duration = totalDuration;
+                            }
+                            
+                            // 尝试通过 HLS.js level 设置总时长
+                            if (directHlsInstance.levels && directHlsInstance.levels.length > 0) {
+                                const level = directHlsInstance.levels[0];
+                                if (level) {
+                                    level.totalduration = totalDuration;
+                                }
+                            }
+                            
+                            // 更新 UI 显示的时长
+                            if (videoDurationEl) {
+                                videoDurationEl.textContent = formatTime(totalDuration);
+                            }
+                            
+                            // 显示自定义进度条，保持当前的起始偏移量
+                            showCustomProgressBar(true, totalDuration, customProgressOffset);
+                        }
+                    }
+                    
+                    // 等待元数据加载后，更新时长显示
+                    const onMetadataLoaded = () => {
+                        directPlayer.removeEventListener('loadedmetadata', onMetadataLoaded);
+                        updateDurationAndResolution(directPlayer);
+                        // 再次确保使用检测到的总时长
+                        if (info.duration && !isNaN(info.duration)) {
+                            const detectedDuration = parseFloat(info.duration);
+                            if (videoDurationEl) {
+                                videoDurationEl.textContent = formatTime(detectedDuration);
+                            }
+                        }
+                    };
+                    directPlayer.addEventListener('loadedmetadata', onMetadataLoaded, { once: true });
+                    directPlayer.play().catch(err => {
+                        setAlert(directStatus, `<i class="fas fa-info-circle"></i> 自动播放被阻止: ${err.message}`, 'info');
+                    });
+                });
+                directHlsInstance.on(Hls.Events.ERROR, (event, data) => {
+                    if (!data) return;
+                    console.error('Direct HLS error', data);
+                    if (data.fatal) {
+                        setAlert(directStatus, `<i class="fas fa-exclamation-triangle"></i> 转码流播放失败: ${data.details || '未知错误'}`, 'danger');
+                    }
+                });
+            } else if (directPlayer.canPlayType('application/vnd.apple.mpegurl')) {
+                directPlayer.src = streamUrl;
+                
+                // 在加载前就设置总时长（如果存在）
+                if (info.duration && !isNaN(info.duration)) {
+                    const totalDuration = parseFloat(info.duration);
+                    if (totalDuration > 0) {
+                        // 更新 directTranscodeInfo 中的 duration
+                        if (directTranscodeInfo) {
+                            directTranscodeInfo.duration = totalDuration;
+                        }
+                        
+                        // 更新 UI 显示的时长
+                        if (videoDurationEl) {
+                            videoDurationEl.textContent = formatTime(totalDuration);
+                        }
+                    }
+                }
+                
+                const onLoaded = () => {
+                    directPlayer.removeEventListener('loadedmetadata', onLoaded);
+                    updateDurationAndResolution(directPlayer);
+                    // 确保使用检测到的总时长
+                    if (info.duration && !isNaN(info.duration) && videoDurationEl) {
+                        const detectedDuration = parseFloat(info.duration);
+                        videoDurationEl.textContent = formatTime(detectedDuration);
+                    }
+                    setAlert(directStatus, '<i class="fas fa-check-circle"></i> 已切换到转码播放', 'success');
+                    directPlayer.play().catch(err => {
+                        setAlert(directStatus, `<i class="fas fa-info-circle"></i> 自动播放被阻止: ${err.message}`, 'info');
+                    });
+                };
+                directPlayer.addEventListener('loadedmetadata', onLoaded, { once: true });
+            } else {
+                setAlert(directStatus, '<i class="fas fa-exclamation-triangle"></i> 当前浏览器不支持HLS转码播放，请更换浏览器。', 'danger');
+            }
+        }
+
+        function pollDirectTranscodeStatus(statusUrl, attempt = 0) {
+            if (!statusUrl || directUsingTranscode) {
+                return;
+            }
+            stopDirectTranscodePolling();
+            fetch(statusUrl, { cache: 'no-store' })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(result => {
+                    if (!result.success) {
+                        throw new Error(result.message || '获取转码状态失败');
+                    }
+                    const task = result.task || {};
+                    directTranscodeInfo = Object.assign({}, directTranscodeInfo || {}, task);
+
+                    // 如果转码任务信息中包含时长，更新 UI 显示的时长
+                    if (task.duration && !isNaN(task.duration) && videoDurationEl) {
+                        const durationSeconds = parseFloat(task.duration);
+                        if (durationSeconds > 0) {
+                            videoDurationEl.textContent = formatTime(durationSeconds);
+                        }
+                    }
+
+                    if (task.ready && task.stream_url) {
+                        startDirectTranscodePlayback(task);
+                        return;
+                    }
+
+                    if (['queued', 'starting', 'running'].includes(task.status || '')) {
+                        setAlert(directStatus, '<i class="fas fa-spinner fa-spin"></i> 转码处理中，请稍候...', 'info');
+                        const delay = Math.min(5000, 1500 + attempt * 500);
+                        directTranscodePollingTimer = setTimeout(() => pollDirectTranscodeStatus(statusUrl, attempt + 1), delay);
+                        return;
+                    }
+
+                    if ((task.status || '').toLowerCase() === 'error') {
+                        setAlert(directStatus, `<i class="fas fa-exclamation-triangle"></i> 转码失败: ${task.reason || '未知错误'}`, 'danger');
+                        return;
+                    }
+
+                    const delay = Math.min(10000, 2000 + attempt * 800);
+                    directTranscodePollingTimer = setTimeout(() => pollDirectTranscodeStatus(statusUrl, attempt + 1), delay);
+                })
+                .catch(error => {
+                    console.warn('转码状态查询失败:', error);
+                    const delay = Math.min(15000, 5000 + attempt * 1000);
+                    directTranscodePollingTimer = setTimeout(() => pollDirectTranscodeStatus(statusUrl, attempt + 1), delay);
+                });
+        }
+
+        function startDirectTranscodeTask(force = false) {
+            if (!directPickcode) {
+                return;
+            }
+            stopDirectTranscodePolling();
+            setAlert(directStatus, '<i class="fas fa-spinner fa-spin"></i> 正在请求转码服务...', 'info');
+            fetch('/api/cloud115/transcode/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    pickcode: directPickcode,
+                    force: force ? 1 : 0,
+                    file_name: videoFilenameEl ? videoFilenameEl.textContent : undefined,
+                }),
+            })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(result => {
+                    if (!result.success) {
+                        throw new Error(result.message || '启动转码失败');
+                    }
+                    directTranscodeInfo = result.task || null;
+                    updateTranscodeButtons();
+                    
+                    // 如果转码任务信息中包含时长，更新 UI 显示的时长
+                    if (directTranscodeInfo && directTranscodeInfo.duration && !isNaN(directTranscodeInfo.duration) && videoDurationEl) {
+                        const durationSeconds = parseFloat(directTranscodeInfo.duration);
+                        if (durationSeconds > 0) {
+                            videoDurationEl.textContent = formatTime(durationSeconds);
+                        }
+                    }
+                    
+                    if (directTranscodeInfo && directTranscodeInfo.status_url) {
+                        pollDirectTranscodeStatus(directTranscodeInfo.status_url);
+                    } else if (directTranscodeInfo && directTranscodeInfo.stream_url) {
+                        startDirectTranscodePlayback(directTranscodeInfo);
+                    } else {
+                        setAlert(directStatus, '<i class="fas fa-info-circle"></i> 已启动转码任务，等待状态更新...', 'info');
+                    }
+                })
+                .catch(error => {
+                    setAlert(directStatus, `<i class="fas fa-exclamation-triangle"></i> 启动转码失败: ${error.message}`, 'danger');
+                });
+        }
+
         function updateModeButtons(mode) {
             if (alistModeButton) {
                 alistModeButton.classList.toggle('btn-secondary', mode === 'alist');
@@ -939,6 +1743,7 @@
             if (modeSections.cloud115) {
                 modeSections.cloud115.classList.toggle('active', mode === 'cloud115');
             }
+            updateTranscodeButtons();
         }
 
         function applyMode(mode) {
@@ -948,6 +1753,12 @@
             currentMode = mode;
             updateModeButtons(mode);
             updateModeSections(mode);
+            if (mode !== 'direct') {
+                stopDirectTranscodePolling();
+                clearDirectHlsInstance();
+                directUsingTranscode = false;
+                directTranscodeFallbackTriggered = false;
+            }
 
             if (videoPlaybackModeEl) {
                 if (mode === 'alist') {
@@ -1016,6 +1827,11 @@
                     directPlayer.play().catch(() => {});
                 }
                 updatePotplayerLink(lastDirectSource);
+                // 根据是否存在转码任务，控制停止按钮显示
+                if (stopTranscodeBtn) {
+                    const hasTaskId = directTranscodeInfo && (directTranscodeInfo.task_id || directTranscodeInfo.id);
+                    stopTranscodeBtn.style.display = hasTaskId ? 'inline-block' : 'none';
+                }
             } else {
                 if (alistStatus) {
                     alistStatus.style.display = 'none';
@@ -1036,6 +1852,9 @@
                 }
                 initCloud115Player();
                 updatePotplayerLink(lastCloud115Source);
+                if (stopTranscodeBtn) {
+                    stopTranscodeBtn.style.display = 'none';
+                }
             }
         }
 
@@ -1180,6 +1999,9 @@
             }
 
             directInitialized = true;
+            
+            // 初始化自定义进度条
+            initCustomProgressBar();
             setAlert(directStatus, '<i class="fas fa-spinner fa-spin"></i> 正在准备115直链播放...', 'info');
             if (directLoadingOverlay) {
                 directLoadingOverlay.style.display = 'flex';
@@ -1206,6 +2028,10 @@
                 if (useAndroidApi) {
                     requestUrl += (requestUrl.includes('?') ? '&' : '?') + 'android_api=1';
                 }
+
+            stopDirectTranscodePolling();
+            directTranscodeInfo = null;
+            directTranscodeFallbackTriggered = false;
 
                 return fetch(requestUrl)
                     .then(response => {
@@ -1243,6 +2069,46 @@
 
                     lastDirectSource = downloadUrl;
                     lastDirectAuthCookie = data.auth_cookie || null;
+                    stopDirectTranscodePolling();
+                    directTranscodeInfo = data.transcode || null;
+                    directUsingTranscode = false;
+                    directTranscodeFallbackTriggered = false;
+                    
+                    // 如果转码信息中包含任务信息，提取任务对象
+                    if (directTranscodeInfo && directTranscodeInfo.task) {
+                        const task = directTranscodeInfo.task;
+                        // 如果任务中包含时长，更新 UI
+                        if (task.duration && !isNaN(task.duration) && videoDurationEl) {
+                            const durationSeconds = parseFloat(task.duration);
+                            if (durationSeconds > 0) {
+                                videoDurationEl.textContent = formatTime(durationSeconds);
+                            }
+                        }
+                        // 合并任务信息到 directTranscodeInfo
+                        directTranscodeInfo = Object.assign({}, directTranscodeInfo, task);
+                    } else if (directTranscodeInfo && directTranscodeInfo.duration && !isNaN(directTranscodeInfo.duration) && videoDurationEl) {
+                        // 如果转码信息中直接包含时长，也更新 UI
+                        const durationSeconds = parseFloat(directTranscodeInfo.duration);
+                        if (durationSeconds > 0) {
+                            videoDurationEl.textContent = formatTime(durationSeconds);
+                        }
+                    }
+                    
+                    if (directTranscodeInfo && directTranscodeInfo.enabled && directTranscodeInfo.should_transcode) {
+                        if (directTranscodeInfo.ready && directTranscodeInfo.stream_url) {
+                            startDirectTranscodePlayback(directTranscodeInfo);
+                            return;
+                        }
+                        if (directTranscodeInfo.status_url) {
+                            pollDirectTranscodeStatus(directTranscodeInfo.status_url);
+                            setAlert(directStatus, '<i class="fas fa-info-circle"></i> 正在准备转码流，若直链无法播放将自动切换。', 'info');
+                        } else {
+                            setAlert(directStatus, '<i class="fas fa-info-circle"></i> 已获取直链，必要时可切换到转码播放。', 'info');
+                        }
+                    }
+            
+            // 控制“停止转码”按钮显示
+            updateTranscodeButtons();
 
                     if (videoFilenameEl && data.file_name) {
                         videoFilenameEl.textContent = data.file_name;
@@ -1251,6 +2117,10 @@
                         videoSizeEl.textContent = data.file_size;
                     }
 
+                    clearDirectHlsInstance();
+                    directUsingTranscode = false;
+                    // 隐藏自定义进度条
+                    showCustomProgressBar(false);
                     directPlayer.setAttribute('playsinline', '');
                     directPlayer.setAttribute('webkit-playsinline', '');
                     directPlayer.setAttribute('x5-playsinline', '');
@@ -1266,7 +2136,9 @@
                         updatePotplayerLink(lastDirectSource);
                     }
 
-                    setAlert(directStatus, '<i class="fas fa-check-circle"></i> 直链已加载，正在播放...', 'success');
+                    if (!directTranscodeInfo || !directTranscodeInfo.should_transcode) {
+                        setAlert(directStatus, '<i class="fas fa-check-circle"></i> 直链已加载，正在播放...', 'success');
+                    }
                 })
                 .catch(error => {
                     console.error('115 直链获取失败:', error);
@@ -1306,10 +2178,117 @@
             directPlayer.addEventListener('timeupdate', function() {
                 if (currentMode === 'direct') {
                     updateDurationAndResolution(directPlayer);
+                    
+                    // 更新自定义进度条
+                    if (directUsingTranscode && customProgressTotalDuration > 0) {
+                        const currentTime = directPlayer.currentTime || 0;
+                        updateCustomProgress(currentTime, customProgressTotalDuration);
+                    }
+                }
+            });
+            // 添加 seeking 事件处理，支持跳转到未转码部分
+            let seekingTimeout = null;
+            let lastSeekTime = null;
+            directPlayer.addEventListener('seeking', function() {
+                // 只有在使用转码流时才处理 seeking
+                if (!directUsingTranscode || !directTranscodeInfo) {
+                    return;
+                }
+                
+                const taskId = directTranscodeInfo.task_id || directTranscodeInfo.id;
+                if (!taskId) {
+                    return;
+                }
+                
+                const targetTime = directPlayer.currentTime;
+                
+                // 防抖：避免频繁请求（500ms内只发送一次）
+                if (seekingTimeout) {
+                    clearTimeout(seekingTimeout);
+                }
+                
+                // 如果目标时间与上次相同，跳过
+                if (lastSeekTime !== null && Math.abs(targetTime - lastSeekTime) < 1) {
+                    return;
+                }
+                
+                seekingTimeout = setTimeout(function() {
+                    lastSeekTime = targetTime;
+                    console.log(`[Seek] 检测到跳转到 ${targetTime.toFixed(2)} 秒，请求转码服务跳转...`);
+                    
+                    fetch(`/api/cloud115/transcode/seek/${taskId}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ time: targetTime }),
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data && data.success) {
+                            console.log(`[Seek] 转码服务已跳转到 ${targetTime.toFixed(2)} 秒`);
+                            // 可选：显示提示信息
+                            // setAlert(directStatus, `<i class="fas fa-spinner fa-spin"></i> 正在跳转到 ${formatTime(targetTime)}...`, 'info');
+                        } else {
+                            console.warn(`[Seek] 跳转失败: ${data && data.message ? data.message : '未知错误'}`);
+                        }
+                    })
+                    .catch(err => {
+                        console.error(`[Seek] 跳转请求失败: ${err.message}`);
+                    });
+                }, 500); // 500ms 防抖
+            });
+            directPlayer.addEventListener('seeked', function() {
+                // 清除防抖定时器
+                if (seekingTimeout) {
+                    clearTimeout(seekingTimeout);
+                    seekingTimeout = null;
                 }
             });
             directPlayer.addEventListener('error', function() {
-                setAlert(directStatus, '<i class="fas fa-exclamation-triangle"></i> 直链播放出错，请稍后重试。', 'danger');
+                setAlert(directStatus, '<i class="fas fa-exclamation-triangle"></i> 直链播放出错，正在尝试切换到转码流...', 'danger');
+                if (directTranscodeInfo && directTranscodeInfo.enabled && !directUsingTranscode && !directTranscodeFallbackTriggered) {
+                    directTranscodeFallbackTriggered = true;
+                    if (directTranscodeInfo.status_url) {
+                        setAlert(directStatus, '<i class="fas fa-spinner fa-spin"></i> 等待转码流就绪，请稍候...', 'warning');
+                        pollDirectTranscodeStatus(directTranscodeInfo.status_url);
+                    } else {
+                        startDirectTranscodeTask();
+                    }
+                } else if (!directUsingTranscode && !directTranscodeFallbackTriggered) {
+                    directTranscodeFallbackTriggered = true;
+                    startDirectTranscodeTask();
+                }
+            });
+        }
+        
+        // 停止转码按钮逻辑
+        if (stopTranscodeBtn) {
+            stopTranscodeBtn.addEventListener('click', function() {
+                const taskId = (directTranscodeInfo && (directTranscodeInfo.task_id || directTranscodeInfo.id)) ? (directTranscodeInfo.task_id || directTranscodeInfo.id) : null;
+                if (!taskId) {
+                    setAlert(directStatus, '<i class="fas fa-info-circle"></i> 当前没有可停止的转码任务。', 'info');
+                    return;
+                }
+                setAlert(directStatus, '<i class="fas fa-spinner fa-spin"></i> 正在发送停止请求...', 'info');
+                fetch(`/api/cloud115/transcode/stop/${taskId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ reason: '用户点击停止' }),
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data && data.success) {
+                        setAlert(directStatus, '<i class="fas fa-check-circle"></i> 已请求停止转码任务。', 'success');
+                        if (directTranscodeInfo) {
+                            directTranscodeInfo.status = 'cancelled';
+                        }
+                        updateTranscodeButtons();
+                    } else {
+                        setAlert(directStatus, `<i class="fas fa-exclamation-triangle"></i> 停止失败: ${data && data.message ? data.message : '未知错误'}`, 'danger');
+                    }
+                })
+                .catch(err => {
+                    setAlert(directStatus, `<i class="fas fa-exclamation-triangle"></i> 停止失败: ${err.message}`, 'danger');
+                });
             });
         }
 
@@ -1823,5 +2802,63 @@
             debugInfo.style.display = 'none';
         }
     }
+
+    // 页面关闭时停止转码任务
+    function stopTranscodeTaskOnUnload() {
+        if (directTranscodeInfo && directTranscodeInfo.task_id) {
+            const taskId = directTranscodeInfo.task_id;
+            const url = `/api/cloud115/transcode/stop/${taskId}`;
+            try { console.debug(`[Transcode][Unload] 准备发送停止请求: taskId=${taskId}, url=${url}`); } catch (e) {}
+            
+            // 优先使用 sendBeacon（支持 POST，使用 FormData）
+            if (navigator.sendBeacon) {
+                try {
+                    // sendBeacon 支持 POST，使用 FormData 或 Blob
+                    const formData = new FormData();
+                    formData.append('_method', 'POST');
+                    const success = navigator.sendBeacon(url, formData);
+                    if (success) {
+                        try { console.debug(`[Transcode][Unload] sendBeacon 发送成功: taskId=${taskId}`); } catch (e) {}
+                    } else {
+                        // sendBeacon 失败，使用 fetch with keepalive
+                        fetch(url, {
+                            method: 'POST',
+                            keepalive: true,
+                        }).then(() => {
+                            try { console.debug(`[Transcode][Unload] sendBeacon 返回false，降级使用 fetch keepalive: taskId=${taskId}`); } catch (e) {}
+                        }).catch(() => {});
+                    }
+                } catch (e) {
+                    // sendBeacon 失败，使用 fetch with keepalive
+                    fetch(url, {
+                        method: 'POST',
+                        keepalive: true,
+                    }).then(() => {
+                        try { console.debug(`[Transcode][Unload] sendBeacon 异常，降级使用 fetch keepalive: taskId=${taskId}`); } catch (e2) {}
+                    }).catch(() => {});
+                }
+            } else {
+                // 降级方案：使用 fetch with keepalive（确保请求在页面关闭时也能发送）
+                fetch(url, {
+                    method: 'POST',
+                    keepalive: true,
+                }).then(() => {
+                    try { console.debug(`[Transcode][Unload] 不支持 sendBeacon，已使用 fetch keepalive: taskId=${taskId}`); } catch (e) {}
+                }).catch(() => {
+                    // 忽略错误，因为页面可能已经关闭
+                });
+            }
+        }
+    }
+
+    // 监听页面关闭事件
+    window.addEventListener('beforeunload', stopTranscodeTaskOnUnload);
+    // 冗余：部分浏览器在 unload 触发时机不同，补充监听
+    window.addEventListener('unload', stopTranscodeTaskOnUnload);
+    
+    // 监听页面隐藏事件（移动端切换应用时）
+    document.addEventListener('visibilitychange', function() {
+        try { console.debug(`[Transcode] visibilitychange: hidden=${document.hidden}, state=${document.visibilityState}`); } catch (e) {}
+    });
 </script>
 {% endblock %} 

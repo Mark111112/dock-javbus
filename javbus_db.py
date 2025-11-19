@@ -369,6 +369,54 @@ class JavbusDatabase:
             print(f"搜索演员错误: {e}")
             return []
     
+    def search_movies(self, keyword="", limit=30, offset=0, sort_by="last_updated", sort_order="desc"):
+        """根据关键词搜索影片列表，并返回总数用于分页"""
+
+        self.ensure_connection()
+        try:
+            allowed_sort_columns = {
+                "last_updated": "last_updated",
+                "date": "date",
+                "title": "title",
+            }
+            order_column = allowed_sort_columns.get(sort_by, "last_updated")
+            order_direction = "DESC" if str(sort_order).lower() != "asc" else "ASC"
+
+            params = []
+            where_clause = ""
+            if keyword:
+                search_term = f"%{keyword}%"
+                where_clause = "WHERE (id LIKE ? OR title LIKE ?)"
+                params.extend([search_term, search_term])
+
+            total_query = f"SELECT COUNT(1) as total FROM movies {where_clause}"
+            self.local.cursor.execute(total_query, params)
+            total_result = self.local.cursor.fetchone()
+            total = total_result["total"] if total_result else 0
+
+            query = (
+                f"SELECT data FROM movies {where_clause} "
+                f"ORDER BY {order_column} {order_direction} "
+                "LIMIT ? OFFSET ?"
+            )
+            query_params = list(params)
+            query_params.extend([max(0, int(limit)), max(0, int(offset))])
+
+            self.local.cursor.execute(query, query_params)
+            rows = self.local.cursor.fetchall() or []
+
+            movies = []
+            for row in rows:
+                try:
+                    movies.append(json.loads(row["data"]))
+                except Exception:
+                    continue
+
+            return {"items": movies, "total": total}
+        except sqlite3.Error as exc:
+            print(f"搜索影片错误: {exc}")
+            return {"items": [], "total": 0}
+
     def get_star_movies(self, star_id, max_age=30):
         """获取演员的所有影片"""
         self.ensure_connection()

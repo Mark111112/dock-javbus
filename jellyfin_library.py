@@ -21,15 +21,8 @@ class JellyfinLibrary:
         self.client = None
         
         # 设置日志
-        self.logger = logging.getLogger("jellyfin_library")
+        self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
-        
-        # 如果没有处理器，添加一个控制台处理器
-        if not self.logger.handlers:
-            handler = logging.StreamHandler()
-            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-            handler.setFormatter(formatter)
-            self.logger.addHandler(handler)
         
         self.logger.info("初始化JellyfinLibrary，数据库路径: %s", self.db_path)
         

@@ -1,0 +1,33 @@
+version: '3'
+
+services:
+  javbus:
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - video
+    environment:
+      - LIBVA_DRIVER_NAME=iHD
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

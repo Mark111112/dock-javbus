@@ -17,12 +17,14 @@ from jellyfin_apiclient_python import JellyfinClient
 # Add current directory to Python path to ensure modules can be imported
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from flask import Flask, request, jsonify, render_template, redirect, url_for, send_from_directory, Response, stream_with_context, flash
+from flask import Flask, request, jsonify, render_template, redirect, url_for, send_from_directory, Response, stream_with_context, flash, abort
 from flask_cors import CORS
-from werkzeug.utils import secure_filename
+from werkzeug.utils import secure_filename, safe_join
 from javbus_db import JavbusDatabase
 from modules.translation.translator import get_translator
+from modules.javbus_service import get_javbus_client
 import logging
+import logging.config
 import traceback
 import moviescraper  # Changed from movieinfo to moviescraper
 from datetime import datetime
@@ -45,13 +47,6 @@ import uuid
 import shutil
 import posixpath
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-# 配置较少日志输出的模块
-for module in ['urllib3', 'requests', 'werkzeug', 'chardet.charsetprober']:
-    logging.getLogger(module).setLevel(logging.WARNING)
-
 # 创建视频相关日志过滤器
 class VideoRequestFilter(logging.Filter):
     """过滤掉视频播放相关的详细日志"""
@@ -68,25 +63,53 @@ class VideoRequestFilter(logging.Filter):
         
         return True
 
-# 应用过滤器
-logger = logging.getLogger()
-logger.addFilter(VideoRequestFilter())
+LOG_DIR = 'logs'
+os.makedirs(LOG_DIR, exist_ok=True)
 
-# 设置文件日志处理器的最大大小和文件数
-if not os.path.exists('logs'):
-    os.makedirs('logs')
+LOGGING_CONFIG = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'filters': {
+        'video_request_filter': {
+            '()': VideoRequestFilter,
+        },
+    },
+    'formatters': {
+        'standard': {
+            'format': '%(asctime)s - %(levelname)s - %(message)s',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'level': 'INFO',
+            'formatter': 'standard',
+        },
+        'file': {
+            'class': 'logging.handlers.TimedRotatingFileHandler',
+            'level': 'INFO',
+            'formatter': 'standard',
+            'filename': os.path.join(LOG_DIR, 'webserver.log'),
+            'when': 'midnight',
+            'interval': 1,
+            'backupCount': 3,
+            'encoding': 'utf-8',
+        },
+    },
+    'loggers': {
+        'urllib3': {'level': 'WARNING'},
+        'requests': {'level': 'WARNING'},
+        'werkzeug': {'level': 'WARNING'},
+        'chardet.charsetprober': {'level': 'WARNING'},
+    },
+    'root': {
+        'level': 'INFO',
+        'handlers': ['console', 'file'],
+        'filters': ['video_request_filter'],
+    },
+}
 
-# 添加按日期滚动的文件处理器
-from logging.handlers import TimedRotatingFileHandler
-file_handler = TimedRotatingFileHandler(
-    'logs/webserver.log', 
-    when='midnight',
-    interval=1,
-    backupCount=3  # 保留3天日志
-)
-file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-file_handler.setLevel(logging.INFO)
-logger.addHandler(file_handler)
+logging.config.dictConfig(LOGGING_CONFIG)
 
 # Initialize Flask application
 app = Flask(__name__, template_folder='templates', static_folder='static')
@@ -126,6 +149,17 @@ DOWNLOAD_DIR = os.path.abspath(os.path.join("data", "downloads"))
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 DOWNLOAD_TASKS = {}
 
+TRANSCODE_DEFAULT_DIR = os.path.abspath(os.path.join("data", "transcode"))
+os.makedirs(TRANSCODE_DEFAULT_DIR, exist_ok=True)
+TRANSCODE_WORK_DIR = TRANSCODE_DEFAULT_DIR
+TRANSCODE_TASKS = {}
+TRANSCODE_TASK_KEYS = {}
+TRANSCODE_TASKS_LOCK = threading.Lock()
+TRANSCODE_PROBE_CACHE = {}
+TRANSCODE_LAST_CLEANUP = 0.0
+TRANSCODE_ACTIVE_STATUSES = {"queued", "starting", "running", "ready"}
+TRANSCODE_LOGGER = logging.getLogger("Cloud115Transcode")
+
 def _run_ffmpeg_hls_to_mp4(task_id, m3u8_url, output_path):
     """在后台运行 ffmpeg 将 HLS(m3u8) 保存为 MP4。"""
     DOWNLOAD_TASKS[task_id]["status"] = "running"
@@ -159,9 +193,23 @@ translator = get_translator()
 def load_config():
     """Load configuration file"""
     config = {
-        "api_url": "http://192.168.1.246:8922/api",
         "watch_url_prefix": "https://missav.ai",
         "base_url": "https://www.javbus.com",
+        "javbus": {
+            "mode": "internal",
+            "external_api_url": "",
+            "timeout": 10,
+            "page_size": 30,
+            "allow_external_fallback": False,
+            "internal": {
+                "enabled": True,
+                "max_concurrency": 4,
+                "timeout": 10,
+                "cache_ttl_seconds": 3600,
+                "page_size": 30,
+                "allow_external_fallback": False
+            }
+        },
         "translation": {
             "api_url": "https://api.siliconflow.cn/v1/chat/completions",
             "source_lang": "日语",
@@ -219,11 +267,19 @@ def load_config():
             }
         }
     }
+    default_javbus_config = copy.deepcopy(config["javbus"])
+    config_modified = False
+    legacy_api_url = None
     try:
         if os.path.exists(CONFIG_FILE):
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                 loaded_config = json.load(f)
                 config.update(loaded_config)
+                if "api_url" in config:
+                    legacy_api_url = config.pop("api_url", None)
+                    config_modified = True
+                else:
+                    legacy_api_url = loaded_config.get("api_url")
                 logging.info(f"Loaded configuration file: {CONFIG_FILE}")
         else:
             # Create config directory if it doesn't exist
@@ -235,7 +291,32 @@ def load_config():
     except Exception as e:
         logging.error(f"Failed to load configuration file: {str(e)}")
     
-    # Ensure cloud115 and alist configuration sections are fully populated
+    # Ensure JavBus configuration section is fully populated
+    javbus_defaults = default_javbus_config
+    existing_javbus_config = config.get("javbus", {}) or {}
+    merged_javbus_config = copy.deepcopy(javbus_defaults)
+    if isinstance(existing_javbus_config, dict):
+        merged_javbus_config.update(existing_javbus_config)
+
+    existing_internal_config = (
+        existing_javbus_config.get("internal")
+        if isinstance(existing_javbus_config, dict)
+        else {}
+    ) or {}
+    merged_internal_config = javbus_defaults["internal"].copy()
+    if isinstance(existing_internal_config, dict):
+        merged_internal_config.update(existing_internal_config)
+    merged_javbus_config["internal"] = merged_internal_config
+
+    if not merged_javbus_config.get("external_api_url") and legacy_api_url:
+        merged_javbus_config["external_api_url"] = str(legacy_api_url).strip()
+        config_modified = True
+
+    if existing_javbus_config != merged_javbus_config:
+        config_modified = True
+    config["javbus"] = merged_javbus_config
+
+    # Ensure 115 and alist configuration sections are fully populated
     cloud115_config = config.setdefault("cloud115", {})
     
     # 确保 driver 配置存在
@@ -271,32 +352,148 @@ def load_config():
     merged_alist_config = alist_defaults.copy()
     merged_alist_config.update(existing_alist_config)
     cloud115_config["alist"] = merged_alist_config
+
+    transcode_defaults = {
+        "enabled": True,
+        "auto_start": True,
+        "use_hwaccel": True,
+        "qsv_device": "/dev/dri/renderD128",
+        "qsv_preset": "7",
+        "video_encoder": "h264_qsv",
+        "audio_encoder": "aac",
+        "video_bitrate": "5000k",
+        "maxrate": "6000k",
+        "bufsize": "12000k",
+        "audio_bitrate": "192k",
+        "audio_channels": 2,
+        "audio_sample_rate": 44100,
+        "segment_duration": 4,
+        "hls_list_size": 0,  # HLS播放列表大小，0表示不限制（包含所有片段），用于跳转和完整播放列表
+        "max_concurrent_tasks": 2,
+        "ready_timeout_seconds": 30,
+        "work_dir": "data/transcode",
+        "trigger_on_extensions": ["wmv", "avi", "asf", "rmvb", "rm", "flv", "ts", "m2ts", "mpeg", "mpg", "mov", "mkv", "webm"],
+        "trigger_on_codecs": ["hevc", "h265", "hevc_qsv", "vp9"],
+        "probe_enabled": True,
+        "probe_timeout": 15,
+        "cleanup_idle_minutes": 30,
+        "hls_mode": "streaming",  # "streaming" 或 "vod"
+        "hls_flags": "append_list+omit_endlist",  # 会根据hls_mode自动调整（不包含delete_segments）
+        "gop_size": 120,
+    }
+    existing_transcode_config = cloud115_config.get("transcode", {}) or {}
+    merged_transcode_config = transcode_defaults.copy()
+    if isinstance(existing_transcode_config, dict):
+        merged_transcode_config.update(existing_transcode_config)
+    
+    # 根据hls_mode自动调整hls_flags
+    hls_mode = merged_transcode_config.get("hls_mode", "streaming")
+    existing_hls_flags = merged_transcode_config.get("hls_flags", "")
+    existing_hls_list_size = merged_transcode_config.get("hls_list_size")
+    default_streaming_flags = "append_list+omit_endlist"  # 不包含delete_segments
+    
+    # 自动设置hls_list_size（如果未设置，默认设置为0，不限制）
+    if existing_hls_list_size is None:
+        merged_transcode_config["hls_list_size"] = 0
+    
+    # 检查hls_flags是否与当前hls_mode匹配
+    if hls_mode == "vod":
+        # VOD模式：不应该包含omit_endlist和append_list
+        # 如果包含这些标志，说明是旧的streaming配置，需要自动调整
+        # 添加temp_file标志确保m3u8实时更新（边转码边生成m3u8）
+        if "omit_endlist" in existing_hls_flags or "append_list" in existing_hls_flags or not existing_hls_flags:
+            # 自动设置为VOD模式推荐的flags（保留片段用于跳转，实时更新m3u8）
+            merged_transcode_config["hls_flags"] = "temp_file"  # temp_file确保m3u8实时更新
+        elif "temp_file" not in existing_hls_flags:
+            # 如果用户已经设置了VOD模式的flags但没有temp_file，自动添加
+            merged_transcode_config["hls_flags"] = existing_hls_flags + ("+" if existing_hls_flags else "") + "temp_file"
+    else:
+        # Streaming模式：应该包含omit_endlist和append_list
+        # 移除delete_segments，允许用户保留所有片段
+        if "omit_endlist" not in existing_hls_flags or "append_list" not in existing_hls_flags or not existing_hls_flags:
+            # 自动设置为Streaming模式推荐的flags（不包含delete_segments）
+            merged_transcode_config["hls_flags"] = "append_list+omit_endlist"
+    if existing_transcode_config != merged_transcode_config:
+        config_modified = True
+    cloud115_config["transcode"] = merged_transcode_config
     config["cloud115"] = cloud115_config
+
+    if config_modified:
+        try:
+            os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
+            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
+                logging.info(f"Configuration file {CONFIG_FILE} normalized and updated")
+        except Exception as exc:
+            logging.error(f"Failed to normalize configuration file: {exc}")
 
     return config
 
 # Get current configuration
 CURRENT_CONFIG = load_config()
 
-# 优先使用环境变量中的 API_URL
-CURRENT_API_URL = os.environ.get("API_URL", "")
-if not CURRENT_API_URL:
-    # 如果环境变量未设置，则使用配置文件中的值
-    CURRENT_API_URL = CURRENT_CONFIG.get("api_url", "")
-    logging.info(f"Using API URL from config file: {CURRENT_API_URL}")
-else:
-    logging.info(f"Using API URL from environment: {CURRENT_API_URL}")
-    # 更新配置文件中的 API URL
-    CURRENT_CONFIG["api_url"] = CURRENT_API_URL
-    try:
-        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-            json.dump(CURRENT_CONFIG, f, ensure_ascii=False, indent=2)
-            logging.info(f"Updated configuration file with API URL from environment")
-    except Exception as e:
-        logging.error(f"Failed to update configuration file: {str(e)}")
+def apply_runtime_configuration() -> None:
+    """应用配置并初始化运行时依赖。"""
 
-CURRENT_WATCH_URL_PREFIX = CURRENT_CONFIG.get("watch_url_prefix", "https://missav.ai")
-CURRENT_BASE_URL = CURRENT_CONFIG.get("base_url", "https://www.javbus.com")
+    global CURRENT_API_URL, CURRENT_WATCH_URL_PREFIX, CURRENT_BASE_URL, javbus_client
+
+    javbus_config_section = CURRENT_CONFIG.get("javbus")
+    if not isinstance(javbus_config_section, dict):
+        javbus_config_section = {}
+        CURRENT_CONFIG["javbus"] = javbus_config_section
+
+    javbus_mode = str(javbus_config_section.get("mode", "internal")).lower()
+
+    env_api_url = os.environ.get("API_URL", "").strip()
+    config_updated = False
+    resolved_api_url = ""
+
+    if "api_url" in CURRENT_CONFIG:
+        CURRENT_CONFIG.pop("api_url", None)
+        config_updated = True
+
+    if env_api_url:
+        resolved_api_url = env_api_url.rstrip("/")
+        logging.info("Using API URL from environment: %s", resolved_api_url)
+        if javbus_config_section.get("external_api_url") != resolved_api_url:
+            javbus_config_section["external_api_url"] = resolved_api_url
+            config_updated = True
+    else:
+        candidate_api_url = str(javbus_config_section.get("external_api_url", "")).strip()
+
+        resolved_api_url = candidate_api_url.rstrip("/") if candidate_api_url else ""
+        if resolved_api_url:
+            logging.info("Using API URL from config file: %s", resolved_api_url)
+            if not javbus_config_section.get("external_api_url"):
+                javbus_config_section["external_api_url"] = resolved_api_url
+                config_updated = True
+        else:
+            logging.warning("No JavBus API URL configured; some features may not work correctly")
+
+    if config_updated:
+        try:
+            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+                json.dump(CURRENT_CONFIG, f, ensure_ascii=False, indent=2)
+                logging.info("Configuration file updated with latest JavBus API settings")
+        except Exception as e:
+            logging.error(f"Failed to update configuration file: {str(e)}")
+
+    CURRENT_API_URL = resolved_api_url if env_api_url or resolved_api_url else ""
+    CURRENT_WATCH_URL_PREFIX = CURRENT_CONFIG.get("watch_url_prefix", "https://missav.ai")
+    CURRENT_BASE_URL = CURRENT_CONFIG.get("base_url", "https://www.javbus.com")
+    javbus_client = get_javbus_client(
+        CURRENT_CONFIG,
+        logger=logging.getLogger("JavBus"),
+        db=db,
+    )
+
+    if javbus_mode == "internal":
+        scraper_logger = logging.getLogger("JavBus.Internal.Scraper")
+        scraper_logger.setLevel(logging.DEBUG)
+        scraper_logger.debug("[调试] JavBus Internal Scraper 日志级别已设置为 DEBUG")
+
+
+apply_runtime_configuration()
 
 # Alist integration caches and defaults
 ALIST_AUTH_CACHE = {
@@ -307,11 +504,12 @@ ALIST_FILE_URL_CACHE = {}
 ALIST_CACHE_LOCK = threading.Lock()
 
 # Initialize 115 Cloud Client
+cloud115_config = CURRENT_CONFIG.get("cloud115", {}) or {}
+driver_config = cloud115_config.get("driver", {}) or {}
+
 try:
     from modules.cloud115_client import Cloud115Client, Cloud115AuthError
-    cloud115_config = CURRENT_CONFIG.get("cloud115", {})
-    driver_config = cloud115_config.get("driver", {})
-    
+
     CLOUD115_CLIENT = Cloud115Client(
         token_file=cloud115_config.get("token_file", "data/cloud115_token.json"),
         driver_cookie=driver_config.get("cookie", "").strip() or None,
@@ -327,6 +525,21 @@ try:
 except Exception as exc:
     logging.error(f"115 云盘客户端初始化失败: {exc}")
     CLOUD115_CLIENT = None
+    if "Cloud115AuthError" not in globals():
+        class Cloud115AuthError(Exception):  # type: ignore
+            """Fallback Cloud115 auth error when client不可用。"""
+            pass
+
+CLOUD115_TRANSCODE_CONFIG = cloud115_config.get("transcode", {}) or {}
+TRANSCODE_WORK_DIR = os.path.abspath(CLOUD115_TRANSCODE_CONFIG.get("work_dir") or TRANSCODE_DEFAULT_DIR)
+os.makedirs(TRANSCODE_WORK_DIR, exist_ok=True)
+CLOUD115_DRIVER_USER_AGENT = driver_config.get("user_agent", "Mozilla/5.0 115Browser/27.0.5.7")
+CLOUD115_TRANSCODE_PLAYLIST = CLOUD115_TRANSCODE_CONFIG.get("playlist_filename", "index.m3u8")
+CLOUD115_TRANSCODE_SEGMENT_TEMPLATE = CLOUD115_TRANSCODE_CONFIG.get("segment_template", "segment_%05d.ts")
+CLOUD115_TRANSCODE_READY_TIMEOUT = int(CLOUD115_TRANSCODE_CONFIG.get("ready_timeout_seconds", 30) or 30)
+CLOUD115_TRANSCODE_PROBE_TIMEOUT = int(CLOUD115_TRANSCODE_CONFIG.get("probe_timeout", 15) or 15)
+CLOUD115_TRANSCODE_CLEANUP_MINUTES = int(CLOUD115_TRANSCODE_CONFIG.get("cleanup_idle_minutes", 30) or 30)
+CLOUD115_TRANSCODE_MAX_TASKS = int(CLOUD115_TRANSCODE_CONFIG.get("max_concurrent_tasks", 2) or 2)
 
 
 # Favorites management
@@ -434,85 +647,54 @@ def search_keyword():
         page = 1
     
     try:
-        # 构建搜索URL和参数
-        search_params = {"page": page}
-        
-        # Add optional parameters
-        if magnet:
-            search_params["magnet"] = magnet
-        if movie_type:
-            search_params["type"] = movie_type
+        effective_filter_type = filter_type if not keyword else ""
+        effective_filter_value = filter_value if not keyword else ""
+
+        search_result = javbus_client.search_movies(
+            keyword=keyword,
+            page=page,
+            magnet=magnet,
+            movie_type=movie_type,
+            filter_type=effective_filter_type,
+            filter_value=effective_filter_value,
+        )
+        if not isinstance(search_result, dict):
+            search_result = {}
+
+        movies_list = search_result.get("movies", [])
+        pagination = search_result.get("pagination", {})
             
-        # Determine which API endpoint to use based on parameters
-        if keyword:
-            # When we have a keyword, use search endpoint
-            search_url = f"{CURRENT_API_URL}/movies/search"
-            search_params["keyword"] = keyword
-        else:
-            # When no keyword, use base endpoint
-            search_url = f"{CURRENT_API_URL}/movies"
-            
-            # Add filter parameters if provided (only valid for base endpoint)
-            if filter_type and filter_value:
-                search_params["filterType"] = filter_type
-                search_params["filterValue"] = filter_value
-        
-        # Call the API
-        response = requests.get(search_url, params=search_params)
-        
-        if response.status_code == 200:
-            data = response.json()
-            movies_list = data.get("movies", [])
-            pagination = data.get("pagination", {})
-            
-            # 格式化电影列表数据
-            formatted_movies = []
-            for movie in movies_list:
-                # 保存电影的基本信息到数据库，以便影片详情页使用
-                # basic_movie_info = {
-                #    "id": movie.get("id", ""),
-                #    "title": movie.get("title", ""),
-                #    "img": movie.get("img", ""),
-                #    "date": movie.get("date", ""),
-                #    # 对于无码影片，添加标志
-                #    "is_uncensored": bool(movie_type == "uncensored" or re.search(r'_\d+$', movie.get("id", "")))
-                # }
-                
-                # 保存基本信息到数据库
-                # db.save_movie(basic_movie_info)
-                
-                formatted_movies.append({
-                    "id": movie.get("id", ""),
-                    "title": movie.get("title", ""),
-                    "image_url": movie.get("img", ""),
-                    "date": movie.get("date", ""),
-                    "tags": movie.get("tags", []),
-                    "translated_title": movie.get("translated_title", "")
-                })
-            
-            # 构建分页数据
-            page_info = {
-                "current_page": pagination.get("currentPage", 1),
-                "total_pages": len(pagination.get("pages", [])),
-                "has_next": pagination.get("hasNextPage", False),
-                "next_page": pagination.get("nextPage", 1),
-                "pages": pagination.get("pages", [])
-            }
-            
-            return render_template('search.html', 
-                                  keyword_results=formatted_movies,
-                                  keyword_query=keyword,
-                                  pagination=page_info,
-                                  filter_type=filter_type,
-                                  filter_value=filter_value,
-                                  movie_type=movie_type)
-        else:
-            logging.error(f"搜索失败: HTTP {response.status_code}")
-            return render_template('search.html', 
-                                 keyword_query=keyword,
-                                 filter_type=filter_type,
-                                 filter_value=filter_value,
-                                 error_message=f"搜索失败: HTTP {response.status_code}")
+        if not movies_list and keyword:
+            logging.warning("搜索结果为空: keyword=%s, page=%s", keyword, page)
+
+        # 格式化电影列表数据
+        formatted_movies = []
+        for movie in movies_list:
+            formatted_movies.append({
+                "id": movie.get("id", ""),
+                "title": movie.get("title", ""),
+                "image_url": movie.get("img", ""),
+                "date": movie.get("date", ""),
+                "tags": movie.get("tags", []),
+                "translated_title": movie.get("translated_title", "")
+            })
+
+        # 构建分页数据
+        page_info = {
+            "current_page": pagination.get("currentPage", 1),
+            "total_pages": len(pagination.get("pages", [])),
+            "has_next": pagination.get("hasNextPage", False),
+            "next_page": pagination.get("nextPage", 1),
+            "pages": pagination.get("pages", [])
+        }
+
+        return render_template('search.html', 
+                              keyword_results=formatted_movies,
+                              keyword_query=keyword,
+                              pagination=page_info,
+                              filter_type=filter_type,
+                              filter_value=filter_value,
+                              movie_type=movie_type)
     except Exception as e:
         logging.error(f"搜索失败: {str(e)}")
         return render_template('search.html', 
@@ -534,14 +716,12 @@ def search_actor():
     # If not found in DB, search via API
     if not actors:
         try:
-            response = requests.get(f"{CURRENT_API_URL}/stars/search", params={"keyword": actor_name})
-            if response.status_code == 200:
-                data = response.json()
-                actors = data.get("stars", [])
-                
-                # Save actors to database
-                for actor in actors:
-                    db.save_star(actor)
+            api_actors = list(javbus_client.search_stars(actor_name))
+            actors = api_actors
+
+            # Save actors to database
+            for actor in actors:
+                db.save_star(actor)
         except Exception as e:
             logging.error(f"Failed to search actor by API: {str(e)}")
     
@@ -623,7 +803,7 @@ def movie_detail(movie_id):
         formatted_movie = format_movie_data(movie_data)
         
         # Check if it's still missing important information like magnets
-        if not movie_data.get("magnets") and (movie_data.get("is_uncensored", False) or is_likely_uncensored):
+        if CURRENT_API_URL and not movie_data.get("magnets") and (movie_data.get("is_uncensored", False) or is_likely_uncensored):
             # For uncensored movies, we'll need to fetch magnets separately with type=uncensored
             try:
                 logging.info(f"Fetching magnets for uncensored movie {movie_id}")
@@ -659,7 +839,7 @@ def movie_detail(movie_id):
         has_summary = bool(formatted_movie.get("summary") or movie_data.get("description"))
         
         # Get magnet links for this movie if they're not already fetched
-        if not formatted_movie.get("magnet_links"):
+        if CURRENT_API_URL and not formatted_movie.get("magnet_links"):
             try:
                 # Extract gid and uc from movie data if available
                 gid = movie_data.get("gid", "")
@@ -1032,6 +1212,10 @@ def refresh_movie(movie_id):
 def check_api_connection():
     """Check API connection status"""
     api_url = request.args.get('api_url', CURRENT_API_URL)
+    javbus_mode = str(CURRENT_CONFIG.get("javbus", {}).get("mode", "external")).lower()
+
+    if javbus_mode == "internal":
+        return jsonify({"status": "success", "message": "JavBus 内部模式运行中"})
     
     if not api_url:
         return jsonify({"status": "error", "message": "API URL is not set"}), 400
@@ -1296,8 +1480,8 @@ def serve_image(filename):
                     image_url = actor_data.get("avatar", "")
                     if image_url:
                         download_image(image_url, file_path)
-            except Exception as e:
-                logging.error(f"Failed to download actor image: {str(e)}")
+            except Exception:
+                pass
         
         # If file exists now, serve it
         if os.path.exists(file_path):
@@ -1335,8 +1519,8 @@ def serve_image(filename):
                                     sample_url = samples[0].get("thumbnail", "")
                                 if sample_url:
                                     download_image(sample_url, file_path)
-            except Exception as e:
-                logging.error(f"Failed to download cover image: {str(e)}")
+            except Exception:
+                pass
         
         # If file exists now, serve it
         if os.path.exists(file_path):
@@ -1429,17 +1613,13 @@ def serve_image(filename):
                             sample_url = samples[sample_index].get("src", "")
                             if not sample_url:
                                 sample_url = samples[sample_index].get("thumbnail", "")
-                                logging.info(f"No full-size image available for sample {sample_index+1} of {movie_id}, using thumbnail instead")
                             
                             if sample_url:
                                 download_image(sample_url, file_path)
-                                logging.info(f"Downloaded sample image {sample_index+1} for {movie_id}")
-                            else:
-                                logging.error(f"No image URL found for sample {sample_index+1} of {movie_id}")
-                    except (ValueError, IndexError) as e:
-                        logging.error(f"Invalid sample index in filename: {image_name}, Error: {str(e)}")
-        except Exception as e:
-            logging.error(f"Failed to download image: {str(e)}")
+                    except (ValueError, IndexError):
+                        pass
+        except Exception:
+            pass
     
     # If file exists now, serve it
     if os.path.exists(file_path):
@@ -1481,9 +1661,9 @@ def get_movie_data(movie_id):
             if is_likely_uncensored:
                 params["type"] = "uncensored"
                 
-            response = requests.get(f"{CURRENT_API_URL}/movies/{movie_id}", params=params)
-            if response.status_code == 200:
-                movie_data = response.json()
+            movie_data_from_api = javbus_client.get_movie(movie_id, params=params)
+            if movie_data_from_api:
+                movie_data = movie_data_from_api
                 # Save to database
                 if not db.save_movie(movie_data):
                     logging.error(f"Failed to save movie data for {movie_id} to database")
@@ -1491,7 +1671,7 @@ def get_movie_data(movie_id):
                     logging.info(f"Successfully retrieved and saved complete data for {movie_id}")
                     javbus_api_success = True
             else:
-                logging.error(f"API returned status code {response.status_code} for movie {movie_id}")
+                logging.error(f"JavBus API returned no data for movie {movie_id}")
         except Exception as e:
             logging.error(f"Failed to get movie data from API: {str(e)}")
         
@@ -1552,16 +1732,16 @@ def get_actor_data(actor_id):
     # If not in database, try to get from API
     if not actor_data:
         try:
-            response = requests.get(f"{CURRENT_API_URL}/stars/{actor_id}")
-            if response.status_code == 200:
-                actor_data = response.json()
+            api_actor_data = javbus_client.get_star(actor_id)
+            if api_actor_data:
+                actor_data = api_actor_data
                 # Save to database
                 if not db.save_star(actor_data):
                     logging.error(f"Failed to save actor data for {actor_id} to database")
                 else:
                     logging.info(f"Successfully retrieved and saved actor data for {actor_id}")
             else:
-                logging.error(f"API returned status code {response.status_code} for actor {actor_id}")
+                logging.error(f"JavBus API returned no data for actor {actor_id}")
         except Exception as e:
             logging.error(f"Failed to get actor data from API: {str(e)}")
     else:
@@ -1589,20 +1769,10 @@ def get_actor_movies(actor_id):
             max_pages = 3  # Limit to 3 pages for performance
             
             while page <= max_pages:
-                response = requests.get(
-                    f"{CURRENT_API_URL}/movies",
-                    params={
-                        "filterType": "star",
-                        "filterValue": actor_id,
-                        "page": str(page),
-                        "magnet": "all"
-                    }
-                )
-                
-                if response.status_code != 200:
+                data = javbus_client.list_star_movies(actor_id, page=page)
+                if not isinstance(data, dict):
                     break
-                
-                data = response.json()
+
                 movies_list = data.get("movies", [])
                 pagination = data.get("pagination", {})
                 
@@ -1771,7 +1941,6 @@ def download_image(url, save_path):
                 # Check if the response contains an image
                 content_type = response.headers.get('Content-Type', '')
                 if not content_type.startswith('image/'):
-                    logging.warning(f"Downloaded content is not an image (Content-Type: {content_type}) from {url}")
                     # Try one more time with a different approach if this isn't the last retry
                     if retry < max_retries:
                         continue
@@ -1786,12 +1955,10 @@ def download_image(url, save_path):
                 if os.path.exists(save_path) and os.path.getsize(save_path) > 0:
                     return True
                 else:
-                    logging.error(f"Downloaded image file is empty or missing: {save_path}")
                     # Continue to retry if this isn't the last attempt
                     if retry < max_retries:
                         continue
             else:
-                logging.error(f"Failed to download image from {url}, status code: {response.status_code}")
                 # Continue to retry if this isn't the last attempt
                 if retry < max_retries:
                     time.sleep(retry_delay * (2 ** retry))  # Exponential backoff
@@ -1802,19 +1969,16 @@ def download_image(url, save_path):
                 return False
                 
         except requests.exceptions.Timeout:
-            logging.error(f"Timeout while downloading image from {url}")
             if retry < max_retries:
                 time.sleep(retry_delay * (2 ** retry))  # Exponential backoff
                 continue
             return False
         except requests.exceptions.ConnectionError:
-            logging.error(f"Connection error while downloading image from {url}")
             if retry < max_retries:
                 time.sleep(retry_delay * (2 ** retry))  # Exponential backoff
                 continue
             return False
-        except Exception as e:
-            logging.error(f"Failed to download image from {url}: {str(e)}")
+        except Exception:
             if retry < max_retries:
                 time.sleep(retry_delay * (2 ** retry))  # Exponential backoff
                 continue
@@ -1831,11 +1995,20 @@ def config_page():
         with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
             config_json = f.read()
         
-        return render_template('config.html', config_json=config_json)
+        config_data = {}
+        if config_json.strip():
+            try:
+                config_data = json.loads(config_json)
+            except json.JSONDecodeError as exc:
+                error_message = f"配置文件格式无效: {exc}"
+                logging.error(error_message)
+                return render_template('config.html', error_message=error_message, config_json=config_json, config_data={})
+        
+        return render_template('config.html', config_json=config_json, config_data=config_data)
     except Exception as e:
         error_message = f"Failed to load configuration file: {str(e)}"
         logging.error(error_message)
-        return render_template('config.html', error_message=error_message, config_json="{}")
+        return render_template('config.html', error_message=error_message, config_json="{}", config_data={})
 
 @app.route('/api/save_config', methods=['POST'])
 def save_config_api():
@@ -1859,11 +2032,9 @@ def save_config_api():
             f.write(config_str)
         
         # Update current configuration
-        global CURRENT_CONFIG, CURRENT_API_URL, CURRENT_WATCH_URL_PREFIX, CURRENT_BASE_URL
-        CURRENT_CONFIG = config_data
-        CURRENT_API_URL = config_data.get("api_url", "")
-        CURRENT_WATCH_URL_PREFIX = config_data.get("watch_url_prefix", "https://missav.ai")
-        CURRENT_BASE_URL = config_data.get("base_url", "https://www.javbus.com")
+        global CURRENT_CONFIG
+        CURRENT_CONFIG = load_config()
+        apply_runtime_configuration()
         
         logging.info(f"Configuration saved successfully")
         
@@ -2076,6 +2247,23 @@ def proxy_stream():
 
 def get_movie_image_url(movie_id):
     """仅获取电影的封面图片URL，避免获取完整详情"""
+    # 辅助函数：判断是否是无码影片
+    def is_uncensored_movie(thumb_url, movie_data=None, movie_id_param=None):
+        """判断是否是无码影片"""
+        # 方法1：检查缩略图URL中是否包含imgs（无码）或pics（有码）
+        if thumb_url and "/imgs/" in thumb_url:
+            return True
+        if thumb_url and "/pics/" in thumb_url:
+            return False
+        # 方法2：检查is_uncensored字段
+        if movie_data and movie_data.get("is_uncensored", False):
+            return True
+        # 方法3：通过ID模式判断（如 xxx_001）
+        check_id = movie_id_param or movie_id
+        if check_id and re.search(r'_\d+$', check_id):
+            return True
+        return False
+    
     # 先尝试从数据库获取只包含图片URL的简单记录
     movie_data = db.get_movie(movie_id)
     if movie_data and movie_data.get("img"):
@@ -2086,9 +2274,13 @@ def get_movie_image_url(movie_id):
         if "thumb" in thumb_url:
             # 从缩略图URL中提取ID部分
             # 例如：从 https://www.javbus.com/pics/thumb/b9f2.jpg 提取 b9f2
+            # 或从 https://www.javbus.com/imgs/thumb/1zj1.jpg 提取 1zj1
             thumb_id = thumb_url.split('/')[-1].split('.')[0]
-            # 构造高清封面图URL
-            cover_url = f"{CURRENT_BASE_URL}/pics/cover/{thumb_id}_b.jpg"
+            # 判断是否是无码影片，使用对应的路径
+            if is_uncensored_movie(thumb_url, movie_data, movie_id):
+                cover_url = f"{CURRENT_BASE_URL}/imgs/cover/{thumb_id}_b.jpg"
+            else:
+                cover_url = f"{CURRENT_BASE_URL}/pics/cover/{thumb_id}_b.jpg"
             return cover_url
             
         # 处理DMM格式的URL
@@ -2126,85 +2318,84 @@ def get_movie_image_url(movie_id):
                     logging.error(f"API连接失败，已超过最大重试次数: {str(e)}")
                     return None
         
-        # 构建搜索参数，找出包含此ID的电影
-        search_url = f"{CURRENT_API_URL}/movies/search"
-        search_params = {"keyword": movie_id, "page": "1"}
-        
-        response = fetch_with_retry(search_url, search_params)
-        if response and response.status_code == 200:
-            data = response.json()
-            movies_list = data.get("movies", [])
-            
-            # 查找匹配的电影
-            for movie in movies_list:
-                if movie.get("id") == movie_id and movie.get("img"):
-                    # 将缩略图URL转换为高清封面图URL
-                    thumb_url = movie.get("img")
-                    
-                    # 处理JavBus格式的URL
-                    if "thumb" in thumb_url:
-                        # 从缩略图URL中提取ID部分
-                        thumb_id = thumb_url.split('/')[-1].split('.')[0]
-                        # 构造高清封面图URL
+        movies_list = []
+        if CURRENT_API_URL:
+            search_url = f"{CURRENT_API_URL}/movies/search"
+            search_params = {"keyword": movie_id, "page": "1"}
+            response = fetch_with_retry(search_url, search_params)
+            if response and response.status_code == 200:
+                data = response.json()
+                movies_list = data.get("movies", [])
+        else:
+            try:
+                search_result = javbus_client.search_movies(keyword=movie_id, page=1)
+                movies_list = search_result.get("movies", [])
+            except Exception as exc:
+                logging.error(f"本地搜索影片封面失败: {exc}")
+
+        for movie in movies_list:
+            if movie.get("id") == movie_id and movie.get("img"):
+                thumb_url = movie.get("img")
+
+                if "thumb" in thumb_url:
+                    thumb_id = thumb_url.split('/')[-1].split('.')[0]
+                    # 判断是否是无码影片，使用对应的路径
+                    if is_uncensored_movie(thumb_url, movie, movie_id):
+                        cover_url = f"{CURRENT_BASE_URL}/imgs/cover/{thumb_id}_b.jpg"
+                    else:
                         cover_url = f"{CURRENT_BASE_URL}/pics/cover/{thumb_id}_b.jpg"
-                        return cover_url
-                        
-                    # 处理DMM格式的URL
-                    if "pics.dmm.co.jp" in thumb_url and "ps.jpg" in thumb_url:
-                        # 将ps.jpg替换为pl.jpg来获取高清封面图
-                        cover_url = thumb_url.replace("ps.jpg", "pl.jpg")
-                        return cover_url
-                        
-                    return thumb_url
+                    return cover_url
+
+                if "pics.dmm.co.jp" in thumb_url and "ps.jpg" in thumb_url:
+                    cover_url = thumb_url.replace("ps.jpg", "pl.jpg")
+                    return cover_url
+
+                return thumb_url
         
         # 如果搜索没有结果，尝试直接获取电影数据（这是最后的选择）
-        # 注意这会获取完整的电影详情，但我们会在最后尝试
-        response = fetch_with_retry(f"{CURRENT_API_URL}/movies/{movie_id}")
-        if response and response.status_code == 200:
-            movie_data = response.json()
-            if movie_data and movie_data.get("img"):
-                # 将缩略图URL转换为高清封面图URL
-                thumb_url = movie_data.get("img")
-                
-                # 处理JavBus格式的URL
-                if "thumb" in thumb_url:
-                    # 从缩略图URL中提取ID部分
-                    thumb_id = thumb_url.split('/')[-1].split('.')[0]
-                    # 构造高清封面图URL
-                    cover_url = f"{CURRENT_BASE_URL}/pics/cover/{thumb_id}_b.jpg"
-                    # 只保存基础信息到数据库
-                    basic_info = {
-                        "id": movie_id,
-                        "img": cover_url,  # 保存高清封面图URL
-                        "title": movie_data.get("title", ""),
-                        "date": movie_data.get("date", "")
-                    }
-                    db.save_movie(basic_info)
-                    return cover_url
-                    
-                # 处理DMM格式的URL
-                if "pics.dmm.co.jp" in thumb_url and "ps.jpg" in thumb_url:
-                    # 将ps.jpg替换为pl.jpg来获取高清封面图
-                    cover_url = thumb_url.replace("ps.jpg", "pl.jpg")
-                    # 只保存基础信息到数据库
-                    basic_info = {
-                        "id": movie_id,
-                        "img": cover_url,  # 保存高清封面图URL
-                        "title": movie_data.get("title", ""),
-                        "date": movie_data.get("date", "")
-                    }
-                    db.save_movie(basic_info)
-                    return cover_url
-                    
-                # 只保存基础信息到数据库
+        fallback_movie = None
+        if CURRENT_API_URL:
+            response = fetch_with_retry(f"{CURRENT_API_URL}/movies/{movie_id}")
+            if response and response.status_code == 200:
+                fallback_movie = response.json()
+        else:
+            try:
+                fallback_movie = javbus_client.get_movie(movie_id)
+            except Exception as exc:
+                logging.error(f"本地获取影片封面失败: {exc}")
+
+        if fallback_movie and fallback_movie.get("img"):
+            thumb_url = fallback_movie.get("img")
+
+            def _store_basic(cover: str) -> None:
                 basic_info = {
                     "id": movie_id,
-                    "img": thumb_url,
-                    "title": movie_data.get("title", ""),
-                    "date": movie_data.get("date", "")
+                    "img": cover,
+                    "title": fallback_movie.get("title", ""),
+                    "date": fallback_movie.get("date", ""),
                 }
-                db.save_movie(basic_info)
-                return thumb_url
+                try:
+                    db.save_movie(basic_info)
+                except Exception as exc:  # pylint: disable=broad-except
+                    logging.error(f"保存影片封面基础信息失败: {exc}")
+
+            if "thumb" in thumb_url:
+                thumb_id = thumb_url.split('/')[-1].split('.')[0]
+                # 判断是否是无码影片，使用对应的路径
+                if is_uncensored_movie(thumb_url, fallback_movie, movie_id):
+                    cover_url = f"{CURRENT_BASE_URL}/imgs/cover/{thumb_id}_b.jpg"
+                else:
+                    cover_url = f"{CURRENT_BASE_URL}/pics/cover/{thumb_id}_b.jpg"
+                _store_basic(cover_url)
+                return cover_url
+
+            if "pics.dmm.co.jp" in thumb_url and "ps.jpg" in thumb_url:
+                cover_url = thumb_url.replace("ps.jpg", "pl.jpg")
+                _store_basic(cover_url)
+                return cover_url
+
+            _store_basic(thumb_url)
+            return thumb_url
         
         # 检查本地是否有实际存在的封面图片
         local_cover_path = f"buspic/covers/{movie_id}.jpg"
@@ -4155,6 +4346,13 @@ def cloud115_update_cookie():
         data = request.get_json() or {}
         new_cookie = data.get('cookie', '').strip()
         auth_mode = data.get('auth_mode', '').strip()
+        cookie_file = data.get('cookie_file')
+        
+        cloud115_config = CURRENT_CONFIG.setdefault('cloud115', {})
+        driver_config = cloud115_config.setdefault('driver', {})
+        
+        if not new_cookie:
+            new_cookie = driver_config.get('cookie', '').strip()
         
         if not new_cookie:
             return jsonify({
@@ -4175,10 +4373,10 @@ def cloud115_update_cookie():
             })
         
         # 更新配置文件
-        cloud115_config = CURRENT_CONFIG.setdefault('cloud115', {})
-        driver_config = cloud115_config.setdefault('driver', {})
         driver_config['cookie'] = new_cookie
         driver_config['enabled'] = True
+        if cookie_file is not None:
+            driver_config['cookie_file'] = cookie_file.strip()
         
         if auth_mode:
             cloud115_config['auth_mode'] = auth_mode
@@ -4289,7 +4487,8 @@ def cloud115_get_current_cookie():
             'message': '获取成功',
             'data': {
                 'cookie': current_cookie,
-                'auth_mode': cloud115_config.get('auth_mode', 'openapi')
+                    'auth_mode': cloud115_config.get('auth_mode', 'openapi'),
+                    'cookie_file': driver_config.get('cookie_file', '').strip()
             }
         })
     except Exception as e:
@@ -4955,6 +5154,858 @@ def _format_download_size(size_value):
     return (size_int, size_text)
 
 
+def get_cloud115_transcode_config():
+    config = CURRENT_CONFIG.get("cloud115", {}).get("transcode")
+    if isinstance(config, dict) and config:
+        return config
+    if isinstance(CLOUD115_TRANSCODE_CONFIG, dict):
+        return CLOUD115_TRANSCODE_CONFIG
+    return {}
+
+
+def is_cloud115_transcode_enabled():
+    config = get_cloud115_transcode_config()
+    if not config.get("enabled"):
+        return False
+    if not shutil.which("ffmpeg"):
+        TRANSCODE_LOGGER.warning("检测到未安装 ffmpeg，转码功能不可用")
+        return False
+    return True
+
+
+def _build_http_headers_for_transcode(download_data, *, pickcode=None, extra_headers=None):
+    headers = {}
+    request_headers = download_data.get("request_headers")
+    if isinstance(request_headers, dict):
+        for key, value in request_headers.items():
+            if value is None:
+                continue
+            headers[str(key)] = str(value)
+
+    auth_cookie = download_data.get("auth_cookie")
+    if auth_cookie:
+        if isinstance(auth_cookie, dict):
+            cookie_pairs = []
+            name = auth_cookie.get("name")
+            value = auth_cookie.get("value")
+            if name and value:
+                cookie_pairs.append(f"{name}={value}")
+            extra = auth_cookie.get("extra")
+            if isinstance(extra, dict):
+                for k, v in extra.items():
+                    if k and v:
+                        cookie_pairs.append(f"{k}={v}")
+            if cookie_pairs:
+                headers["Cookie"] = "; ".join(cookie_pairs)
+        elif isinstance(auth_cookie, list):
+            cookie_pairs = []
+            for item in auth_cookie:
+                if not isinstance(item, dict):
+                    continue
+                name = item.get("name")
+                value = item.get("value")
+                if name and value:
+                    cookie_pairs.append(f"{name}={value}")
+            if cookie_pairs:
+                headers["Cookie"] = "; ".join(cookie_pairs)
+        else:
+            headers["Cookie"] = str(auth_cookie)
+
+    if "User-Agent" not in headers or not headers.get("User-Agent"):
+        headers["User-Agent"] = CLOUD115_DRIVER_USER_AGENT
+
+    if "Referer" not in headers:
+        if pickcode:
+            headers["Referer"] = f"https://115.com/?ct=play&pickcode={pickcode}"
+        else:
+            headers["Referer"] = "https://115.com/"
+    if "Origin" not in headers:
+        headers["Origin"] = "https://115.com"
+    if "Accept" not in headers:
+        headers["Accept"] = "*/*"
+
+    if extra_headers:
+        for key, value in extra_headers.items():
+            if value is None:
+                continue
+            headers[str(key)] = str(value)
+
+    return headers
+
+
+def _build_ffmpeg_header_string(headers):
+    if not headers:
+        return None
+    header_lines = []
+    for key, value in headers.items():
+        if not value:
+            continue
+        header_lines.append(f"{key}: {value}")
+    if not header_lines:
+        return None
+    return "".join(line + "\r\n" for line in header_lines)
+
+
+def _probe_media_info(pickcode, download_url, headers):
+    if not download_url:
+        return {}
+
+    cache_key = pickcode or hashlib.sha1(download_url.encode("utf-8", errors="ignore")).hexdigest()
+    with TRANSCODE_TASKS_LOCK:
+        cached = TRANSCODE_PROBE_CACHE.get(cache_key)
+        if cached and (time.time() - cached.get("timestamp", 0)) < 3600:
+            return cached
+
+    if not shutil.which("ffprobe"):
+        TRANSCODE_LOGGER.warning("检测到未安装 ffprobe，无法分析媒体信息")
+        return {}
+
+    header_string = _build_ffmpeg_header_string(headers)
+    cmd = [
+        "ffprobe",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-print_format",
+        "json",
+        "-show_streams",
+        "-show_format",
+    ]
+    if header_string:
+        cmd += ["-headers", header_string]
+    cmd.append(download_url)
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=CLOUD115_TRANSCODE_PROBE_TIMEOUT,
+            check=False,
+        )
+    except Exception as exc:
+        TRANSCODE_LOGGER.warning(f"调用 ffprobe 失败: {exc}")
+        return {}
+
+    if proc.returncode != 0:
+        stderr_text = (proc.stderr or b"").decode("utf-8", errors="ignore")
+        TRANSCODE_LOGGER.warning(f"ffprobe 返回错误({proc.returncode}): {stderr_text[:200]}")
+        return {}
+
+    try:
+        result = json.loads((proc.stdout or b"").decode("utf-8", errors="ignore") or "{}")
+    except json.JSONDecodeError:
+        TRANSCODE_LOGGER.warning("解析 ffprobe 输出失败")
+        return {}
+
+    info = {
+        "timestamp": time.time(),
+        "video_codec": None,
+        "audio_codec": None,
+        "width": None,
+        "height": None,
+        "pix_fmt": None,
+        "format": None,
+        "duration": None,
+        "bit_rate": None,
+    }
+
+    for stream in result.get("streams", []):
+        if stream.get("codec_type") == "video":
+            info["video_codec"] = (stream.get("codec_name") or "").lower()
+            info["width"] = stream.get("width")
+            info["height"] = stream.get("height")
+            info["pix_fmt"] = stream.get("pix_fmt")
+            info["profile"] = stream.get("profile")
+        elif stream.get("codec_type") == "audio":
+            info["audio_codec"] = (stream.get("codec_name") or "").lower()
+            info["audio_channels"] = stream.get("channels")
+            info["audio_sample_rate"] = stream.get("sample_rate")
+
+    fmt = result.get("format") or {}
+    if isinstance(fmt, dict):
+        info["format"] = fmt.get("format_name")
+        info["duration"] = fmt.get("duration")
+        info["bit_rate"] = fmt.get("bit_rate")
+
+    with TRANSCODE_TASKS_LOCK:
+        TRANSCODE_PROBE_CACHE[cache_key] = info
+
+    return info
+
+
+def _cloud115_should_transcode(file_name, download_data, *, pickcode=None, file_info=None):
+    config = get_cloud115_transcode_config()
+    if not config.get("enabled"):
+        return (False, {})
+
+    normalized_name = (file_name or "").strip()
+    extension = ""
+    if normalized_name and "." in normalized_name:
+        extension = normalized_name.rsplit(".", 1)[-1].lower()
+
+    trigger_extensions = {
+        str(ext).lower()
+        for ext in config.get("trigger_on_extensions", [])
+        if isinstance(ext, str) and ext.strip()
+    }
+
+    trigger_codecs = {
+        str(codec).lower()
+        for codec in config.get("trigger_on_codecs", [])
+        if isinstance(codec, str) and codec.strip()
+    }
+
+    reasons = []
+
+    if extension and extension in trigger_extensions:
+        reasons.append(f"extension:{extension}")
+
+    lowered_name = normalized_name.lower()
+    if not reasons and ("hevc" in lowered_name or "h265" in lowered_name):
+        if {"hevc", "h265"} & trigger_codecs:
+            reasons.append("filename:hevc")
+
+    media_info = {}
+    if not reasons and trigger_codecs:
+        headers = _build_http_headers_for_transcode(download_data, pickcode=pickcode)
+        media_info = _probe_media_info(pickcode, download_data.get("download_url"), headers)
+        video_codec = (media_info.get("video_codec") or "").lower()
+        if video_codec and (
+            video_codec in trigger_codecs
+            or ({"hevc", "h265"} & trigger_codecs and any(token in video_codec for token in ("hevc", "h265")))
+        ):
+            reasons.append(f"codec:{video_codec}")
+
+    should_transcode = bool(reasons)
+    return should_transcode, {
+        "reasons": reasons,
+        "extension": extension,
+        "media_info": media_info,
+        "file_name": normalized_name,
+        "file_info": file_info,
+    }
+
+
+def _get_active_transcode_count():
+    with TRANSCODE_TASKS_LOCK:
+        return sum(
+            1 for task in TRANSCODE_TASKS.values()
+            if task.get("status") in TRANSCODE_ACTIVE_STATUSES
+        )
+
+
+def _serialize_transcode_task(task):
+    if not task:
+        return {}
+    playlist_name = task.get("playlist_filename") or CLOUD115_TRANSCODE_PLAYLIST
+    relative_url = url_for(
+        'cloud115_transcode_file',
+        task_id=task["id"],
+        filename=playlist_name,
+    )
+    result = {
+        "task_id": task.get("id"),
+        "status": task.get("status"),
+        "reason": task.get("reason"),
+        "created_at": task.get("created_at"),
+        "updated_at": task.get("updated_at"),
+        "ready_at": task.get("ready_at"),
+        "stream_url": relative_url,
+        "abs_stream_url": url_for(
+            'cloud115_transcode_file',
+            task_id=task["id"],
+            filename=playlist_name,
+            _external=True
+        ),
+        "status_url": url_for('api_cloud115_transcode_status', task_id=task["id"]),
+        "ready": task.get("status") in ("ready", "completed"),
+        "file_name": task.get("file_name"),
+    }
+    
+    # 包含视频时长（如果已检测到）
+    duration = task.get("duration")
+    if duration is not None:
+        result["duration"] = float(duration)
+    
+    # 包含媒体信息（如果存在）
+    media_info = task.get("media_info")
+    if media_info:
+        result["media_info"] = media_info
+    
+    # 包含当前转码起始时间（用于客户端计算偏移）
+    current_seek = task.get("current_seek_time")
+    if current_seek is not None:
+        result["start_offset"] = float(current_seek)
+    
+    return result
+
+
+def _parse_m3u8_duration(m3u8_path):
+    """解析 m3u8 文件，计算已转码的总时长"""
+    if not m3u8_path or not os.path.exists(m3u8_path):
+        return 0.0
+    
+    try:
+        total_duration = 0.0
+        with open(m3u8_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                # 解析 #EXTINF 行，格式: #EXTINF:duration,[title]
+                if line.startswith('#EXTINF:'):
+                    try:
+                        # 提取时长部分（冒号后到逗号前）
+                        duration_str = line.split(':')[1].split(',')[0]
+                        duration = float(duration_str)
+                        total_duration += duration
+                    except (ValueError, IndexError):
+                        continue
+        return total_duration
+    except Exception as exc:
+        TRANSCODE_LOGGER.warning(f"解析 m3u8 文件失败 {m3u8_path}: {exc}")
+        return 0.0
+
+
+def _stop_transcode_task(task_id, reason="manual"):
+    """停止指定的转码任务"""
+    with TRANSCODE_TASKS_LOCK:
+        task = TRANSCODE_TASKS.get(task_id)
+        if not task:
+            TRANSCODE_LOGGER.warning(f"尝试停止不存在的转码任务: {task_id}")
+            return False
+        
+        status = task.get("status")
+        if status in ("error", "completed", "cancelled"):
+            TRANSCODE_LOGGER.info(f"转码任务 {task_id} 已经处于终止状态: {status}")
+            return True  # 已经停止
+        
+        TRANSCODE_LOGGER.info(f"正在停止转码任务 {task_id} (原因: {reason})")
+        
+        # 先更新状态为 cancelled，这样运行循环可以检测到
+        task["status"] = "cancelled"
+        task["updated_at"] = time.time()
+        task["error"] = f"任务已停止: {reason}"
+        
+        process = task.get("process")
+        if process:
+            # 在锁外执行进程终止操作，避免长时间持有锁
+            task["process"] = None
+    
+    # 在锁外执行进程终止操作
+    if process:
+        try:
+            # 检查进程是否还在运行
+            if process.poll() is None:
+                TRANSCODE_LOGGER.info(f"正在终止转码任务 {task_id} 的 FFmpeg 进程 (PID: {process.pid})")
+                # 尝试优雅停止
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                    TRANSCODE_LOGGER.info(f"转码任务 {task_id} 的进程已优雅停止")
+                except subprocess.TimeoutExpired:
+                    # 如果5秒内没有停止，强制杀死
+                    TRANSCODE_LOGGER.warning(f"转码任务 {task_id} 的进程在5秒内未停止，强制终止")
+                    process.kill()
+                    process.wait()
+                    TRANSCODE_LOGGER.info(f"转码任务 {task_id} 的进程已强制终止")
+            else:
+                TRANSCODE_LOGGER.info(f"转码任务 {task_id} 的进程已经结束 (返回码: {process.returncode})")
+        except ProcessLookupError:
+            TRANSCODE_LOGGER.info(f"转码任务 {task_id} 的进程已经不存在")
+        except Exception as exc:
+            TRANSCODE_LOGGER.error(f"停止转码任务 {task_id} 的进程时出错: {exc}", exc_info=True)
+    
+    TRANSCODE_LOGGER.info(f"转码任务 {task_id} 已成功停止")
+    return True
+
+
+def _cleanup_transcode_tasks(force=False):
+    now = time.time()
+    cutoff = now - (CLOUD115_TRANSCODE_CLEANUP_MINUTES * 60)
+    # 长时间未访问的运行中任务，也视为需要停止（使用配置的清理时间）
+    idle_cutoff = now - (CLOUD115_TRANSCODE_CLEANUP_MINUTES * 60)
+
+    with TRANSCODE_TASKS_LOCK:
+        global TRANSCODE_LAST_CLEANUP
+        if not force and (now - TRANSCODE_LAST_CLEANUP) < 120:
+            return
+
+        removal_ids = []
+        stop_ids = []
+        
+        # 收集所有活跃任务的输出目录
+        active_output_dirs = set()
+        
+        for task_id, task in list(TRANSCODE_TASKS.items()):
+            status = task.get("status")
+            last_access = task.get("last_access") or task.get("updated_at") or task.get("created_at") or now
+            process = task.get("process")
+            output_dir = task.get("output_dir")
+            if output_dir:
+                active_output_dirs.add(os.path.abspath(output_dir))
+
+            # 检查进程是否已结束
+            if process and getattr(process, "poll", None):
+                ret = process.poll()
+                if ret is not None:
+                    task["returncode"] = ret
+                    task["process"] = None
+                    task["updated_at"] = now
+                    if status not in ("error", "completed", "cancelled"):
+                        task["status"] = "completed" if ret == 0 else "error"
+
+            # 对于长时间未访问的运行中任务，标记为需要停止
+            if status in TRANSCODE_ACTIVE_STATUSES and last_access < idle_cutoff:
+                stop_ids.append(task_id)
+            
+            # 对于已完成/错误/取消的任务，如果超过清理时间，标记为需要删除
+            if status in ("error", "completed", "cancelled"):
+                if force or last_access < cutoff:
+                    removal_ids.append(task_id)
+
+        # 停止长时间未访问的运行中任务
+        for task_id in stop_ids:
+            _stop_transcode_task(task_id, reason="长时间未访问自动停止")
+            # 停止后也标记为需要删除
+            removal_ids.append(task_id)
+
+        # 清理已停止的任务
+        for task_id in removal_ids:
+            task = TRANSCODE_TASKS.pop(task_id, None)
+            if not task:
+                continue
+            key = task.get("task_key")
+            if key:
+                TRANSCODE_TASK_KEYS.pop(key, None)
+            output_dir = task.get("output_dir")
+            try:
+                if output_dir and os.path.isdir(output_dir):
+                    TRANSCODE_LOGGER.info(f"清理转码任务目录: {output_dir}")
+                    shutil.rmtree(output_dir, ignore_errors=True)
+            except Exception as exc:
+                TRANSCODE_LOGGER.warning(f"清理转码目录失败 ({output_dir}): {exc}")
+
+        TRANSCODE_LAST_CLEANUP = now
+
+    # 清理工作目录中的孤立文件（不在任务字典中的目录）
+    try:
+        if os.path.isdir(TRANSCODE_WORK_DIR):
+            for item in os.listdir(TRANSCODE_WORK_DIR):
+                item_path = os.path.abspath(os.path.join(TRANSCODE_WORK_DIR, item))
+                if os.path.isdir(item_path):
+                    # 检查是否在活跃任务目录中
+                    if item_path not in active_output_dirs:
+                        # 检查目录的最后修改时间
+                        try:
+                            mtime = os.path.getmtime(item_path)
+                            if now - mtime > (CLOUD115_TRANSCODE_CLEANUP_MINUTES * 60):
+                                TRANSCODE_LOGGER.info(f"清理孤立转码目录: {item_path}")
+                                shutil.rmtree(item_path, ignore_errors=True)
+                        except Exception as exc:
+                            TRANSCODE_LOGGER.warning(f"检查孤立目录失败 ({item_path}): {exc}")
+    except Exception as exc:
+        TRANSCODE_LOGGER.warning(f"扫描工作目录失败: {exc}")
+
+
+def _get_or_create_transcode_task(pickcode, file_name, download_data, *, reason="manual", force=False):
+    if not is_cloud115_transcode_enabled():
+        return (False, "transcode_disabled", None)
+
+    task_key = pickcode or hashlib.sha1(
+        (download_data.get("download_url") or "").encode("utf-8", errors="ignore")
+    ).hexdigest()
+
+    headers = _build_http_headers_for_transcode(download_data, pickcode=pickcode)
+    header_string = _build_ffmpeg_header_string(headers)
+
+    _cleanup_transcode_tasks()
+
+    # 在创建转码任务前，先检测视频时长
+    download_url = download_data.get("download_url")
+    media_info = download_data.get("media_info") or {}
+    duration = None
+    
+    # 如果 media_info 中已有 duration，直接使用
+    if media_info.get("duration"):
+        try:
+            duration = float(media_info.get("duration"))
+        except (TypeError, ValueError):
+            duration = None
+    
+    # 如果没有 duration，使用 ffprobe 检测
+    if duration is None and download_url:
+        TRANSCODE_LOGGER.info(f"转码任务创建前检测视频时长 (pickcode={pickcode})")
+        probe_info = _probe_media_info(pickcode, download_url, headers)
+        if probe_info.get("duration"):
+            try:
+                duration = float(probe_info.get("duration"))
+                TRANSCODE_LOGGER.info(f"检测到视频时长: {duration:.2f} 秒")
+            except (TypeError, ValueError):
+                duration = None
+        # 将检测到的信息合并到 media_info
+        if probe_info:
+            media_info.update(probe_info)
+
+    with TRANSCODE_TASKS_LOCK:
+        existing_id = TRANSCODE_TASK_KEYS.get(task_key)
+        if existing_id:
+            existing_task = TRANSCODE_TASKS.get(existing_id)
+            if existing_task and existing_task.get("status") not in ("error", "cancelled"):
+                TRANSCODE_LOGGER.info(f"命中已存在的转码任务: key={task_key}, task_id={existing_id}, status={existing_task.get('status')}")
+                return (True, "existing", existing_task)
+            elif existing_task:
+                TRANSCODE_TASK_KEYS.pop(task_key, None)
+
+        active_count = sum(
+            1 for task in TRANSCODE_TASKS.values()
+            if task.get("status") in TRANSCODE_ACTIVE_STATUSES
+        )
+        if not force and active_count >= CLOUD115_TRANSCODE_MAX_TASKS:
+            TRANSCODE_LOGGER.warning(f"并发限制，拒绝创建新任务: active={active_count}, limit={CLOUD115_TRANSCODE_MAX_TASKS}, pickcode={pickcode}")
+            return (False, "concurrency_limit", {
+                "active": active_count,
+                "limit": CLOUD115_TRANSCODE_MAX_TASKS,
+            })
+
+        task_id = uuid.uuid4().hex
+        output_dir = os.path.join(TRANSCODE_WORK_DIR, task_id)
+        os.makedirs(output_dir, exist_ok=True)
+        playlist_name = CLOUD115_TRANSCODE_PLAYLIST
+        playlist_path = os.path.join(output_dir, playlist_name)
+        log_path = os.path.join(output_dir, "transcode.log")
+
+        task = {
+            "id": task_id,
+            "task_key": task_key,
+            "status": "queued",
+            "reason": reason,
+            "created_at": time.time(),
+            "updated_at": time.time(),
+            "file_name": file_name,
+            "pickcode": pickcode,
+            "download_url": download_url,
+            "http_headers": headers,
+            "header_string": header_string,
+            "output_dir": output_dir,
+            "playlist_path": playlist_path,
+            "playlist_filename": playlist_name,
+            "segment_template": CLOUD115_TRANSCODE_SEGMENT_TEMPLATE,
+            "log_path": log_path,
+            "process": None,
+            "ready_at": None,
+            "returncode": None,
+            "media_info": media_info,
+            "duration": duration,  # 保存视频时长
+            "current_seek_time": 0,  # 当前转码的起始时间点（秒）
+        }
+        TRANSCODE_TASKS[task_id] = task
+        TRANSCODE_TASK_KEYS[task_key] = task_id
+
+    thread = threading.Thread(target=_run_transcode_task, args=(task_id,), daemon=True)
+    thread.start()
+    return (True, "created", task)
+
+
+def _run_transcode_task(task_id, start_time=0):
+    """
+    运行转码任务
+    
+    Args:
+        task_id: 任务ID
+        start_time: 开始转码的时间点（秒），默认为0（从头开始）
+    """
+    with TRANSCODE_TASKS_LOCK:
+        task = TRANSCODE_TASKS.get(task_id)
+        if not task:
+            return
+        task["status"] = "starting"
+        task["updated_at"] = time.time()
+        # 记录当前转码的起始时间
+        task["current_seek_time"] = start_time
+
+    headers_string = task.get("header_string")
+    download_url = task.get("download_url")
+    log_path = task.get("log_path")
+
+    if not download_url:
+        with TRANSCODE_TASKS_LOCK:
+            task = TRANSCODE_TASKS.get(task_id)
+            if task:
+                task["status"] = "error"
+                task["error"] = "缺少下载地址"
+                task["updated_at"] = time.time()
+        return
+
+    config = get_cloud115_transcode_config()
+    use_hwaccel = bool(config.get("use_hwaccel", True))
+    
+    # 根据 use_hwaccel 选择合适的编码器
+    if use_hwaccel:
+        video_encoder = config.get("video_encoder", "h264_qsv")
+    else:
+        video_encoder = config.get("video_encoder_sw", "libx264")
+    
+    audio_encoder = config.get("audio_encoder", "aac")
+    video_bitrate = config.get("video_bitrate")
+    maxrate = config.get("maxrate")
+    bufsize = config.get("bufsize")
+    audio_bitrate = config.get("audio_bitrate")
+    audio_channels = config.get("audio_channels")
+    audio_sample_rate = config.get("audio_sample_rate")
+    segment_duration = max(2, int(config.get("segment_duration", 4) or 4))
+    gop_size = int(config.get("gop_size", 120) or 120)
+    hls_mode = config.get("hls_mode", "streaming")  # "streaming" 或 "vod"
+    config_hls_flags = config.get("hls_flags", "")
+    
+    # 获取hls_list_size配置（默认值为0，不限制）
+    config_hls_list_size = config.get("hls_list_size")
+    hls_list_size = 0 if config_hls_list_size is None else int(config_hls_list_size or 0)
+    
+    # 根据HLS模式自动设置合适的flags
+    # 如果config中的flags与当前模式匹配，则使用它；否则自动设置
+    if hls_mode == "vod":
+        # VOD模式：不应该包含omit_endlist和append_list
+        # 添加temp_file标志确保m3u8实时更新（边转码边生成m3u8）
+        if config_hls_flags and "omit_endlist" not in config_hls_flags and "append_list" not in config_hls_flags:
+            # 用户已经设置了VOD模式的flags，检查是否包含temp_file
+            if "temp_file" not in config_hls_flags:
+                # 添加temp_file标志以确保实时更新
+                hls_flags = config_hls_flags + ("+" if config_hls_flags else "") + "temp_file"
+            else:
+                hls_flags = config_hls_flags
+        else:
+            # 自动设置为VOD模式推荐的flags（保留所有片段用于跳转，实时更新m3u8）
+            hls_flags = "temp_file"  # temp_file确保m3u8实时更新
+    else:
+        # Streaming模式：应该包含omit_endlist和append_list
+        # 不包含delete_segments，允许保留所有片段
+        if config_hls_flags and "omit_endlist" in config_hls_flags and "append_list" in config_hls_flags:
+            # 用户已经设置了Streaming模式的flags，使用它
+            hls_flags = config_hls_flags
+        else:
+            # 自动设置为Streaming模式推荐的flags（不包含delete_segments）
+            hls_flags = "append_list+omit_endlist"
+    preset_value = str(config.get("qsv_preset", "7")) if use_hwaccel else str(config.get("x264_preset", "medium"))
+    qsv_device = config.get("qsv_device")
+
+    ffmpeg_cmd = ["ffmpeg", "-hide_banner", "-loglevel", config.get("loglevel", "warning")]
+
+    if headers_string:
+        ffmpeg_cmd += ["-headers", headers_string]
+
+    # 判断是否为旧编码/容器，需要“软解 + 硬编”（禁用硬件解码，仅上传到 QSV）
+    legacy_sw_decode = False
+    try:
+        media_info_for_detect = (task.get("media_info") or {})
+        detected_vcodec = (media_info_for_detect.get("video_codec") or "").lower()
+        detected_format = (media_info_for_detect.get("format") or "").lower()
+        file_name_for_detect = (task.get("file_name") or "").lower()
+        file_ext_for_detect = file_name_for_detect.rsplit(".", 1)[-1] if "." in file_name_for_detect else ""
+        legacy_codecs = {"mpeg4", "msmpeg4v2", "msmpeg4v3", "mpeg1video"}
+        legacy_containers = {"avi", "asf"}
+        if (detected_vcodec and detected_vcodec in legacy_codecs) or \
+           (file_ext_for_detect and file_ext_for_detect in legacy_containers) or \
+           (detected_format and any(tok in detected_format for tok in legacy_containers)):
+            legacy_sw_decode = True
+    except Exception:
+        legacy_sw_decode = False
+
+    if use_hwaccel:
+        # 初始化 QSV 设备（不一定启用硬解）
+        qsv_init_method = config.get("qsv_init_method", "vaapi")  # 可选: "direct", "vaapi"
+        if qsv_init_method == "vaapi":
+            if qsv_device:
+                ffmpeg_cmd += ["-init_hw_device", f"vaapi=va:{qsv_device}"]
+            else:
+                ffmpeg_cmd += ["-init_hw_device", "vaapi=va"]
+            ffmpeg_cmd += ["-init_hw_device", "qsv=qsv@va"]
+        else:
+            if qsv_device:
+                ffmpeg_cmd += ["-init_hw_device", f"qsv=hw:{qsv_device}"]
+            else:
+                ffmpeg_cmd += ["-init_hw_device", "qsv=hw"]
+        # 对于非旧编码，启用硬件解码；旧编码仅进行软解并上传到 QSV
+        if not legacy_sw_decode:
+            ffmpeg_cmd += ["-hwaccel", "qsv", "-hwaccel_output_format", "qsv"]
+        # 供 hwupload 过滤器使用的设备
+        ffmpeg_cmd += ["-filter_hw_device", "qsv"]
+
+    default_user_agent = task.get("http_headers", {}).get("User-Agent")
+    if default_user_agent:
+        ffmpeg_cmd += ["-user_agent", default_user_agent]
+
+    # 如果指定了开始时间，使用 -ss 参数（必须在 -i 之前）
+    if start_time > 0:
+        TRANSCODE_LOGGER.info(f"转码任务 {task_id} 从时间点 {start_time:.2f} 秒开始")
+        ffmpeg_cmd += ["-ss", str(start_time)]
+
+    ffmpeg_cmd += ["-i", download_url]
+
+    if use_hwaccel:
+        # 统一采用软转 nv12 + 上传到 QSV，兼容旧编码场景；非旧编码也可提升稳定性
+        ffmpeg_cmd += ["-vf", "format=nv12,hwupload=extra_hw_frames=64"]
+
+    ffmpeg_cmd += ["-c:v", video_encoder]
+    if video_bitrate:
+        ffmpeg_cmd += ["-b:v", str(video_bitrate)]
+    if maxrate:
+        ffmpeg_cmd += ["-maxrate", str(maxrate)]
+    if bufsize:
+        ffmpeg_cmd += ["-bufsize", str(bufsize)]
+    if preset_value:
+        ffmpeg_cmd += ["-preset", preset_value]
+    if gop_size:
+        ffmpeg_cmd += ["-g", str(gop_size)]
+
+    ffmpeg_cmd += ["-c:a", audio_encoder]
+    if audio_bitrate:
+        ffmpeg_cmd += ["-b:a", str(audio_bitrate)]
+    if audio_channels:
+        ffmpeg_cmd += ["-ac", str(audio_channels)]
+    if audio_sample_rate:
+        ffmpeg_cmd += ["-ar", str(audio_sample_rate)]
+
+    segment_template = os.path.join(task["output_dir"], task.get("segment_template") or CLOUD115_TRANSCODE_SEGMENT_TEMPLATE)
+    ffmpeg_cmd += [
+        "-f", "hls",
+        "-hls_time", str(segment_duration),
+        "-hls_segment_filename", segment_template,
+    ]
+    
+    # 只有当hls_flags不为空时才添加-hls_flags参数
+    if hls_flags:
+        ffmpeg_cmd += ["-hls_flags", hls_flags]
+    
+    # 根据HLS模式设置不同的参数
+    if hls_mode == "vod":
+        # VOD模式：使用hls_playlist_type vod
+        # 这样m3u8会在第一个片段生成后立即创建，并随着转码进行逐步更新
+        ffmpeg_cmd += [
+            "-hls_playlist_type", "vod",
+            "-hls_list_size", str(hls_list_size),  # 默认0表示不限制，包含所有片段
+        ]
+    else:
+        # Streaming模式：使用hls_list_size（默认0表示不限制）
+        ffmpeg_cmd += [
+            "-hls_list_size", str(hls_list_size),  # 默认0表示不限制，包含所有片段
+        ]
+    
+    ffmpeg_cmd += [task["playlist_path"]]
+
+    TRANSCODE_LOGGER.info("启动转码任务 %s", task_id)
+    try:
+        log_file = open(log_path, "w", encoding="utf-8")
+    except Exception as exc:
+        TRANSCODE_LOGGER.error(f"创建转码日志文件失败: {exc}")
+        with TRANSCODE_TASKS_LOCK:
+            task = TRANSCODE_TASKS.get(task_id)
+            if task:
+                task["status"] = "error"
+                task["error"] = f"创建日志文件失败: {exc}"
+                task["updated_at"] = time.time()
+        return
+
+    try:
+        process = subprocess.Popen(
+            ffmpeg_cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=log_file,
+        )
+        TRANSCODE_LOGGER.info(f"已启动 ffmpeg 进程: task_id={task_id}, pid={process.pid}")
+    except FileNotFoundError:
+        TRANSCODE_LOGGER.error("未找到 ffmpeg 可执行文件")
+        with TRANSCODE_TASKS_LOCK:
+            task = TRANSCODE_TASKS.get(task_id)
+            if task:
+                task["status"] = "error"
+                task["error"] = "未安装 ffmpeg"
+                task["updated_at"] = time.time()
+        log_file.close()
+        return
+    except Exception as exc:
+        TRANSCODE_LOGGER.error(f"启动 ffmpeg 失败: {exc}")
+        with TRANSCODE_TASKS_LOCK:
+            task = TRANSCODE_TASKS.get(task_id)
+            if task:
+                task["status"] = "error"
+                task["error"] = str(exc)
+                task["updated_at"] = time.time()
+        log_file.close()
+        return
+
+    with TRANSCODE_TASKS_LOCK:
+        task = TRANSCODE_TASKS.get(task_id)
+        if task:
+            task["process"] = process
+            task["status"] = "running"
+            task["updated_at"] = time.time()
+
+    playlist_ready = False
+    try:
+        while True:
+            # 检查任务是否已被取消
+            with TRANSCODE_TASKS_LOCK:
+                task = TRANSCODE_TASKS.get(task_id)
+                if not task or task.get("status") in ("error", "cancelled"):
+                    TRANSCODE_LOGGER.info(f"转码任务 {task_id} 已被取消，停止等待")
+                    if process.poll() is None:
+                        try:
+                            process.terminate()
+                            try:
+                                process.wait(timeout=2)
+                            except subprocess.TimeoutExpired:
+                                process.kill()
+                                process.wait()
+                        except Exception as exc:
+                            TRANSCODE_LOGGER.warning(f"停止已取消的任务 {task_id} 的进程失败: {exc}")
+                    break
+            
+            if os.path.exists(task["playlist_path"]) and os.path.getsize(task["playlist_path"]) > 0:
+                playlist_ready = True
+                with TRANSCODE_TASKS_LOCK:
+                    task = TRANSCODE_TASKS.get(task_id)
+                    if task and task.get("status") not in ("error", "cancelled"):
+                        task["status"] = "ready"
+                        task["ready_at"] = time.time()
+                        task["updated_at"] = time.time()
+                        TRANSCODE_LOGGER.info(f"转码任务 {task_id} 播放列表已就绪: {task['playlist_path']}")
+                break
+
+            if process.poll() is not None:
+                break
+
+            time.sleep(0.5)
+    finally:
+        log_file.close()
+
+    return_code = process.wait()
+
+    with TRANSCODE_TASKS_LOCK:
+        task = TRANSCODE_TASKS.get(task_id)
+        if task:
+            task["returncode"] = return_code
+            task["process"] = None
+            task["updated_at"] = time.time()
+            current_status = task.get("status")
+            
+            # 如果任务已被取消，不再更新状态
+            if current_status == "cancelled":
+                TRANSCODE_LOGGER.info("转码任务 %s 已取消，返回码=%s", task_id, return_code)
+            elif current_status not in ("error", "cancelled"):
+                if return_code == 0:
+                    if not playlist_ready and os.path.exists(task["playlist_path"]):
+                        task["status"] = "ready"
+                        task["ready_at"] = time.time()
+                    task["status"] = "completed"
+                    TRANSCODE_LOGGER.info("转码任务 %s 完成", task_id)
+                else:
+                    task["status"] = "error"
+                    task["error"] = f"ffmpeg exited with code {return_code}"
+                    TRANSCODE_LOGGER.warning("转码任务 %s 失败，返回码=%s", task_id, return_code)
+            else:
+                TRANSCODE_LOGGER.info("转码任务 %s 结束，状态=%s，返回码=%s", task_id, current_status, return_code)
+
+
 def _get_direct_download_data_by_pickcode(pickcode, *, use_android_api=False, user_agent=None):
     if not pickcode:
         return ({'success': False, 'message': '缺少pickcode参数'}, 400)
@@ -5547,13 +6598,66 @@ def cloud115_direct_download():
         )
 
         if status == 200 and payload.get('success'):
-            data = payload.get('data', {})
+            data = payload.get('data', {}) or {}
 
             if file_info:
                 data.setdefault('file_name', file_info.get('title') or file_info.get('filepath'))
                 if not data.get('file_size') and file_info.get('size'):
                     data['file_size'] = file_info.get('size')
             data.setdefault('pickcode', pickcode)
+
+            transcode_config = get_cloud115_transcode_config()
+            transcode_enabled = is_cloud115_transcode_enabled()
+            download_info_for_task = dict(data)
+
+            should_transcode, transcode_meta = _cloud115_should_transcode(
+                download_info_for_task.get('file_name'),
+                download_info_for_task,
+                pickcode=pickcode,
+                file_info=file_info
+            )
+            download_info_for_task["media_info"] = transcode_meta.get("media_info")
+
+            transcode_payload = {
+                "enabled": transcode_enabled,
+                "should_transcode": should_transcode,
+                "reasons": transcode_meta.get("reasons"),
+                "meta": transcode_meta,
+            }
+
+            if should_transcode and transcode_enabled and transcode_config.get("auto_start", True):
+                ok, note, task = _get_or_create_transcode_task(
+                    pickcode,
+                    download_info_for_task.get("file_name"),
+                    download_info_for_task,
+                    reason="auto",
+                )
+                if ok and task:
+                    serialized = _serialize_transcode_task(task)
+                    transcode_payload.update({
+                        "task_id": task.get("id"),
+                        "task_status": task.get("status"),
+                        "task_created": note == "created",
+                        "ready": serialized.get("ready"),
+                        "stream_url": serialized.get("stream_url"),
+                        "abs_stream_url": serialized.get("abs_stream_url"),
+                        "status_url": url_for('api_cloud115_transcode_status', task_id=task["id"]),
+                    })
+                    # 包含检测到的视频时长
+                    if serialized.get("duration") is not None:
+                        transcode_payload["duration"] = serialized.get("duration")
+                    # 包含完整的任务信息（前端可能需要）
+                    transcode_payload["task"] = serialized
+                else:
+                    transcode_payload.update({
+                        "task_created": False,
+                        "error": note,
+                        "task_info": task,
+                    })
+            elif should_transcode and not transcode_enabled:
+                transcode_payload["error"] = "transcode_disabled"
+
+            data["transcode"] = transcode_payload
 
             if not include_debug:
                 for key in ('raw', 'request_headers', 'encoded_data'):
@@ -5566,6 +6670,517 @@ def cloud115_direct_download():
             'success': False,
             'message': f'获取115直链失败: {str(exc)}'
         }), 500
+
+
+@app.route('/api/cloud115/transcode/start', methods=['POST'])
+def cloud115_transcode_start():
+    """手动启动/获取115直链转码任务。"""
+    try:
+        if not is_cloud115_transcode_enabled():
+            return jsonify({
+                'success': False,
+                'message': '服务器未启用或未安装 ffmpeg/ffprobe，无法启动转码'
+            }), 503
+
+        payload = request.get_json(silent=True) or {}
+        pickcode = str(payload.get('pickcode') or '').strip()
+        file_id = payload.get('file_id')
+        force = bool(payload.get('force'))
+        use_android_api = bool(payload.get('android_api'))
+        user_agent = (payload.get('user_agent') or '').strip() or None
+
+        file_info = None
+        if not pickcode and file_id:
+            try:
+                file_id_value = int(file_id)
+            except (TypeError, ValueError):
+                file_id_value = file_id
+            file_info = db.get_cloud115_file(file_id_value)
+            if file_info:
+                pickcode = _extract_pickcode_from_file_info(file_info)
+
+        if not pickcode:
+            return jsonify({
+                'success': False,
+                'message': '缺少pickcode或无法根据文件ID解析pickcode'
+            }), 400
+
+        download_data = None
+        candidate_download = payload.get('download_data')
+        if isinstance(candidate_download, dict) and candidate_download.get('download_url'):
+            download_data = dict(candidate_download)
+            download_data.pop('transcode', None)
+
+        response_payload = None
+        if not download_data:
+            response_payload, status = _get_direct_download_data_by_pickcode(
+                pickcode,
+                use_android_api=use_android_api,
+                user_agent=user_agent,
+            )
+            if status != 200 or not response_payload.get('success'):
+                return jsonify(response_payload), status
+            download_data = response_payload.get('data', {}) or {}
+
+        if not download_data.get('download_url'):
+            return jsonify({
+                'success': False,
+                'message': '无法获取有效的下载地址'
+            }), 502
+
+        file_name = payload.get('file_name') or download_data.get('file_name')
+        if not file_name and file_info:
+            file_name = file_info.get('title') or file_info.get('filepath')
+
+        should_transcode, meta = _cloud115_should_transcode(
+            file_name,
+            download_data,
+            pickcode=pickcode,
+            file_info=file_info
+        )
+        download_data["media_info"] = meta.get("media_info")
+
+        if not (should_transcode or force):
+            return jsonify({
+                'success': False,
+                'message': '当前文件无需转码',
+                'should_transcode': should_transcode,
+                'meta': meta,
+            }), 200
+
+        TRANSCODE_LOGGER.info(f"收到启动转码任务请求: pickcode={pickcode}, file_name={file_name}, force={force}")
+        ok, note, task = _get_or_create_transcode_task(
+            pickcode,
+            file_name,
+            download_data,
+            reason="manual",
+            force=force,
+        )
+        if not ok or not task:
+            status_code = 429 if note == "concurrency_limit" else 500
+            return jsonify({
+                'success': False,
+                'message': '创建转码任务失败',
+                'code': note,
+                'detail': task,
+                'meta': meta,
+            }), status_code
+
+        serialized = _serialize_transcode_task(task)
+        return jsonify({
+            'success': True,
+            'created': note == "created",
+            'task': serialized,
+            'meta': meta,
+        })
+    except Exception as exc:
+        app.logger.error(f"Error starting 115 transcode task: {exc}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': f'启动转码失败: {str(exc)}'
+        }), 500
+
+
+@app.route('/api/cloud115/transcode/status/<task_id>', methods=['GET'])
+def api_cloud115_transcode_status(task_id):
+    """查询转码任务状态。"""
+    try:
+        with TRANSCODE_TASKS_LOCK:
+            task = TRANSCODE_TASKS.get(task_id)
+            if not task:
+                return jsonify({'success': False, 'message': '任务不存在'}), 404
+            task['last_access'] = time.time()
+            task['updated_at'] = time.time()
+            serialized = _serialize_transcode_task(task)
+
+        debug = (request.args.get('debug') or '').strip().lower() in ('1', 'true', 'yes', 'on')
+        log_tail = None
+        if debug:
+            log_path = task.get('log_path')
+            if log_path and os.path.exists(log_path):
+                try:
+                    with open(log_path, 'r', encoding='utf-8', errors='ignore') as fh:
+                        fh.seek(0, os.SEEK_END)
+                        size = fh.tell()
+                        fh.seek(max(size - 4096, 0))
+                        log_tail = fh.read()
+                except Exception as exc:
+                    log_tail = f"读取日志失败: {exc}"
+
+        payload = {
+            'success': True,
+            'task': serialized,
+            'active_tasks': _get_active_transcode_count(),
+        }
+        if log_tail is not None:
+            payload['log_tail'] = log_tail
+        _cleanup_transcode_tasks()
+        return jsonify(payload)
+    except Exception as exc:
+        app.logger.error(f"Error reading transcode status: {exc}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': f'查询任务状态失败: {str(exc)}'
+        }), 500
+
+
+@app.route('/api/cloud115/transcode/stop/<task_id>', methods=['POST', 'GET'])
+def api_cloud115_transcode_stop(task_id):
+    """停止指定的转码任务。支持 POST 和 GET（用于 sendBeacon）。"""
+    try:
+        # 支持从 sendBeacon 发送的请求（可能是 GET 或 POST with FormData）
+        reason = "手动停止"
+        if request.method == 'POST':
+            # 尝试从 JSON body 获取 reason
+            json_data = request.get_json(silent=True)
+            if json_data and json_data.get('reason'):
+                reason = json_data.get('reason')
+            # 或者从 FormData 获取
+            elif request.form and request.form.get('reason'):
+                reason = request.form.get('reason')
+        client_ip = request.headers.get('X-Forwarded-For') or request.remote_addr
+        ua = request.headers.get('User-Agent', '')[:200]
+        has_body = bool(request.data) or bool(request.form) or bool(request.get_json(silent=True))
+        TRANSCODE_LOGGER.info(f"收到停止转码任务请求: task_id={task_id}, method={request.method}, reason={reason}, ip={client_ip}, ua={ua}, has_body={has_body}")
+        
+        success = _stop_transcode_task(task_id, reason=reason)
+        if not success:
+            return jsonify({
+                'success': False,
+                'message': '任务不存在或已停止'
+            }), 404
+        
+        with TRANSCODE_TASKS_LOCK:
+            task = TRANSCODE_TASKS.get(task_id)
+            if task:
+                serialized = _serialize_transcode_task(task)
+            else:
+                serialized = {}
+        
+        return jsonify({
+            'success': True,
+            'message': '任务已停止',
+            'task': serialized,
+            'active_tasks': _get_active_transcode_count(),
+        })
+    except Exception as exc:
+        TRANSCODE_LOGGER.error(f"停止转码任务失败: {exc}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': f'停止任务失败: {str(exc)}'
+        }), 500
+
+
+@app.route('/api/cloud115/transcode/seek/<task_id>', methods=['POST'])
+def api_cloud115_transcode_seek(task_id):
+    """跳转到指定时间点，重启转码任务从该位置开始"""
+    try:
+        json_data = request.get_json(silent=True) or {}
+        target_time = json_data.get('time')
+        
+        if target_time is None:
+            return jsonify({
+                'success': False,
+                'message': '缺少时间参数 (time)'
+            }), 400
+        
+        try:
+            target_time = float(target_time)
+            if target_time < 0:
+                return jsonify({
+                    'success': False,
+                    'message': '时间参数必须大于等于0'
+                }), 400
+        except (TypeError, ValueError):
+            return jsonify({
+                'success': False,
+                'message': '无效的时间参数'
+            }), 400
+        
+        with TRANSCODE_TASKS_LOCK:
+            task = TRANSCODE_TASKS.get(task_id)
+            if not task:
+                return jsonify({
+                    'success': False,
+                    'message': '转码任务不存在'
+                }), 404
+            
+            # 检查任务状态
+            status = task.get("status")
+            if status in ("error", "cancelled", "completed"):
+                return jsonify({
+                    'success': False,
+                    'message': f'任务状态不允许跳转: {status}'
+                }), 400
+            
+            # 检查是否已经在转码该位置附近（±5秒内，避免频繁重启）
+            current_seek_time = task.get("current_seek_time", 0)
+            if abs(target_time - current_seek_time) < 5:
+                TRANSCODE_LOGGER.info(f"跳转目标时间 {target_time:.2f} 接近当前转码位置 {current_seek_time:.2f}，无需重启")
+                return jsonify({
+                    'success': True,
+                    'message': '已在目标位置附近，无需跳转',
+                    'task': _serialize_transcode_task(task),
+                })
+            
+            # 检查视频总时长
+            duration = task.get("duration")
+            if duration and target_time > duration:
+                return jsonify({
+                    'success': False,
+                    'message': f'目标时间 {target_time:.2f} 超过视频总时长 {duration:.2f}'
+                }), 400
+            
+            # 检查 m3u8 文件，判断目标时间是否在已转码范围内
+            playlist_path = task.get("playlist_path")
+            transcoded_duration = 0.0
+            if playlist_path and os.path.exists(playlist_path):
+                transcoded_duration = _parse_m3u8_duration(playlist_path)
+                TRANSCODE_LOGGER.info(f"已转码时长: {transcoded_duration:.2f} 秒，目标时间: {target_time:.2f} 秒")
+                
+                # 如果目标时间在已转码范围内（考虑一些缓冲，±2秒），不需要重启
+                if target_time <= transcoded_duration + 2.0:
+                    TRANSCODE_LOGGER.info(f"目标时间 {target_time:.2f} 在已转码范围内 ({transcoded_duration:.2f} 秒)，无需重启")
+                    return jsonify({
+                        'success': True,
+                        'message': f'目标时间在已转码范围内，无需重启',
+                        'task': _serialize_transcode_task(task),
+                        'transcoded_duration': transcoded_duration,
+                    })
+            
+            TRANSCODE_LOGGER.info(f"转码任务 {task_id} 跳转到时间点 {target_time:.2f} 秒 (当前: {current_seek_time:.2f} 秒, 已转码: {transcoded_duration:.2f} 秒)")
+            
+            # 获取进程引用和 PID（在锁内）
+            process = task.get("process")
+            process_pid = None
+            if process:
+                try:
+                    process_pid = process.pid
+                except Exception:
+                    pass
+            
+            # 先设置状态为 cancelled，让运行循环检测到
+            task["status"] = "cancelled"
+            task["updated_at"] = time.time()
+            task["error"] = f"任务已停止: 跳转到 {target_time:.2f} 秒"
+            
+            # 如果进程存在，先尝试终止（在锁内设置，但实际终止在锁外）
+            if process:
+                task["process"] = None  # 清除引用，避免其他地方使用
+        
+        # 在锁外执行进程终止操作
+        if process:
+            TRANSCODE_LOGGER.info(f"正在终止转码任务 {task_id} 的 FFmpeg 进程 (PID: {process_pid})")
+            try:
+                # 检查进程是否还在运行
+                if process.poll() is None:
+                    # 尝试优雅停止
+                    process.terminate()
+                    TRANSCODE_LOGGER.info(f"已发送 terminate 信号给进程 {process_pid}")
+                    
+                    # 等待进程停止（最多5秒）
+                    try:
+                        process.wait(timeout=5)
+                        TRANSCODE_LOGGER.info(f"转码进程 {process_pid} 已优雅停止")
+                    except subprocess.TimeoutExpired:
+                        # 如果5秒内没有停止，强制杀死
+                        TRANSCODE_LOGGER.warning(f"转码进程 {process_pid} 在5秒内未停止，强制终止")
+                        process.kill()
+                        process.wait()
+                        TRANSCODE_LOGGER.info(f"转码进程 {process_pid} 已强制终止")
+                else:
+                    TRANSCODE_LOGGER.info(f"转码进程 {process_pid} 已经结束 (返回码: {process.returncode})")
+            except ProcessLookupError:
+                TRANSCODE_LOGGER.info(f"转码进程 {process_pid} 已经不存在")
+            except Exception as exc:
+                TRANSCODE_LOGGER.error(f"停止转码任务 {task_id} 的进程时出错: {exc}", exc_info=True)
+        
+        TRANSCODE_LOGGER.info(f"转码任务 {task_id} 已成功停止，准备重新启动")
+        
+        # 清理旧的段文件（可选：保留已生成的段用于回放）
+        # 这里我们选择清理，因为从新位置开始转码会产生新的段
+        # 需要重新获取任务信息来获取 output_dir
+        with TRANSCODE_TASKS_LOCK:
+            task = TRANSCODE_TASKS.get(task_id)
+            if not task:
+                return jsonify({
+                    'success': False,
+                    'message': '转码任务在停止过程中被删除'
+                }), 404
+            output_dir = task.get("output_dir")
+            playlist_path = task.get("playlist_path")
+        
+        if output_dir and os.path.isdir(output_dir):
+            try:
+                # 只清理 ts 段文件，保留 m3u8 和日志
+                for filename in os.listdir(output_dir):
+                    if filename.endswith('.ts'):
+                        filepath = os.path.join(output_dir, filename)
+                        try:
+                            os.remove(filepath)
+                        except Exception as exc:
+                            TRANSCODE_LOGGER.warning(f"清理段文件失败 {filepath}: {exc}")
+                
+                # 删除旧的 m3u8，让 FFmpeg 重新生成
+                if playlist_path and os.path.exists(playlist_path):
+                    try:
+                        os.remove(playlist_path)
+                    except Exception as exc:
+                        TRANSCODE_LOGGER.warning(f"清理播放列表失败 {playlist_path}: {exc}")
+            except Exception as exc:
+                TRANSCODE_LOGGER.warning(f"清理转码目录失败: {exc}")
+            
+        # 再次获取锁，重置任务状态
+        with TRANSCODE_TASKS_LOCK:
+            task = TRANSCODE_TASKS.get(task_id)
+            if not task:
+                return jsonify({
+                    'success': False,
+                    'message': '转码任务在停止过程中被删除'
+                }), 404
+            
+            # 重置任务状态
+            task["status"] = "queued"
+            task["updated_at"] = time.time()
+            task["ready_at"] = None
+            task["returncode"] = None
+            task["error"] = None
+            task["process"] = None  # 确保进程引用已清除
+            task["current_seek_time"] = target_time
+        
+        # 等待一小段时间，确保进程完全清理
+        time.sleep(0.5)
+        
+        # 重新启动转码任务，从目标时间开始
+        TRANSCODE_LOGGER.info(f"重新启动转码任务 {task_id}，从 {target_time:.2f} 秒开始")
+        thread = threading.Thread(target=_run_transcode_task, args=(task_id, target_time), daemon=True)
+        thread.start()
+        
+        # 等待一下，确保任务状态更新
+        time.sleep(0.2)
+        
+        with TRANSCODE_TASKS_LOCK:
+            task = TRANSCODE_TASKS.get(task_id)
+            if task:
+                serialized = _serialize_transcode_task(task)
+            else:
+                serialized = {}
+        
+        return jsonify({
+            'success': True,
+            'message': f'已跳转到 {target_time:.2f} 秒，正在重新开始转码',
+            'task': serialized,
+            'target_time': target_time,
+        })
+        
+    except Exception as exc:
+        TRANSCODE_LOGGER.error(f"跳转转码任务失败: {exc}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': f'跳转失败: {str(exc)}'
+        }), 500
+
+
+@app.route('/api/cloud115/transcode/tasks', methods=['GET'])
+def api_cloud115_transcode_tasks():
+    """列出当前所有转码任务（用于管理页面）。"""
+    try:
+        with TRANSCODE_TASKS_LOCK:
+            tasks = list(TRANSCODE_TASKS.values())
+            serialized = [_serialize_transcode_task(t) for t in tasks]
+        return jsonify({
+            'success': True,
+            'tasks': serialized,
+            'active_tasks': _get_active_transcode_count(),
+        })
+    except Exception as exc:
+        TRANSCODE_LOGGER.error(f"列出转码任务失败: {exc}", exc_info=True)
+        return jsonify({'success': False, 'message': str(exc)}), 500
+
+
+@app.route('/api/cloud115/transcode/delete/<task_id>', methods=['POST'])
+def api_cloud115_transcode_delete(task_id):
+    """强制删除转码任务（会尝试停止进程并清理任务目录）。"""
+    try:
+        reason = (request.get_json(silent=True) or {}).get('reason') or '管理页面删除'
+        # 先尝试停止
+        _stop_transcode_task(task_id, reason=reason)
+        with TRANSCODE_TASKS_LOCK:
+            task = TRANSCODE_TASKS.pop(task_id, None)
+            if task:
+                key = task.get('task_key')
+                if key:
+                    TRANSCODE_TASK_KEYS.pop(key, None)
+                output_dir = task.get('output_dir')
+            else:
+                output_dir = None
+        if output_dir and os.path.isdir(output_dir):
+            try:
+                shutil.rmtree(output_dir, ignore_errors=True)
+                TRANSCODE_LOGGER.info(f"已删除转码任务目录: {output_dir}")
+            except Exception as exc:
+                TRANSCODE_LOGGER.warning(f"删除转码任务目录失败 ({output_dir}): {exc}")
+        return jsonify({'success': True, 'message': '任务已删除'})
+    except Exception as exc:
+        TRANSCODE_LOGGER.error(f"删除转码任务失败: {exc}", exc_info=True)
+        return jsonify({'success': False, 'message': str(exc)}), 500
+
+
+@app.route('/cloud115/transcode/tasks', methods=['GET'])
+def cloud115_transcode_tasks_view():
+    """转码任务管理页面"""
+    return render_template('cloud115_transcode_admin.html')
+
+
+@app.route('/cloud115/transcode/<task_id>/<path:filename>', methods=['GET'])
+def cloud115_transcode_file(task_id, filename):
+    """提供转码结果的HLS切片/播放列表。"""
+    try:
+        with TRANSCODE_TASKS_LOCK:
+            task = TRANSCODE_TASKS.get(task_id)
+            if not task:
+                abort(404)
+            task['last_access'] = time.time()
+            output_dir = task.get('output_dir')
+            duration = task.get('duration')  # 获取视频总时长
+        if not output_dir or not os.path.isdir(output_dir):
+            abort(404)
+
+        safe_path = safe_join(output_dir, filename)
+        if not safe_path or not os.path.isfile(safe_path):
+            abort(404)
+
+        # 如果是 m3u8 文件且存在总时长，需要注入总时长信息
+        if filename.endswith('.m3u8') and duration and duration > 0:
+            try:
+                with open(safe_path, 'r', encoding='utf-8') as f:
+                    m3u8_content = f.read()
+                
+                # 检查是否已经包含总时长信息
+                has_total_duration = '#EXT-X-TARGETDURATION' in m3u8_content or '#EXTINF' in m3u8_content
+                
+                # 如果 m3u8 文件存在但可能不完整，尝试注入总时长
+                # 注意：这里我们不在 m3u8 中直接修改，而是依赖前端设置
+                # 但如果 m3u8 文件为空或只有很少内容，我们可以添加一些提示信息
+                
+                # 直接返回文件，让前端处理时长设置
+                response = send_from_directory(output_dir, filename, conditional=True)
+                
+                # 添加自定义头信息，传递总时长（前端可以通过 XHR 获取）
+                if duration:
+                    response.headers['X-Video-Duration'] = str(duration)
+                
+                return response
+            except Exception as exc:
+                TRANSCODE_LOGGER.warning(f"处理 m3u8 文件时出错 {task_id}/{filename}: {exc}")
+                # 出错时仍然返回原文件
+                return send_from_directory(output_dir, filename, conditional=True)
+        else:
+            # 非 m3u8 文件，直接返回
+            return send_from_directory(output_dir, filename, conditional=True)
+    except Exception as exc:
+        app.logger.warning(f"读取转码文件失败 {task_id}/{filename}: {exc}")
+        abort(404)
 
 
 @app.route('/api/cloud115/alist_play_info', methods=['GET'])
@@ -7791,12 +9406,30 @@ def sha256_base_encoding(text):
         })
 
 
+def _periodic_cleanup_worker():
+    """后台线程：定期执行转码任务清理"""
+    while True:
+        try:
+            # 每5分钟执行一次清理
+            time.sleep(300)
+            TRANSCODE_LOGGER.debug("执行定期清理转码任务")
+            _cleanup_transcode_tasks(force=False)
+        except Exception as exc:
+            TRANSCODE_LOGGER.error(f"定期清理线程出错: {exc}", exc_info=True)
+            time.sleep(60)  # 出错后等待1分钟再继续
+
+
 # Start the server
 if __name__ == '__main__':
     # Initialize libraries only once when the app starts
     strm_lib = StrmLibrary(db)
     cloud115_lib = Cloud115Library(db)
     jellyfin_lib = JellyfinLibrary(db_file=DB_FILE)
+    
+    # 启动定期清理转码任务的后台线程
+    cleanup_thread = threading.Thread(target=_periodic_cleanup_worker, daemon=True, name="TranscodeCleanup")
+    cleanup_thread.start()
+    TRANSCODE_LOGGER.info("转码任务定期清理线程已启动")
     
     # # Create placeholder image for missing covers if it doesn't exist
     # no_cover_path = os.path.join("static", "images", "no-cover.jpg")

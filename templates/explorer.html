@@ -53,6 +53,48 @@
         max-height: 80vh;
         object-fit: contain;
     }
+    /* 移动端列表样式 */
+    #mobileList .list-group-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: .75rem;
+        padding: .85rem .9rem;
+    }
+    #mobileList .file-meta {
+        font-size: .85rem;
+        color: #6c757d;
+    }
+    #mobileList .file-title {
+        font-size: 1rem;
+        line-height: 1.3;
+        word-break: break-all;
+    }
+    #mobileList .file-leading {
+        display: flex;
+        align-items: center;
+        gap: .5rem;
+        min-width: 0;
+        flex: 1 1 auto;
+    }
+    #mobileList .file-trailing {
+        color: #adb5bd;
+    }
+    /* 移动端去掉外层卡片边框与内边距，仅保留条目分隔线 */
+    @media (max-width: 575.98px) {
+        .container .card {
+            border: 0;
+            box-shadow: none;
+            background: transparent;
+        }
+        .container .card .card-body {
+            padding: 0;
+        }
+        #mobileList .list-group-item {
+            border-left: 0;
+            border-right: 0;
+        }
+    }
 </style>
 {% endblock %}
 
@@ -68,7 +110,7 @@
                     <span id="loginStatusBadge" class="badge bg-secondary me-2">
                         <i class="bi bi-hourglass-split"></i> 检查中
                     </span>
-                    <a href="/cloud115/login" class="btn btn-outline-primary" target="_blank">
+                    <a href="{{ url_for('config_page') }}#tab-cloud115" class="btn btn-outline-primary" target="_blank">
                         <i class="bi bi-key"></i> 登录管理
                     </a>
                 </div>
@@ -82,7 +124,7 @@
 
             <div class="card">
                 <div class="card-body">
-                    <div class="table-responsive">
+                    <div class="table-responsive d-none d-sm-block">
                         <table class="table table-hover align-middle file-table">
                             <thead>
                                 <tr>
@@ -104,6 +146,7 @@
                             <tbody id="fileTableBody"></tbody>
                         </table>
                     </div>
+                    <div id="mobileList" class="list-group d-block d-sm-none"></div>
                     <div id="emptyState" class="alert alert-info text-center d-none state-message">
                         <i class="bi bi-info-circle"></i> 此文件夹为空
                     </div>
@@ -155,6 +198,7 @@
 
     const breadcrumbEl = document.getElementById('breadcrumb');
     const fileTableBody = document.getElementById('fileTableBody');
+    const mobileList = document.getElementById('mobileList');
     const emptyState = document.getElementById('emptyState');
     const errorState = document.getElementById('errorState');
 
@@ -359,8 +403,14 @@
                 aValue = Number(a.fs ?? a.s ?? a.size ?? a.file_size ?? 0);
                 bValue = Number(b.fs ?? b.s ?? b.size ?? b.file_size ?? 0);
             } else if (key === 'time') {
-                aValue = Number(a.upt ?? a.update_time ?? a.te ?? a.t ?? 0);
-                bValue = Number(b.upt ?? b.update_time ?? b.te ?? b.t ?? 0);
+                aValue = Number(
+                    a.upt ?? a.update_time ?? a.te ?? a.t ??
+                    a.user_utime ?? a.utime ?? a.mtime ?? a.last_update_time ?? a.time ?? 0
+                );
+                bValue = Number(
+                    b.upt ?? b.update_time ?? b.te ?? b.t ??
+                    b.user_utime ?? b.utime ?? b.mtime ?? b.last_update_time ?? b.time ?? 0
+                );
             }
 
             if (aValue < bValue) return direction === 'asc' ? -1 : 1;
@@ -384,8 +434,13 @@
         });
     }
 
+    function isMobileView() {
+        return window.matchMedia('(max-width: 575.98px)').matches;
+    }
+
     function renderFiles(files, skipSort = false) {
         fileTableBody.innerHTML = '';
+        mobileList.innerHTML = '';
         emptyState.classList.add('d-none');
         errorState.classList.add('d-none');
 
@@ -410,6 +465,67 @@
             });
         }
 
+        // 移动端视图
+        if (isMobileView()) {
+            displayFiles.forEach((file) => {
+                const folder = isFolder(file);
+                const video = !folder && isVideoFile(file);
+                const image = !folder && isImageFile(file);
+                const fileName = file.fn || file.file_name || file.name || '未命名';
+                const sizeText = folder ? '-' : formatFileSize(file.fs ?? file.s ?? file.size ?? file.file_size);
+                const timeText = formatTimestamp(
+                    file.upt ?? file.update_time ?? file.te ?? file.t ??
+                    file.user_utime ?? file.utime ?? file.mtime ?? file.last_update_time ?? file.time
+                );
+
+                const item = document.createElement('div');
+                item.className = 'list-group-item';
+
+                const leading = document.createElement('div');
+                leading.className = 'file-leading';
+                const icon = document.createElement('i');
+                icon.className = folder ? 'bi bi-folder-fill text-warning' : `bi ${getFileIcon(fileName)} text-secondary`;
+                const textWrap = document.createElement('div');
+                textWrap.style.minWidth = '0';
+                const title = document.createElement('div');
+                title.className = 'file-title text-truncate';
+                title.textContent = fileName;
+                const meta = document.createElement('div');
+                meta.className = 'file-meta';
+                meta.textContent = folder ? `${timeText}` : `${sizeText} · ${timeText}`;
+                textWrap.appendChild(title);
+                textWrap.appendChild(meta);
+                leading.appendChild(icon);
+                leading.appendChild(textWrap);
+
+                const trailing = document.createElement('div');
+                trailing.className = 'file-trailing';
+                trailing.innerHTML = '<i class="bi bi-chevron-right"></i>';
+
+                item.appendChild(leading);
+                item.appendChild(trailing);
+
+                item.addEventListener('click', () => {
+                    if (folder) {
+                        const folderId = String(file.fid ?? file.cid ?? file.id ?? '0');
+                        openFolder(folderId, fileName);
+                    } else if (video) {
+                        const pickcode = getPickcode(file);
+                        const fileId = getFileId(file);
+                        openPlayer({ pickcode, fileId, name: fileName, fullPath: buildFullPath(fileName) });
+                    } else if (image) {
+                        const imageUrl = file.uo || file.u || '';
+                        const pickcode = getPickcode(file);
+                        openImage(imageUrl, pickcode, fileName);
+                    }
+                });
+
+                mobileList.appendChild(item);
+            });
+            return;
+        }
+
+        // 桌面端表格
         displayFiles.forEach((file, index) => {
             const folder = isFolder(file);
             const video = !folder && isVideoFile(file);
@@ -437,7 +553,10 @@
             row.appendChild(sizeTd);
 
             const timeTd = document.createElement('td');
-            timeTd.textContent = formatTimestamp(file.upt ?? file.update_time ?? file.te ?? file.t);
+            timeTd.textContent = formatTimestamp(
+                file.upt ?? file.update_time ?? file.te ?? file.t ??
+                file.user_utime ?? file.utime ?? file.mtime ?? file.last_update_time ?? file.time
+            );
             row.appendChild(timeTd);
 
             // 添加点击事件
@@ -673,6 +792,13 @@
     checkLoginStatus();
     updateBreadcrumb();
     loadFiles(currentCid);
+    
+    // 视口变化时，根据设备类型重新渲染（切换表格/列表）
+    window.addEventListener('resize', () => {
+        if (Array.isArray(currentFiles) && currentFiles.length > 0) {
+            renderFiles(currentFiles, true);
+        }
+    });
 </script>
 {% endblock %}
 

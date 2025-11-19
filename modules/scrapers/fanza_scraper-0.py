@@ -585,62 +585,60 @@ class FanzaScraper(BaseScraper):
         if not raw_text:
             return ""
 
+        # 统一换行符
         normalized = raw_text.replace("\r\n", "\n").replace("\r", "\n")
-        raw_lines = [line.strip() for line in normalized.split("\n")]
-
-        # 去掉首尾纯空行，避免前后多出来的空白段
-        while raw_lines and raw_lines[0] == "":
-            raw_lines.pop(0)
-        while raw_lines and raw_lines[-1] == "":
-            raw_lines.pop()
+        raw_lines = [line for line in normalized.split("\n")]
 
         # 规则：
-        # - 普通情况下，由于 HTML 缩进，每一行文本后面会跟一个单独的空行，我们要去掉这些单空行；
-        # - 但像 DMM 简介里那种连续 <br><br> 的地方，会形成 2 个以上连续空行，这里保留一个，
-        #   作为“段落之间空一行”的效果。
-        lines: list[str] = []
-        blank_run = 0
-        for line in raw_lines:
-            if line == "":
-                blank_run += 1
+        # - 去掉首尾空行
+        # - 单个空行（由 HTML 格式缩进导致）在两行非空文本之间时丢弃 -> 只保留单换行
+        # - 连续 2 行及以上空行视为“段落分隔”，折叠为 1 个空行 -> 对应 <br><br>
+        trimmed = [line for line in raw_lines]
+
+        # 去掉首尾完全空白行
+        while trimmed and not trimmed[0].strip():
+            trimmed.pop(0)
+        while trimmed and not trimmed[-1].strip():
+            trimmed.pop()
+
+        cleaned_lines = []
+        i = 0
+        n = len(trimmed)
+        while i < n:
+            current = trimmed[i]
+            stripped = current.strip()
+
+            if stripped:
+                cleaned_lines.append(stripped)
+                i += 1
                 continue
-            # 处理之前累计的空行
-            if blank_run >= 2 and lines:
-                # 多个连续空行 => 段落分隔，保留一个空行
-                lines.append("")
-            # 如果 blank_run == 1，则认为是缩进噪声，直接丢弃
-            blank_run = 0
-            lines.append(line)
 
-        return "\n".join(lines)
+            # 这里是空行，统计连续空行的长度
+            j = i
+            while j < n and not trimmed[j].strip():
+                j += 1
+            cluster_len = j - i
 
-    @staticmethod
-    def _remove_advertisement_from_text(text: str) -> str:
-        """
-        从简介文本中移除常见的广告/说明行，比如「コンビニ受取」「詳しくはこちら」等。
-        只在整行包含这些关键词时才删除，尽量避免误伤正常内容。
-        """
-        if not text:
-            return text
+            prev_nonempty = bool(cleaned_lines and cleaned_lines[-1].strip())
+            next_nonempty = False
+            k = j
+            while k < n:
+                if trimmed[k].strip():
+                    next_nonempty = True
+                    break
+                k += 1
 
-        ad_keywords = [
-            "コンビニ受取",
-            "詳しくはこちら",
-            "対象商品です",
-            "注文方法",
-            "送料無料",
-            "ポイント",
-            "キャンペーン",
-            "セット商品",
-        ]
+            # 单个空行且前后都有内容：认为是 HTML 格式产生的空白，丢弃
+            if cluster_len == 1 and prev_nonempty and next_nonempty:
+                pass
+            # 多个空行（>=2）且前后都有内容：保留 1 个空行，表示段落分隔
+            elif cluster_len >= 2 and prev_nonempty and next_nonempty:
+                cleaned_lines.append("")
+            # 其它情况（例如开头/结尾的空行），直接丢弃
 
-        lines = text.split("\n")
-        filtered_lines = [
-            line for line in lines
-            if line.strip() and not any(k in line for k in ad_keywords)
-        ]
+            i = j
 
-        return "\n".join(filtered_lines).strip()
+        return "\n".join(cleaned_lines)
     
     def extract_info_from_page(self, soup, movie_id, url):
         """从页面提取影片信息
@@ -882,19 +880,21 @@ class FanzaScraper(BaseScraper):
                     summary_text = "\n\n".join(cleaned_candidates)
 
             # 7.2 兜底：如果没拿到，退回旧的选择器
+            # 注意：这里只从 <p> 中提取简介，避免把诸如「コンビニ受取」等说明性文字混入简介
             if not summary_text:
                 description_element = soup.select_one("#introduction-text") or soup.select_one(".mg-b20.lh4")
                 if description_element:
-                    paras = [self._extract_text_with_line_breaks(t) for t in description_element.select("p")]
-                    paras = [t for t in paras if t and len(t) >= 50 and not any(k in t for k in ad_keywords)]
-                    if paras:
-                        # 保持分段结构
-                        if len(paras) == 1:
-                            summary_text = paras[0]
-                        else:
-                            summary_text = "\n\n".join(paras)
+                  paras = [self._extract_text_with_line_breaks(t) for t in description_element.select("p")]
+                  # 这里可以保留长度过滤，但不要再用 ad_keywords 过滤掉 <p>，避免误杀
+                  paras = [t for t in paras if t and len(t) >= 50]
+                  if paras:
+                    # 保持分段结构
+                    if len(paras) == 1:
+                      summary_text = paras[0]
                     else:
-                        summary_text = self._extract_text_with_line_breaks(description_element)
+                      summary_text = "\n\n".join(paras)
+                    summary_text = self._extract_text_with_line_breaks(description_element)
+
             # 7.3 再兜底：meta 描述
             if not summary_text:
                 og_desc = soup.find("meta", attrs={"property": "og:description"})
@@ -911,10 +911,7 @@ class FanzaScraper(BaseScraper):
                 summary_text = self._extract_text_with_line_breaks(description_element)
 
         if summary_text:
-            # 最后再做一层广告行过滤，防止兜底策略把「コンビニ受取」等说明文字带进来
-            summary_text = self._remove_advertisement_from_text(summary_text)
-            if summary_text:
-                result["summary"] = summary_text
+            result["summary"] = summary_text
 
         # 8. 提取雑誌掲載コメント/AVライターコメント（作为摘要的补充段落）
         try:

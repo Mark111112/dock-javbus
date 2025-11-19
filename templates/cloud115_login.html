@@ -150,6 +150,11 @@
                             <div id="cookieStatusMsg" class="mt-2" style="display: none;"></div>
                         </div>
                         <div class="mb-3">
+                            <label for="cookieFileInput" class="form-label">Cookie 文件路径:</label>
+                            <input type="text" class="form-control" id="cookieFileInput" placeholder="data/cloud115_cookie.txt">
+                            <small class="form-text text-muted">可选，留空则不写入文件。用于与其他实例共享 Cookie。</small>
+                        </div>
+                        <div class="mb-3">
                             <div class="d-grid gap-2">
                                 <button class="btn btn-success" onclick="updateCookie()">
                                     <i class="bi bi-upload"></i> 更新 Cookie
@@ -411,6 +416,10 @@
                         cookieInput.value = result.data.cookie;
                         cookieInput.placeholder = '当前生效的 Cookie';
                     }
+                    const cookieFileInput = document.getElementById('cookieFileInput');
+                    if (cookieFileInput && typeof result.data.cookie_file === 'string') {
+                        cookieFileInput.value = result.data.cookie_file;
+                    }
                     
                     // 设置认证模式
                     if (result.data.auth_mode) {
@@ -469,12 +478,14 @@
         // 更新 Cookie（不修改认证模式）
         async function updateCookie() {
             const cookieInput = document.getElementById('cookieInput');
+            const cookieFileInput = document.getElementById('cookieFileInput');
             const authModeSelect = document.getElementById('authModeSelect');
             const cookie = cookieInput.value.trim();
             const authMode = authModeSelect.value; // 保持当前认证模式
+            const cookieFile = cookieFileInput ? cookieFileInput.value.trim() : '';
             
-            if (!cookie) {
-                alert('请输入 Cookie');
+            if (!cookie && !cookieFile) {
+                alert('请至少填写 Cookie 或 Cookie 文件路径');
                 return;
             }
             
@@ -482,7 +493,7 @@
                 const response = await fetch('/api/cloud115/update_cookie', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ cookie, auth_mode: authMode })
+                    body: JSON.stringify({ cookie, auth_mode: authMode, cookie_file: cookieFile })
                 });
                 
                 const result = await response.json();

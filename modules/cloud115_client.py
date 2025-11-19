@@ -500,6 +500,19 @@ class DriverClient:
             else:
                 image_url_original = image_url_thumb
         
+        # 统一“修改时间”字段，driver 在不同场景可能返回以下任一字段：
+        # te（目录时间）/ t / update_time / user_utime / utime / mtime / last_update_time / time
+        update_ts = (
+            item.get("te")
+            or item.get("t")
+            or item.get("update_time")
+            or item.get("user_utime")
+            or item.get("utime")
+            or item.get("mtime")
+            or item.get("last_update_time")
+            or item.get("time")
+        )
+
         return {
             "aid": str(item.get("aid") or "").strip(),
             "cid": cid,
@@ -512,10 +525,11 @@ class DriverClient:
             "pick_code": str(item.get("pc") or item.get("pick_code") or "").strip(),
             "sha": str(item.get("sha") or "").strip(),
             "tp": item.get("tp") or item.get("create_time"),
-            "t": item.get("t") or item.get("update_time"),
-            "ut": item.get("t") or item.get("update_time"),
-            "upt": item.get("t") or item.get("update_time"),
-            "te": item.get("te") or item.get("t") or item.get("update_time"),
+            "t": update_ts,
+            "ut": update_ts,
+            "upt": update_ts,
+            "te": update_ts,
+            "update_time": update_ts,
             "fs": size_int,
             "s": size_int,
             "size": size_int,
