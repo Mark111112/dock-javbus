@@ -19,9 +19,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from flask import Flask, request, jsonify, render_template, redirect, url_for, send_from_directory, Response, stream_with_context, flash, abort
 from flask_cors import CORS
+from flask_sock import Sock
 from werkzeug.utils import secure_filename, safe_join
 from javbus_db import JavbusDatabase
 from modules.translation.translator import get_translator
+from transcription_service import configure_transcription_from_dict
 from modules.javbus_service import get_javbus_client
 import logging
 import logging.config
@@ -46,6 +48,8 @@ import subprocess
 import uuid
 import shutil
 import posixpath
+from transcription_service import handle_transcription_ws
+from modules.live_caption_proxy import handle_caption_proxy_ws
 
 # 创建视频相关日志过滤器
 class VideoRequestFilter(logging.Filter):
@@ -114,6 +118,7 @@ logging.config.dictConfig(LOGGING_CONFIG)
 # Initialize Flask application
 app = Flask(__name__, template_folder='templates', static_folder='static')
 CORS(app)  # Enable CORS
+sock = Sock(app)
 
 # Add secret key for session
 app.secret_key = os.urandom(24)
@@ -159,6 +164,18 @@ TRANSCODE_PROBE_CACHE = {}
 TRANSCODE_LAST_CLEANUP = 0.0
 TRANSCODE_ACTIVE_STATUSES = {"queued", "starting", "running", "ready"}
 TRANSCODE_LOGGER = logging.getLogger("Cloud115Transcode")
+
+
+@sock.route('/ws/transcription')
+def transcription_ws(ws):
+    """WebSocket 端点：接收前端音频流并返回转写结果。"""
+    handle_transcription_ws(ws)
+
+
+@sock.route('/ws/caption')
+def caption_proxy_ws(ws):
+    """WebSocket 端点：代理到 faster-whisper 并附加翻译。"""
+    handle_caption_proxy_ws(ws)
 
 def _run_ffmpeg_hls_to_mp4(task_id, m3u8_url, output_path):
     """在后台运行 ffmpeg 将 HLS(m3u8) 保存为 MP4。"""
@@ -372,6 +389,7 @@ def load_config():
         "max_concurrent_tasks": 2,
         "ready_timeout_seconds": 30,
         "work_dir": "data/transcode",
+        "video_encoder_sw": "libx264",
         "trigger_on_extensions": ["wmv", "avi", "asf", "rmvb", "rm", "flv", "ts", "m2ts", "mpeg", "mpg", "mov", "mkv", "webm"],
         "trigger_on_codecs": ["hevc", "h265", "hevc_qsv", "vp9"],
         "probe_enabled": True,
@@ -487,12 +505,20 @@ def apply_runtime_configuration() -> None:
         db=db,
     )
 
+    # Apply transcription / STT configuration (Speaches or faster-whisper)
+    try:
+        transcription_cfg = CURRENT_CONFIG.get("transcription") or {}
+        configure_transcription_from_dict(transcription_cfg)
+    except Exception as exc:
+        logging.getLogger("Transcription").error("Failed to apply STT config: %s", exc)
+
     if javbus_mode == "internal":
         scraper_logger = logging.getLogger("JavBus.Internal.Scraper")
         scraper_logger.setLevel(logging.DEBUG)
         scraper_logger.debug("[调试] JavBus Internal Scraper 日志级别已设置为 DEBUG")
 
 
+# 初始加载配置
 apply_runtime_configuration()
 
 # Alist integration caches and defaults
@@ -1015,6 +1041,15 @@ def movie_detail(movie_id):
 def video_player(movie_id):
     """Show ad-free video player page"""
     try:
+        from urllib.parse import urlparse
+        t_cfg = CURRENT_CONFIG.get("transcription") or {}
+        base = (t_cfg.get("api_base_url") or "").rstrip("/")
+        if base.endswith("/v1"):
+            base = base[:-3]
+        parsed = urlparse(base) if base else None
+        transcription_ws_host = parsed.hostname if parsed else ""
+        transcription_ws_port = str(parsed.port) if parsed and parsed.port else "8001"
+
         # Get movie data to display title
         movie_data = get_movie_data(movie_id)
         if not movie_data:
@@ -1070,12 +1105,27 @@ def video_player(movie_id):
             magnet_link = formatted_movie["magnet_links"][0]["link"]
             logging.info(f"Using magnet link as fallback for {movie_id}")
         
+        tconf = CURRENT_CONFIG.get("transcription") or {}
         return render_template('video_player.html', 
                               movie=formatted_movie,
                               video_url=video_url,
                               hls_url=hls_url,
                               magnet_link=magnet_link,
-                              movie_id=movie_id)
+                              movie_id=movie_id,
+                              fwh_ws_host=transcription_ws_host,
+                              fwh_ws_port=transcription_ws_port,
+                              fwh_model=tconf.get("model"),
+                              fwh_language=tconf.get("language"),
+                              fwh_chunk_secs=tconf.get("chunk_secs", 4.0),
+                              fwh_overlap_secs=tconf.get("overlap_secs", 0.7),
+                              fwh_prefix_chars=tconf.get("prefix_chars", 0),
+                              fwh_segmenter=tconf.get("segmenter", "vad"),
+                              fwh_vad_max_window=tconf.get("vad_max_window_secs", 15.0),
+                              fwh_vad_overlap=tconf.get("vad_overlap_secs", 0.35),
+                              fwh_vad_min_silence=tconf.get("vad_min_silence_secs", 0.4),
+                              fwh_vad_min_speech=tconf.get("vad_min_speech_secs", 0.6),
+                              fwh_vad_frame=tconf.get("vad_frame_secs", 0.03),
+                              fwh_vad_energy=tconf.get("vad_energy_threshold", 0.001))
     except Exception as e:
         error_message = str(e)
         logging.error(f"Error in video_player route: {error_message}")
@@ -3744,6 +3794,14 @@ def extract_cloud115_ids():
 def cloud115_player(file_id):
     """115云盘视频播放页面"""
     try:
+        from urllib.parse import urlparse
+        t_cfg = CURRENT_CONFIG.get("transcription") or {}
+        base = (t_cfg.get("api_base_url") or "").rstrip("/")
+        if base.endswith("/v1"):
+            base = base[:-3]
+        parsed = urlparse(base) if base else None
+        transcription_ws_host = parsed.hostname if parsed else ""
+        transcription_ws_port = str(parsed.port) if parsed and parsed.port else "8001"
         # 获取文件信息
         file_info = db.get_cloud115_file(file_id)
         if not file_info:
@@ -3806,7 +3864,21 @@ def cloud115_player(file_id):
             initial_mode=initial_mode,
             play_mode='library',
             direct_pickcode=pickcode,
-            direct_path=relative_path or file_info.get('filepath') or file_info.get('title')
+            direct_path=relative_path or file_info.get('filepath') or file_info.get('title'),
+            fwh_ws_host=transcription_ws_host,
+            fwh_ws_port=transcription_ws_port,
+            fwh_model=(CURRENT_CONFIG.get("transcription") or {}).get("model"),
+            fwh_language=(CURRENT_CONFIG.get("transcription") or {}).get("language"),
+            fwh_chunk_secs=(CURRENT_CONFIG.get("transcription") or {}).get("chunk_secs", 4.0),
+            fwh_overlap_secs=(CURRENT_CONFIG.get("transcription") or {}).get("overlap_secs", 0.7),
+            fwh_prefix_chars=(CURRENT_CONFIG.get("transcription") or {}).get("prefix_chars", 0),
+            fwh_segmenter=(CURRENT_CONFIG.get("transcription") or {}).get("segmenter", "vad"),
+            fwh_vad_max_window=(CURRENT_CONFIG.get("transcription") or {}).get("vad_max_window_secs", 15.0),
+            fwh_vad_overlap=(CURRENT_CONFIG.get("transcription") or {}).get("vad_overlap_secs", 0.35),
+            fwh_vad_min_silence=(CURRENT_CONFIG.get("transcription") or {}).get("vad_min_silence_secs", 0.4),
+            fwh_vad_min_speech=(CURRENT_CONFIG.get("transcription") or {}).get("vad_min_speech_secs", 0.6),
+            fwh_vad_frame=(CURRENT_CONFIG.get("transcription") or {}).get("vad_frame_secs", 0.03),
+            fwh_vad_energy=(CURRENT_CONFIG.get("transcription") or {}).get("vad_energy_threshold", 0.001),
         )
     except Exception as e:
         app.logger.error(f"Error rendering 115 player page: {str(e)}", exc_info=True)
@@ -3817,6 +3889,14 @@ def cloud115_player(file_id):
 @app.route('/cloud115/player/direct', methods=['GET'])
 def cloud115_player_direct():
     """115网盘直接播放页面（浏览器模式）"""
+    from urllib.parse import urlparse
+    t_cfg = CURRENT_CONFIG.get("transcription") or {}
+    base = (t_cfg.get("api_base_url") or "").rstrip("/")
+    if base.endswith("/v1"):
+        base = base[:-3]
+    parsed = urlparse(base) if base else None
+    transcription_ws_host = parsed.hostname if parsed else ""
+    transcription_ws_port = str(parsed.port) if parsed and parsed.port else "8001"
     pickcode = (request.args.get('pickcode') or '').strip()
     file_id_115 = (request.args.get('file_id') or '').strip()
     file_name = (request.args.get('name') or '未命名视频').strip() or '未命名视频'
@@ -3854,7 +3934,21 @@ def cloud115_player_direct():
         initial_mode=initial_mode,
         play_mode='direct',
         direct_pickcode=pickcode,
-        direct_path=file_path or file_name
+        direct_path=file_path or file_name,
+        fwh_ws_host=transcription_ws_host,
+        fwh_ws_port=transcription_ws_port,
+        fwh_model=(CURRENT_CONFIG.get("transcription") or {}).get("model"),
+        fwh_language=(CURRENT_CONFIG.get("transcription") or {}).get("language"),
+        fwh_chunk_secs=(CURRENT_CONFIG.get("transcription") or {}).get("chunk_secs", 4.0),
+        fwh_overlap_secs=(CURRENT_CONFIG.get("transcription") or {}).get("overlap_secs", 0.7),
+        fwh_prefix_chars=(CURRENT_CONFIG.get("transcription") or {}).get("prefix_chars", 0),
+        fwh_segmenter=(CURRENT_CONFIG.get("transcription") or {}).get("segmenter", "vad"),
+        fwh_vad_max_window=(CURRENT_CONFIG.get("transcription") or {}).get("vad_max_window_secs", 15.0),
+        fwh_vad_overlap=(CURRENT_CONFIG.get("transcription") or {}).get("vad_overlap_secs", 0.35),
+        fwh_vad_min_silence=(CURRENT_CONFIG.get("transcription") or {}).get("vad_min_silence_secs", 0.4),
+        fwh_vad_min_speech=(CURRENT_CONFIG.get("transcription") or {}).get("vad_min_speech_secs", 0.6),
+        fwh_vad_frame=(CURRENT_CONFIG.get("transcription") or {}).get("vad_frame_secs", 0.03),
+        fwh_vad_energy=(CURRENT_CONFIG.get("transcription") or {}).get("vad_energy_threshold", 0.001),
     )
 
 
@@ -5842,8 +5936,12 @@ def _run_transcode_task(task_id, start_time=0):
     ffmpeg_cmd += ["-i", download_url]
 
     if use_hwaccel:
-        # 统一采用软转 nv12 + 上传到 QSV，兼容旧编码场景；非旧编码也可提升稳定性
-        ffmpeg_cmd += ["-vf", "format=nv12,hwupload=extra_hw_frames=64"]
+        if legacy_sw_decode:
+            # 软解 + 硬编：先转 nv12 再上传到 QSV
+            ffmpeg_cmd += ["-vf", "format=nv12,hwupload=extra_hw_frames=64"]
+        else:
+            # 硬解 + 硬编：保持硬帧链路，使用 vpp_qsv 统一为 nv12
+            ffmpeg_cmd += ["-vf", "vpp_qsv=format=nv12"]
 
     ffmpeg_cmd += ["-c:v", video_encoder]
     if video_bitrate:
@@ -8755,6 +8853,15 @@ def jellyfin_movies():
 @app.route('/jellyfin/player/<item_id>')
 def jellyfin_player(item_id):
     """Play a movie from Jellyfin"""
+    from urllib.parse import urlparse
+    t_cfg = CURRENT_CONFIG.get("transcription") or {}
+    base = (t_cfg.get("api_base_url") or "").rstrip("/")
+    if base.endswith("/v1"):
+        base = base[:-3]
+    parsed = urlparse(base) if base else None
+    transcription_ws_host = parsed.hostname if parsed else ""
+    transcription_ws_port = str(parsed.port) if parsed and parsed.port else "8001"
+
     # 从数据库获取影片信息
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
@@ -8817,7 +8924,21 @@ def jellyfin_player(item_id):
     return render_template('jellyfin_player.html',
                           movie=movie_dict,
                           movie_detail=movie_detail,
-                          page_title=movie_dict.get('title', '影片播放'))
+                          page_title=movie_dict.get('title', '影片播放'),
+                          fwh_ws_host=transcription_ws_host,
+                          fwh_ws_port=transcription_ws_port,
+                          fwh_model=(CURRENT_CONFIG.get("transcription") or {}).get("model"),
+                          fwh_language=(CURRENT_CONFIG.get("transcription") or {}).get("language"),
+                          fwh_chunk_secs=(CURRENT_CONFIG.get("transcription") or {}).get("chunk_secs", 4.0),
+                          fwh_overlap_secs=(CURRENT_CONFIG.get("transcription") or {}).get("overlap_secs", 0.7),
+                          fwh_prefix_chars=(CURRENT_CONFIG.get("transcription") or {}).get("prefix_chars", 0),
+                          fwh_segmenter=(CURRENT_CONFIG.get("transcription") or {}).get("segmenter", "vad"),
+                          fwh_vad_max_window=(CURRENT_CONFIG.get("transcription") or {}).get("vad_max_window_secs", 15.0),
+                          fwh_vad_overlap=(CURRENT_CONFIG.get("transcription") or {}).get("vad_overlap_secs", 0.35),
+                          fwh_vad_min_silence=(CURRENT_CONFIG.get("transcription") or {}).get("vad_min_silence_secs", 0.4),
+                          fwh_vad_min_speech=(CURRENT_CONFIG.get("transcription") or {}).get("vad_min_speech_secs", 0.6),
+                          fwh_vad_frame=(CURRENT_CONFIG.get("transcription") or {}).get("vad_frame_secs", 0.03),
+                          fwh_vad_energy=(CURRENT_CONFIG.get("transcription") or {}).get("vad_energy_threshold", 0.001))
 
 @app.route('/api/jellyfin/connect', methods=['POST'])
 def jellyfin_connect():
@@ -8982,6 +9103,15 @@ def jellyfin_file_player(file_id):
         file_id: jelmovie表中的文件ID
     """
     try:
+        from urllib.parse import urlparse
+        t_cfg = CURRENT_CONFIG.get("transcription") or {}
+        base = (t_cfg.get("api_base_url") or "").rstrip("/")
+        if base.endswith("/v1"):
+            base = base[:-3]
+        parsed = urlparse(base) if base else None
+        transcription_ws_host = parsed.hostname if parsed else ""
+        transcription_ws_port = str(parsed.port) if parsed and parsed.port else "8001"
+
         # 从数据库获取文件信息
         conn = sqlite3.connect(DB_FILE)
         conn.row_factory = sqlite3.Row
@@ -9044,7 +9174,21 @@ def jellyfin_file_player(file_id):
         return render_template('jellyfin_player.html',
                              movie=file_dict,
                              movie_detail=movie_detail,
-                             page_title=file_dict.get('title', 'Jellyfin播放器'))
+                             page_title=file_dict.get('title', 'Jellyfin播放器'),
+                             fwh_ws_host=transcription_ws_host,
+                             fwh_ws_port=transcription_ws_port,
+                             fwh_model=(CURRENT_CONFIG.get("transcription") or {}).get("model"),
+                             fwh_language=(CURRENT_CONFIG.get("transcription") or {}).get("language"),
+                             fwh_chunk_secs=(CURRENT_CONFIG.get("transcription") or {}).get("chunk_secs", 4.0),
+                             fwh_overlap_secs=(CURRENT_CONFIG.get("transcription") or {}).get("overlap_secs", 0.7),
+                             fwh_prefix_chars=(CURRENT_CONFIG.get("transcription") or {}).get("prefix_chars", 0),
+                             fwh_segmenter=(CURRENT_CONFIG.get("transcription") or {}).get("segmenter", "vad"),
+                             fwh_vad_max_window=(CURRENT_CONFIG.get("transcription") or {}).get("vad_max_window_secs", 15.0),
+                             fwh_vad_overlap=(CURRENT_CONFIG.get("transcription") or {}).get("vad_overlap_secs", 0.35),
+                             fwh_vad_min_silence=(CURRENT_CONFIG.get("transcription") or {}).get("vad_min_silence_secs", 0.4),
+                             fwh_vad_min_speech=(CURRENT_CONFIG.get("transcription") or {}).get("vad_min_speech_secs", 0.6),
+                             fwh_vad_frame=(CURRENT_CONFIG.get("transcription") or {}).get("vad_frame_secs", 0.03),
+                             fwh_vad_energy=(CURRENT_CONFIG.get("transcription") or {}).get("vad_energy_threshold", 0.001))
     
     except Exception as e:
         app.logger.error(f"Error playing Jellyfin file: {e}")

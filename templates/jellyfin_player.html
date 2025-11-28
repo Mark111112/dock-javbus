@@ -223,6 +223,49 @@
         height: 0;
         padding-top: 56.25%; /* 16:9 ratio */
     }
+
+    .live-caption-layer {
+        position: absolute;
+        left: 50%;
+        bottom: 12%;
+        transform: translateX(-50%);
+        max-width: 80%;
+        text-align: center;
+        color: #fff;
+        text-shadow: 0 0 4px rgba(0,0,0,0.8);
+        font-size: 1.05rem;
+        padding: 4px 10px;
+        background: rgba(0, 0, 0, 0.35);
+        border-radius: 4px;
+        pointer-events: none;
+        z-index: 120;
+    }
+
+    .live-caption-toggle {
+        position: absolute;
+        left: 12px;
+        bottom: 50px;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 8px;
+        border: none;
+        border-radius: 6px;
+        color: #fff;
+        background: rgba(0, 0, 0, 0.55);
+        cursor: pointer;
+        z-index: 125;
+        transition: background 0.2s, opacity 0.2s;
+        font-size: 0.75rem;
+    }
+
+    .live-caption-toggle:hover {
+        background: rgba(0, 0, 0, 0.7);
+    }
+
+    .live-caption-toggle.active {
+        background: rgba(0, 123, 255, 0.9);
+    }
     
     .transcode-controls {
         margin-top: 10px;
@@ -417,6 +460,11 @@
                             <a href="https://videojs.com/html5-video-support/" target="_blank">supports HTML5 video</a>
                         </p>
                     </video>
+                        <button id="jellyfinLiveCaptionBtn" class="live-caption-toggle" type="button" title="开启/关闭实时字幕">
+                            <i class="fas fa-closed-captioning" style="font-size: 0.9rem;"></i>
+                            <span>实时字幕</span>
+                        </button>
+                        <div id="jellyfinLiveCaptionLayer" class="live-caption-layer"></div>
                         
                         <div id="loading-overlay" style="display: none;">
                             <div class="spinner-border text-light" role="status">
@@ -472,6 +520,21 @@
 <script src="https://vjs.zencdn.net/7.20.3/video.min.js"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function() {
+       const fwhHost = "{{ fwh_ws_host or '' }}";
+       const fwhPort = "{{ fwh_ws_port or '' }}";
+       const fwhLanguage = "{{ fwh_language or '' }}";
+       const fwhModel = "{{ fwh_model or '' }}";
+       const fwhChunkSecs = {{ fwh_chunk_secs|default(4.0) }};
+       const fwhOverlapSecs = {{ fwh_overlap_secs|default(0.7) }};
+       const fwhPrefixChars = {{ fwh_prefix_chars|default(0) }};
+       const fwhSegmenter = "{{ fwh_segmenter or 'vad' }}";
+       const fwhVadMaxWindow = {{ fwh_vad_max_window|default(15.0) }};
+       const fwhVadOverlap = {{ fwh_vad_overlap|default(0.35) }};
+       const fwhVadMinSilence = {{ fwh_vad_min_silence|default(0.4) }};
+       const fwhVadMinSpeech = {{ fwh_vad_min_speech|default(0.6) }};
+       const fwhVadFrame = {{ fwh_vad_frame|default(0.03) }};
+       const fwhVadEnergy = {{ fwh_vad_energy|default(0.001) }};
+
         // Constants and configuration
         const itemId = "{{ movie.item_id }}";
         const playUrl = "{{ movie.play_url }}";
@@ -487,6 +550,13 @@
         let savedTime = localStorage.getItem('jellyfin_' + itemId);
         let isTranscodingEnabled = false;
         let jellyfinConfig;
+        let liveCaptionEnabled = false;
+        let captionWs = null;
+        let audioCtx = null;
+        let sourceNode = null;
+        let processor = null;
+        const liveCaptionLayer = document.getElementById('jellyfinLiveCaptionLayer');
+        const liveCaptionBtn = document.getElementById('jellyfinLiveCaptionBtn');
         
         // Extract item_id and api_key from play_url if available
         let extractedItemId = itemId;
@@ -517,8 +587,163 @@
             }
         }
         
+        // Live caption helpers - 完全按照 video_player.html 的实现
+        function updateLiveCaptionLayer(text) {
+            if (liveCaptionLayer) {
+                liveCaptionLayer.textContent = text || '';
+            }
+        }
+
+        function floatTo16BitPCM(float32Array) {
+            const buffer = new ArrayBuffer(float32Array.length * 2);
+            const view = new DataView(buffer);
+            let offset = 0;
+            for (let i = 0; i < float32Array.length; i++, offset += 2) {
+                let s = Math.max(-1, Math.min(1, float32Array[i]));
+                view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+            }
+            return buffer;
+        }
+
+        // 获取 Jellyfin 播放器的实际 video 元素
+        function getJellyfinVideoElement() {
+            if (player && typeof player.el === 'function') {
+                const el = player.el().querySelector('video');
+                if (el) return el;
+            }
+            return document.getElementById('jellyfin-player_html5_api') || document.getElementById('jellyfin-player');
+        }
+
+        function startLiveCaption() {
+            if (liveCaptionEnabled) return;
+
+            const videoEl = getJellyfinVideoElement();
+            if (!videoEl) {
+                console.warn('未找到 Jellyfin 播放元素，无法开启实时字幕');
+                return;
+            }
+
+            liveCaptionEnabled = true;
+
+            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+
+            if (!audioCtx) {
+                audioCtx = new AudioContextClass({ sampleRate: 16000 });
+            } else if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+
+            if (!sourceNode) {
+                try {
+                    sourceNode = audioCtx.createMediaElementSource(videoEl);
+                } catch (e) {
+                    console.error('无法从视频元素创建音频源:', e);
+                    liveCaptionEnabled = false;
+                    return;
+                }
+            }
+
+            const bufferSize = 4096;
+            if (!processor) {
+                processor = audioCtx.createScriptProcessor(bufferSize, 2, 1);
+                processor.connect(audioCtx.destination);
+            }
+            // 确保音频既送往监听节点又送往扬声器
+            try { sourceNode.connect(processor); } catch (e) {}
+            try { sourceNode.connect(audioCtx.destination); } catch (e) {}
+
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+            const hostPart = fwhHost || window.location.hostname;
+            const portPart = fwhPort ? `:${fwhPort}` : (window.location.port ? `:${window.location.port}` : ':8001');
+            const wsUrl = `${wsProtocol}://${hostPart}${portPart}/ws/realtime`;
+            captionWs = new WebSocket(wsUrl);
+
+            captionWs.onopen = function () {
+                try {
+                    captionWs.send(JSON.stringify({
+                        type: 'start',
+                        segmenter: fwhSegmenter || 'vad',
+                        movieId: '{{ movie.video_id or movie.item_id }}',
+                        language: fwhLanguage ? fwhLanguage : undefined,
+                        model: fwhModel || undefined,
+                        prefix_chars: fwhPrefixChars || 0,
+                        sampleRate: audioCtx.sampleRate,
+                        vad_max_window_secs: fwhVadMaxWindow || 15.0,
+                        vad_overlap_secs: fwhVadOverlap || 0.35,
+                        vad_min_silence_secs: fwhVadMinSilence || 0.4,
+                        vad_min_speech_secs: fwhVadMinSpeech || 0.6,
+                        vad_frame_secs: fwhVadFrame || 0.03,
+                        vad_energy_threshold: fwhVadEnergy || 0.001,
+                        dedup_overlaps: true,
+                        drop_overlap: true
+                    }));
+                } catch (e) {
+                    console.error('Failed to send start message:', e);
+                }
+            };
+
+            captionWs.onmessage = function (event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'transcript') {
+                        updateLiveCaptionLayer(data.text || '');
+                    }
+                } catch (e) {
+                    console.error('Transcription WS parse error:', e);
+                }
+            };
+
+            captionWs.onerror = function (e) {
+                console.error('Transcription WS error:', e);
+            };
+
+            captionWs.onclose = function () {
+                console.log('Transcription WS closed');
+            };
+
+            processor.onaudioprocess = function (e) {
+                if (!liveCaptionEnabled) return;
+                if (!captionWs || captionWs.readyState !== WebSocket.OPEN) return;
+
+                const inputBuffer = e.inputBuffer;
+                const channelData = inputBuffer.getChannelData(0);
+                const pcmBuffer = floatTo16BitPCM(channelData);
+
+                try {
+                    captionWs.send(pcmBuffer);
+                } catch (err) {
+                    console.error('Failed to send audio chunk:', err);
+                }
+            };
+        }
+
+        function stopLiveCaption() {
+            liveCaptionEnabled = false;
+
+            // 仅停止转录回调与 WebSocket，不再拆掉音频图或关闭 AudioContext，
+            // 以避免影响播放器本身的音频输出。
+            if (captionWs) {
+                try {
+                    captionWs.send(JSON.stringify({ type: 'stop' }));
+                } catch (e) {}
+                try {
+                    captionWs.close();
+                } catch (e) {}
+                captionWs = null;
+            }
+            updateLiveCaptionLayer('');
+        }
+        
         // Initialize video player
         function initializePlayer(src, type, autoStart) {
+            if (liveCaptionEnabled) {
+                stopLiveCaption();
+                if (liveCaptionBtn) {
+                    liveCaptionBtn.classList.remove('active');
+                }
+            }
+            // 注意：不在这里断开 audioCtx 连接，避免影响播放器音频
+            // 只在停止实时字幕时清理 WebSocket 连接
             // If player already exists, dispose it
             if (player) {
                 player.dispose();
@@ -784,6 +1009,7 @@
         async function setupTranscodedStream() {
             isTranscodingEnabled = true;
             showLoading('正在准备转码流...');
+            const videoElement = resolveJellyfinVideoElement();
             
             try {
                 const streamUrl = await getTranscodedStreamUrl();
@@ -949,6 +1175,19 @@
         directPlayBtn.addEventListener('click', function() {
             setupDirectPlay();
         });
+
+        // 实时字幕按钮事件处理
+        if (liveCaptionBtn) {
+            liveCaptionBtn.addEventListener('click', function() {
+                if (!liveCaptionEnabled) {
+                    startLiveCaption();
+                    liveCaptionBtn.classList.add('active');
+                } else {
+                    stopLiveCaption();
+                    liveCaptionBtn.classList.remove('active');
+                }
+            });
+        }
         
         // Start initialization
         initialize();

@@ -20,9 +20,11 @@ var/
 .installed.cfg
 *.egg
 115/
-115server/
 nextbus/
 external/
+
+# Faster Whisper Service
+faster_whisper_service/
 
 # Environment variables
 .env
@@ -48,3 +50,4 @@ cmd.txt
 .vscode/
 *.swp
 *.swo 
+AGENTS.md

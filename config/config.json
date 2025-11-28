@@ -10,7 +10,7 @@
       "url_cache_seconds": 300,
       "username": ""
     },
-    "auth_mode": "driver",
+    "auth_mode": "auto",
     "default_folder_id": "",
     "driver": {
       "api_urls": [
@@ -43,10 +43,9 @@
       "gop_size": 120,
       "hls_flags": "append_list+omit_endlist",
       "hls_list_size": 0,
-      "hls_mode": "",
+      "hls_mode": "streaming",
       "max_concurrent_tasks": 2,
       "maxrate": "6000k",
-      "playlist_size": 0,
       "probe_enabled": true,
       "probe_timeout": 15,
       "qsv_device": "/dev/dri/renderD128",
@@ -71,19 +70,20 @@
         "mpeg",
         "mpg",
         "mov",
+        "mkv",
         "webm"
       ],
-      "use_hwaccel": false,
+      "use_hwaccel": true,
       "video_bitrate": "5000k",
       "video_encoder": "h264_qsv",
       "video_encoder_sw": "libx264",
       "work_dir": "data/transcode",
-      "x264_preset": "medium"
+      "x264_preset": ""
     }
   },
   "javbus": {
     "allow_external_fallback": false,
-    "external_api_url": "http://192.168.1.246:8922/api",
+    "external_api_url": "",
     "internal": {
       "allow_external_fallback": false,
       "cache_ttl_seconds": 3600,
@@ -113,10 +113,30 @@
     },
     "username": ""
   },
+  "transcription": {
+    "api_base_url": "http://192.168.1.133:8001/v1",
+    "api_key": "cant-be-empty",
+    "chunk_secs": 3,
+    "compression_ratio_threshold": 0,
+    "enabled": true,
+    "language": "ja",
+    "model": "RoachLin/kotoba-whisper-v2.2-faster",
+    "overlap_secs": 0.5,
+    "prefix_chars": 0,
+    "provider": "fwhisper",
+    "segmenter": "vad",
+    "timeout": 15,
+    "vad_energy_threshold": 0.0004,
+    "vad_frame_secs": 0.02,
+    "vad_max_window_secs": 6,
+    "vad_min_silence_secs": 0.25,
+    "vad_min_speech_secs": 0.3,
+    "vad_overlap_secs": 0.35
+  },
   "translation": {
     "api_token": "",
-    "api_url": "https://api.siliconflow.cn/v1/chat/completions",
-    "model": "THUDM/glm-4-9b-chat",
+    "api_url": "http://192.168.1.133:11434/api/generate",
+    "model": "crosery/sakura-14b-qwen2.5-v1.0-q6k:latest",
     "source_lang": "日语",
     "target_lang": "中文"
   },

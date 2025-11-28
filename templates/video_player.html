@@ -200,6 +200,49 @@
         background: #000;
     }
 
+    .live-caption-layer {
+        position: absolute;
+        left: 50%;
+        bottom: 12%;
+        transform: translateX(-50%);
+        max-width: 80%;
+        text-align: center;
+        color: #fff;
+        text-shadow: 0 0 4px rgba(0,0,0,0.8);
+        font-size: 1.1rem;
+        padding: 4px 10px;
+        background: rgba(0, 0, 0, 0.35);
+        border-radius: 4px;
+        pointer-events: none;
+        white-space: pre-wrap;
+    }
+
+    .live-caption-toggle {
+        position: absolute;
+        left: 12px;
+        bottom: 50px;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 8px;
+        border: none;
+        border-radius: 6px;
+        color: #fff;
+        background: rgba(0, 0, 0, 0.55);
+        cursor: pointer;
+        z-index: 10000;
+        transition: background 0.2s, opacity 0.2s;
+        font-size: 0.75rem;
+    }
+
+    .live-caption-toggle:hover {
+        background: rgba(0, 0, 0, 0.7);
+    }
+
+    .live-caption-toggle.active {
+        background: rgba(0, 123, 255, 0.9);
+    }
+
     .controls-container {
         display: none;
     }
@@ -371,6 +414,15 @@
                                 {% endif %}
                                 Your browser does not support the video tag.
                             </video>
+                            <button id="toggleLiveCaptionBtn" class="live-caption-toggle" type="button" title="开启/关闭实时字幕">
+                                <i class="bi bi-cc-square" style="font-size: 0.9rem;"></i>
+                                <span>实时字幕</span>
+                            </button>
+                            <button id="toggleTranslationBtn" class="live-caption-toggle" type="button" title="显示/隐藏译文" disabled style="bottom: 86px;">
+                                <i class="bi bi-translate" style="font-size: 0.9rem;"></i>
+                                <span>译文</span>
+                            </button>
+                            <div id="liveCaptionLayer" class="live-caption-layer"></div>
                         </div>
 
                         <div id="debugInfo">
@@ -642,5 +694,243 @@
             updateVideoStatus('<i class="bi bi-exclamation-circle"></i> 未找到可用的播放源', 'warning');
         }
     });
+</script>
+
+<script>
+    (function () {
+        const fwhHost = "{{ fwh_ws_host or '' }}";
+        const fwhPort = "{{ fwh_ws_port or '' }}";
+        const fwhLanguage = "{{ fwh_language or '' }}";
+        const fwhModel = "{{ fwh_model or '' }}";
+        const fwhChunkSecs = {{ fwh_chunk_secs|default(4.0) }};
+        const fwhOverlapSecs = {{ fwh_overlap_secs|default(0.7) }};
+        const fwhPrefixChars = {{ fwh_prefix_chars|default(0) }};
+        const fwhSegmenter = "{{ fwh_segmenter or 'vad' }}";
+        const fwhVadMaxWindow = {{ fwh_vad_max_window|default(15.0) }};
+        const fwhVadOverlap = {{ fwh_vad_overlap|default(0.35) }};
+        const fwhVadMinSilence = {{ fwh_vad_min_silence|default(0.4) }};
+        const fwhVadMinSpeech = {{ fwh_vad_min_speech|default(0.6) }};
+        const fwhVadFrame = {{ fwh_vad_frame|default(0.03) }};
+        const fwhVadEnergy = {{ fwh_vad_energy|default(0.001) }};
+
+        let audioCtx = null;
+        let sourceNode = null;
+        let processor = null;
+        let ws = null;
+        let liveCaptionEnabled = false;
+        let captionClearTimer = null;
+        let seekRestartTimer = null;
+        let showTranslation = false;
+        let lastCaptionBase = '';
+        let lastCaptionTranslated = '';
+
+        function floatTo16BitPCM(float32Array) {
+            const buffer = new ArrayBuffer(float32Array.length * 2);
+            const view = new DataView(buffer);
+            let offset = 0;
+            for (let i = 0; i < float32Array.length; i++, offset += 2) {
+                let s = Math.max(-1, Math.min(1, float32Array[i]));
+                view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+            }
+            return buffer;
+        }
+
+        function updateCaptionLayer(text) {
+            const layer = document.getElementById('liveCaptionLayer');
+            if (!layer) return;
+            layer.textContent = text || '';
+        }
+
+        function renderCaption() {
+            const baseText = lastCaptionBase || '';
+            const translated = lastCaptionTranslated || '';
+            const merged = (showTranslation && translated) ? `${baseText}\n${translated}` : baseText;
+            updateCaptionLayer(merged);
+        }
+
+          function startLiveCaption(video, withTranslation = false) {
+              if (liveCaptionEnabled) return;
+              liveCaptionEnabled = true;
+
+              const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+
+              if (!audioCtx) {
+                  audioCtx = new AudioContextClass({ sampleRate: 16000 });
+              } else if (audioCtx.state === 'suspended') {
+                  audioCtx.resume();
+              }
+
+              if (!sourceNode) {
+                  try {
+                      sourceNode = audioCtx.createMediaElementSource(video);
+                  } catch (e) {
+                      console.error('无法从视频元素创建音频源:', e);
+                      liveCaptionEnabled = false;
+                      return;
+                  }
+              }
+
+              const bufferSize = 4096;
+              if (!processor) {
+                  processor = audioCtx.createScriptProcessor(bufferSize, 2, 1);
+                  processor.connect(audioCtx.destination);
+              }
+              // 确保音频既送往监听节点又送往扬声器
+              try { sourceNode.connect(processor); } catch (e) {}
+              try { sourceNode.connect(audioCtx.destination); } catch (e) {}
+
+              const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+              const wsUrl = `${wsProtocol}://${window.location.host}/ws/caption`;
+              ws = new WebSocket(wsUrl);
+
+              ws.onopen = function () {
+                  try {
+                      ws.send(JSON.stringify({
+                          type: 'start',
+                          translate: !!withTranslation,
+                          segmenter: fwhSegmenter || 'vad',
+                          movieId: '{{ movie_id }}',
+                          language: fwhLanguage ? fwhLanguage : undefined,
+                          model: fwhModel || undefined,
+                          prefix_chars: fwhPrefixChars || 0,
+                          sampleRate: audioCtx.sampleRate,
+                          vad_max_window_secs: fwhVadMaxWindow || 15.0,
+                          vad_overlap_secs: fwhVadOverlap || 0.35,
+                          vad_min_silence_secs: fwhVadMinSilence || 0.4,
+                          vad_min_speech_secs: fwhVadMinSpeech || 0.6,
+                          vad_frame_secs: fwhVadFrame || 0.03,
+                          vad_energy_threshold: fwhVadEnergy || 0.001,
+                          dedup_overlaps: true,
+                          drop_overlap: true
+                      }));
+                  } catch (e) {
+                      console.error('Failed to send start message:', e);
+                  }
+              };
+
+              ws.onmessage = function (event) {
+                  try {
+                      const data = JSON.parse(event.data);
+                      if (data.type === 'transcript') {
+                          if (captionClearTimer) {
+                              clearTimeout(captionClearTimer);
+                              captionClearTimer = null;
+                          }
+                          lastCaptionBase = data.text || '';
+                          lastCaptionTranslated = data.translated_text || '';
+                          renderCaption();
+                          captionClearTimer = setTimeout(function () {
+                              lastCaptionBase = '';
+                              lastCaptionTranslated = '';
+                              updateCaptionLayer('');
+                          }, 5000);
+                      }
+                  } catch (e) {
+                      console.error('Transcription WS parse error:', e);
+                  }
+              };
+
+              ws.onerror = function (e) {
+                  console.error('Transcription WS error:', e);
+              };
+
+              ws.onclose = function () {
+                  console.log('Transcription WS closed');
+              };
+
+              processor.onaudioprocess = function (e) {
+                  if (!liveCaptionEnabled) return;
+                  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+                  const inputBuffer = e.inputBuffer;
+                  const channelData = inputBuffer.getChannelData(0);
+                  const pcmBuffer = floatTo16BitPCM(channelData);
+
+                  try {
+                      ws.send(pcmBuffer);
+                  } catch (err) {
+                      console.error('Failed to send audio chunk:', err);
+                  }
+              };
+          }
+
+          function stopLiveCaption() {
+              liveCaptionEnabled = false;
+
+              // 仅停止转录回调与 WebSocket，不再拆掉音频图或关闭 AudioContext，
+              // 以避免影响播放器本身的音频输出。
+              if (ws) {
+                  try {
+                      ws.send(JSON.stringify({ type: 'stop' }));
+                  } catch (e) {}
+                  try {
+                      ws.close();
+                  } catch (e) {}
+                  ws = null;
+              }
+              if (captionClearTimer) {
+                  clearTimeout(captionClearTimer);
+                  captionClearTimer = null;
+              }
+              lastCaptionBase = '';
+              lastCaptionTranslated = '';
+              renderCaption();
+              updateCaptionLayer('');
+          }
+
+          function restartLiveCaption(video) {
+              if (!liveCaptionEnabled) return;
+              stopLiveCaption();
+              startLiveCaption(video, showTranslation);
+          }
+
+        document.addEventListener('DOMContentLoaded', function () {
+            const video = document.getElementById('videoPlayer');
+            const btn = document.getElementById('toggleLiveCaptionBtn');
+            const translateBtn = document.getElementById('toggleTranslationBtn');
+            if (!video || !btn) {
+                return;
+            }
+
+            video.addEventListener('seeked', function () {
+                if (!liveCaptionEnabled) return;
+                if (seekRestartTimer) {
+                    clearTimeout(seekRestartTimer);
+                }
+                seekRestartTimer = setTimeout(function () {
+                    restartLiveCaption(video);
+                }, 150);
+            });
+
+            btn.addEventListener('click', function () {
+                if (!liveCaptionEnabled) {
+                    startLiveCaption(video, showTranslation);
+                    btn.classList.add('active');
+                    if (translateBtn) translateBtn.disabled = false;
+                } else {
+                    stopLiveCaption();
+                    btn.classList.remove('active');
+                    if (translateBtn) {
+                        translateBtn.disabled = true;
+                        translateBtn.classList.remove('active');
+                    }
+                    showTranslation = false;
+                }
+            });
+
+            if (translateBtn) {
+                translateBtn.addEventListener('click', function () {
+                    if (!liveCaptionEnabled) return;
+                    showTranslation = !showTranslation;
+                    if (showTranslation) {
+                        translateBtn.classList.add('active');
+                    } else {
+                        translateBtn.classList.remove('active');
+                    }
+                    restartLiveCaption(video);
+                });
+            }
+        });
+    })();
 </script>
 {% endblock %}

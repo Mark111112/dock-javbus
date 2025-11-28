@@ -1,6 +1,8 @@
 import json
 import os
 import requests
+import time
+from urllib.parse import urlparse
 
 # 配置文件路径，与主应用保持一致
 CONFIG_FILE = "config/config.json"
@@ -10,10 +12,12 @@ class Translator:
     
     def __init__(self):
         # 加载配置
+        self._config_mtime = 0.0
         self.load_config()
         # 替换PyQt信号的回调函数
         self.translation_ready_callback = None
         self.translation_error_callback = None
+        self._warned_token = False
     
     def register_callbacks(self, translation_ready_callback=None, translation_error_callback=None):
         """注册回调函数代替PyQt信号"""
@@ -30,6 +34,7 @@ class Translator:
         
         try:
             if os.path.exists(CONFIG_FILE):
+                self._config_mtime = os.path.getmtime(CONFIG_FILE)
                 with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                     config = json.load(f)
                     # 从配置文件中获取翻译相关设置
@@ -42,6 +47,39 @@ class Translator:
                     print(f"已加载翻译配置")
         except Exception as e:
             print(f"加载翻译配置失败: {str(e)}")
+
+    def _maybe_reload_config(self):
+        """仅在配置文件有更新时重新加载，避免高频读盘。"""
+        try:
+            if not os.path.exists(CONFIG_FILE):
+                return
+            mtime = os.path.getmtime(CONFIG_FILE)
+            if mtime > (self._config_mtime or 0):
+                self.load_config()
+        except Exception:
+            # 静默失败，保持旧配置继续工作
+            pass
+
+    def _is_ollama(self, api_url: str) -> bool:
+        """根据 URL 判定是否本地/私网 Ollama，允许空 token。"""
+        if not api_url:
+            return False
+        url = urlparse(api_url)
+        host = url.hostname or ""
+        port = url.port or ""
+        netloc = url.netloc
+        lowered = api_url.lower()
+
+        if "ollama" in lowered:
+            return True
+        if str(port) == "11434":
+            return True
+        # 私网/本地网段也放行
+        if host.startswith(("127.", "localhost", "10.", "192.168.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.")):
+            return True
+        if "11434" in netloc:
+            return True
+        return False
     
     def save_config(self, api_url, source_lang, target_lang, api_token, model):
         """保存翻译配置到配置文件"""
@@ -147,11 +185,14 @@ class Translator:
                 self.translation_ready_callback(movie_id, text, "")
             return ""
             
-        # 检查API Token - 本地Ollama可以不需要token
-        is_ollama = "localhost:11434" in self.api_url or "192.168.1.133:11434" in self.api_url
+        self._maybe_reload_config()
+
+        # 检查API Token - 本地/私网 Ollama 可以不需要 token
+        is_ollama = self._is_ollama(self.api_url)
         if not self.api_token and not is_ollama:
-            if self.translation_error_callback:
+            if not self._warned_token and self.translation_error_callback:
                 self.translation_error_callback(movie_id, "翻译API Token未设置，请在设置中配置")
+                self._warned_token = True
             return None
             
         try:
@@ -278,10 +319,14 @@ class Translator:
         if not text or not text.strip():
             return ""
             
-        # 检查API Token - 本地Ollama可以不需要token
-        is_ollama = "localhost:11434" in self.api_url or "192.168.1.133:11434" in self.api_url
+        self._maybe_reload_config()
+
+        # 检查API Token - 本地/私网 Ollama 可以不需要 token
+        is_ollama = self._is_ollama(self.api_url)
         if not self.api_token and not is_ollama:
-            print("翻译API Token未设置，请在设置中配置")
+            if not self._warned_token:
+                print("翻译API Token未设置，请在设置中配置")
+                self._warned_token = True
             return ""
             
         try:

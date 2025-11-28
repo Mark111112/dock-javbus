@@ -41,6 +41,24 @@
         background-color: #000;
         object-fit: contain;
     }
+
+    .live-caption-layer {
+        position: absolute;
+        left: 50%;
+        bottom: 12%;
+        transform: translateX(-50%);
+        max-width: 80%;
+        text-align: center;
+        color: #fff;
+        text-shadow: 0 0 4px rgba(0,0,0,0.8);
+        font-size: 1.1rem;
+        padding: 4px 10px;
+        background: rgba(0, 0, 0, 0.35);
+        border-radius: 4px;
+        pointer-events: none;
+        z-index: 9999;
+        white-space: pre-wrap;
+    }
     
     /* 隐藏原生控件的进度条（仅在使用转码流时） */
     #direct115Player.custom-progress-bar::-webkit-media-controls-timeline,
@@ -751,6 +769,7 @@
                                             要查看此视频，请启用JavaScript并使用支持HTML5视频的浏览器
                                         </p>
                                     </video>
+                                    <div id="liveCaptionLayerDirect" class="live-caption-layer"></div>
                                     <!-- 自定义进度条和控制条（仅在使用转码流时显示） -->
                                     <div id="customProgressContainer" class="custom-progress-container" style="display: none;">
                                         <div class="custom-controls-left">
@@ -795,6 +814,8 @@
                                             要查看此视频，请启用JavaScript并使用支持HTML5视频的浏览器
                                         </p>
                                     </video>
+
+                                    <div id="liveCaptionLayer" class="live-caption-layer"></div>
 
                                     <div id="loading-overlay" class="loading-overlay">
                                         <div class="spinner-border text-light mb-3" role="status">
@@ -850,6 +871,14 @@
                                     <button id="stop-transcode-btn" class="btn btn-sm btn-outline-danger" style="display:none;">停止转码</button>
                                     <a id="open-transcode-admin-btn" href="/cloud115/transcode/tasks" class="btn btn-sm btn-outline-secondary" target="_blank">转码管理</a>
                                 </div>
+                                <div class="btn-group ms-auto" role="group" aria-label="字幕控制">
+                                    <button id="liveCaptionToggleBtn" class="btn btn-sm btn-outline-secondary" type="button">
+                                        <i class="fas fa-closed-captioning"></i> 实时字幕
+                                    </button>
+                                    <button id="translationToggleBtn" class="btn btn-sm btn-outline-secondary" type="button" disabled>
+                                        <i class="fas fa-language"></i> 译文
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -900,6 +929,20 @@
 
 {% block scripts %}
 <script>
+    window.fwhisperWsHost = "{{ fwh_ws_host or '' }}";
+    window.fwhisperWsPort = "{{ fwh_ws_port or '' }}";
+    window.fwhisperModel = "{{ fwh_model or '' }}";
+    window.fwhisperLanguage = "{{ fwh_language or '' }}";
+    window.fwhisperChunkSecs = {{ fwh_chunk_secs|default(4.0) }};
+    window.fwhisperOverlapSecs = {{ fwh_overlap_secs|default(0.7) }};
+    window.fwhisperPrefixChars = {{ fwh_prefix_chars|default(0) }};
+    window.fwhisperSegmenter = "{{ fwh_segmenter or 'vad' }}";
+    window.fwhisperVadMaxWindow = {{ fwh_vad_max_window|default(15.0) }};
+    window.fwhisperVadOverlap = {{ fwh_vad_overlap|default(0.35) }};
+    window.fwhisperVadMinSilence = {{ fwh_vad_min_silence|default(0.4) }};
+    window.fwhisperVadMinSpeech = {{ fwh_vad_min_speech|default(0.6) }};
+    window.fwhisperVadFrame = {{ fwh_vad_frame|default(0.03) }};
+    window.fwhisperVadEnergy = {{ fwh_vad_energy|default(0.001) }};
     document.addEventListener('DOMContentLoaded', function() {
         const fileId = {{ file_id | tojson }};
         const alistEnabled = {{ alist_enabled | tojson }};
@@ -2860,5 +2903,312 @@
     document.addEventListener('visibilitychange', function() {
         try { console.debug(`[Transcode] visibilitychange: hidden=${document.hidden}, state=${document.visibilityState}`); } catch (e) {}
     });
+
+    // -----------------------
+    // 实时字幕：根据当前播放模式从对应 video 抓取音频并推送到后端
+    // -----------------------
+     (function () {
+        const TARGET_SAMPLE_RATE = 16000;
+        const BUFFER_SIZE = 4096;
+
+        let audioCtx = null;
+        let sourceNode = null;
+        let processor = null;
+        let ws = null;
+        let liveCaptionEnabled = false;
+        let currentCaptionLayer = null;
+        let currentVideo = null;
+        let silentGain = null;
+        let captionClearTimer = null;
+        let seekRestartTimer = null;
+        let showTranslation = false;
+        let lastCaptionBase = '';
+        let lastCaptionTranslated = '';
+
+        function floatTo16BitPCM(float32Array) {
+            const buffer = new ArrayBuffer(float32Array.length * 2);
+            const view = new DataView(buffer);
+            let offset = 0;
+            for (let i = 0; i < float32Array.length; i++, offset += 2) {
+                const s = Math.max(-1, Math.min(1, float32Array[i]));
+                view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+            }
+            return buffer;
+        }
+
+        function downsampleBuffer(buffer, inputSampleRate) {
+            if (inputSampleRate === TARGET_SAMPLE_RATE) return buffer;
+            if (inputSampleRate < TARGET_SAMPLE_RATE) return buffer;
+
+            const sampleRateRatio = inputSampleRate / TARGET_SAMPLE_RATE;
+            const newLength = Math.round(buffer.length / sampleRateRatio);
+            const result = new Float32Array(newLength);
+            let offsetResult = 0;
+            let offsetBuffer = 0;
+
+            while (offsetResult < result.length) {
+                const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
+                let accum = 0;
+                let count = 0;
+                for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
+                    accum += buffer[i];
+                    count++;
+                }
+                result[offsetResult] = count > 0 ? accum / count : 0;
+                offsetResult++;
+                offsetBuffer = nextOffsetBuffer;
+            }
+
+            return result;
+        }
+
+        function getActivePlayerAndLayer() {
+            let mode = 'cloud115';
+            const alistSection = document.getElementById('alistSection');
+            const directSection = document.getElementById('direct115Section');
+            const cloud115Section = document.getElementById('cloud115Section');
+
+            if (directSection && directSection.classList.contains('active')) {
+                mode = 'direct';
+            } else if (alistSection && alistSection.classList.contains('active')) {
+                mode = 'alist';
+            } else if (cloud115Section && cloud115Section.classList.contains('active')) {
+                mode = 'cloud115';
+            }
+
+            let video = null;
+            let layer = null;
+
+            if (mode === 'alist') {
+                video = document.getElementById('alistPlayer');
+                layer = document.getElementById('liveCaptionLayer');
+            } else if (mode === 'direct') {
+                video = document.getElementById('direct115Player');
+                layer = document.getElementById('liveCaptionLayerDirect');
+            } else {
+                video = document.getElementById('player115');
+                layer = document.getElementById('liveCaptionLayer');
+            }
+
+            return { video, layer };
+        }
+
+        function updateCaptionLayer(text) {
+            const layer = currentCaptionLayer || document.getElementById('liveCaptionLayer');
+            if (!layer) return;
+            layer.textContent = text || '';
+        }
+
+        function renderCaption() {
+            const baseText = lastCaptionBase || '';
+            const translated = lastCaptionTranslated || '';
+            const merged = (showTranslation && translated) ? `${baseText}\n${translated}` : baseText;
+            updateCaptionLayer(merged);
+        }
+
+        function ensureAudioNodes(video) {
+            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+            if (!audioCtx) {
+                audioCtx = new AudioContextClass({ sampleRate: TARGET_SAMPLE_RATE });
+            } else if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+
+            const needRebind = currentVideo !== video || !sourceNode || !processor;
+            if (!needRebind) return;
+
+            try { sourceNode?.disconnect(); } catch (e) {}
+            try { processor?.disconnect(); } catch (e) {}
+            try { silentGain?.disconnect(); } catch (e) {}
+
+            currentVideo = video;
+            sourceNode = audioCtx.createMediaElementSource(video);
+            sourceNode.connect(audioCtx.destination);
+
+            // 使用 1 个静音输出通道让 onaudioprocess 保持触发
+            processor = audioCtx.createScriptProcessor(BUFFER_SIZE, 2, 1);
+            silentGain = audioCtx.createGain();
+            silentGain.gain.value = 0;
+            processor.connect(silentGain);
+            silentGain.connect(audioCtx.destination);
+            sourceNode.connect(processor);
+        }
+
+        function startLiveCaption(withTranslation = false) {
+            if (liveCaptionEnabled) return;
+
+            const active = getActivePlayerAndLayer();
+            const video = active.video;
+            currentCaptionLayer = active.layer;
+
+            if (!video) {
+                console.warn('???????????????????????');
+                return;
+            }
+
+            liveCaptionEnabled = true;
+
+            try {
+                ensureAudioNodes(video);
+            } catch (e) {
+                console.error('????????????:', e);
+                liveCaptionEnabled = false;
+                return;
+            }
+
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+            const wsUrl = wsProtocol + window.location.host + '/ws/caption';
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = function () {
+                try {
+                    ws.send(JSON.stringify({
+                        type: 'start',
+                        translate: !!withTranslation,
+                        segmenter: window.fwhisperSegmenter || 'vad',
+                        movieId: '{{ file_info.get("title") if file_info else file_id }}',
+                        language: window.fwhisperLanguage ? window.fwhisperLanguage : undefined,
+                        model: window.fwhisperModel || undefined,
+                        prefix_chars: window.fwhisperPrefixChars || 0,
+                        sampleRate: TARGET_SAMPLE_RATE,
+                        vad_max_window_secs: window.fwhisperVadMaxWindow || 15.0,
+                        vad_overlap_secs: window.fwhisperVadOverlap || 0.35,
+                        vad_min_silence_secs: window.fwhisperVadMinSilence || 0.4,
+                        vad_min_speech_secs: window.fwhisperVadMinSpeech || 0.6,
+                        vad_frame_secs: window.fwhisperVadFrame || 0.03,
+                        vad_energy_threshold: window.fwhisperVadEnergy || 0.001,
+                        dedup_overlaps: true,
+                        drop_overlap: true
+                    }));
+                } catch (e) {
+                    console.error('Failed to send start message:', e);
+                }
+            };
+
+            ws.onmessage = function (event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'transcript') {
+                        if (captionClearTimer) {
+                            clearTimeout(captionClearTimer);
+                            captionClearTimer = null;
+                        }
+                        lastCaptionBase = data.text || '';
+                        lastCaptionTranslated = data.translated_text || '';
+                        renderCaption();
+                        captionClearTimer = setTimeout(function () {
+                            lastCaptionBase = '';
+                            lastCaptionTranslated = '';
+                            updateCaptionLayer('');
+                        }, 5000);
+                    }
+                } catch (e) {
+                    console.error('Transcription WS parse error:', e);
+                }
+            };
+
+            ws.onerror = function (e) {
+                console.error('Transcription WS error:', e);
+            };
+
+            ws.onclose = function () {
+                console.log('Transcription WS closed');
+            };
+
+            processor.onaudioprocess = function (e) {
+                if (!liveCaptionEnabled) return;
+                if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+                const inputBuffer = e.inputBuffer;
+                const sourceData = inputBuffer.getChannelData(0);
+                const downsampled = downsampleBuffer(sourceData, audioCtx.sampleRate);
+                const pcmBuffer = floatTo16BitPCM(downsampled);
+
+                try {
+                    ws.send(pcmBuffer);
+                } catch (err) {
+                    console.error('Failed to send audio chunk:', err);
+                }
+            };
+        }
+
+        function stopLiveCaption() {
+            liveCaptionEnabled = false;
+
+            if (ws) {
+                try { ws.send(JSON.stringify({ type: 'stop' })); } catch (e) {}
+                try { ws.close(); } catch (e) {}
+                ws = null;
+            }
+            if (captionClearTimer) {
+                clearTimeout(captionClearTimer);
+                captionClearTimer = null;
+            }
+            lastCaptionBase = '';
+            lastCaptionTranslated = '';
+            renderCaption();
+            updateCaptionLayer('');
+        }
+
+        function restartLiveCaption() {
+            if (!liveCaptionEnabled) return;
+            stopLiveCaption();
+            startLiveCaption(showTranslation);
+        }
+
+        function bindSeekRestart() {
+            const playerIds = ['player115', 'direct115Player', 'alistPlayer'];
+            playerIds.forEach(id => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                el.addEventListener('seeked', function () {
+                    if (!liveCaptionEnabled) return;
+                    if (seekRestartTimer) {
+                        clearTimeout(seekRestartTimer);
+                    }
+                    seekRestartTimer = setTimeout(function () {
+                        restartLiveCaption();
+                    }, 150);
+                });
+            });
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+            const btn = document.getElementById('liveCaptionToggleBtn');
+            const translateBtn = document.getElementById('translationToggleBtn');
+            if (!btn) return;
+
+            bindSeekRestart();
+
+            btn.addEventListener('click', function () {
+                if (!liveCaptionEnabled) {
+                    startLiveCaption(showTranslation);
+                    btn.classList.add('btn-success');
+                    if (translateBtn) translateBtn.disabled = false;
+                } else {
+                    stopLiveCaption();
+                    btn.classList.remove('btn-success');
+                    if (translateBtn) {
+                        translateBtn.disabled = true;
+                        translateBtn.classList.remove('btn-success');
+                    }
+                    showTranslation = false;
+                }
+            });
+
+            if (translateBtn) {
+                translateBtn.addEventListener('click', function () {
+                    if (!liveCaptionEnabled) return;
+                    showTranslation = !showTranslation;
+                    if (showTranslation) {
+                        translateBtn.classList.add('btn-success');
+                    } else {
+                        translateBtn.classList.remove('btn-success');
+                    }
+                    restartLiveCaption();
+                });
+            }
+        });
+    })();
 </script>
 {% endblock %} 

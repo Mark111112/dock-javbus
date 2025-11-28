@@ -84,8 +84,8 @@
                         </button>
                     </li>
                     <li class="nav-item" role="presentation">
-                        <button class="nav-link" id="tab-javbus-tab" data-bs-toggle="tab" data-bs-target="#tab-javbus" type="button" role="tab" aria-controls="tab-javbus" aria-selected="false">
-                            JavBus 数据
+                        <button class="nav-link" id="tab-translation-tab" data-bs-toggle="tab" data-bs-target="#tab-translation" type="button" role="tab" aria-controls="tab-translation" aria-selected="false">
+                            翻译与字幕
                         </button>
                     </li>
                     <li class="nav-item" role="presentation">
@@ -108,7 +108,7 @@
                 <div class="tab-content config-tab-content" id="configTabContent">
                     <div class="tab-pane fade show active" id="tab-general" role="tabpanel" aria-labelledby="tab-general-tab">
                         <div class="row g-4 pt-4">
-                            <div class="col-lg-6">
+                            <div class="col-12 col-xl-4">
                                 <div class="p-3 rounded-3 section-card h-100">
                                     <h6 class="fw-bold mb-3">基础设置</h6>
                                     <div class="mb-3">
@@ -125,7 +125,127 @@
                                     </div>
                                 </div>
                             </div>
-                            <div class="col-lg-6">
+                            <div class="col-12 col-xl-8">
+                                <div class="p-3 rounded-3 section-card">
+                                    <h6 class="fw-bold mb-3">JavBus 数据源</h6>
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="选择影片数据来源。Internal 为本地解析模式，External 为调用外部 API。">
+                                            数据模式
+                                        </label>
+                                        <div class="btn-group w-100" role="group" aria-label="JavBus 数据模式">
+                                            <input type="radio" class="btn-check config-input" name="javbus-mode" id="javbus-mode-internal" data-config-path="javbus.mode" value="internal" autocomplete="off">
+                                            <label class="btn btn-outline-primary" for="javbus-mode-internal">Internal</label>
+
+                                            <input type="radio" class="btn-check config-input" name="javbus-mode" id="javbus-mode-external" data-config-path="javbus.mode" value="external" autocomplete="off">
+                                            <label class="btn btn-outline-primary" for="javbus-mode-external">External</label>
+                                        </div>
+                                        <small class="text-muted d-block mt-2">切换为 External 后即可填写外部 API 地址，并启用相关配置。</small>
+                                    </div>
+
+                                    <div class="mb-3 position-relative" data-require-mode-container>
+                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="外部 JavBus API 地址，例如自建的 javbus-api 服务。">
+                                            外部 API 地址
+                                        </label>
+                                        <input type="text" class="form-control config-input" data-config-path="javbus.external_api_url" placeholder="http://127.0.0.1:8922/api" data-require-mode="external">
+                                        <small class="form-text text-muted">此项仅在 External 模式可编辑，若需要调用外部 API，请先切换模式。</small>
+                                    </div>
+
+                                    <div class="row g-3">
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="与 JavBus 服务交互的网络超时时间（秒）。">
+                                                请求超时（秒）
+                                            </label>
+                                            <input type="number" min="1" class="form-control config-input" data-config-path="javbus.timeout">
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="每页返回的影片数量，适用于外部 API 或内部解析分页。">
+                                                每页条数
+                                            </label>
+                                            <input type="number" min="1" class="form-control config-input" data-config-path="javbus.page_size">
+                                        </div>
+                                    </div>
+
+                                    <div class="mt-4" data-mode-section="internal">
+                                        <div class="p-3 bg-white rounded-3 border">
+                                            <h6 class="fw-semibold mb-3">内部模式</h6>
+                                            <div class="mb-3">
+                                                <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="控制是否启用本地抓取逻辑。关闭后将总是使用外部 API。">
+                                                    启用内部解析
+                                                </label>
+                                                <div class="btn-group w-100" role="group" aria-label="内部解析开关">
+                                                    <input type="radio" class="btn-check config-input" name="javbus-internal-enabled" id="javbus-internal-enabled-true" data-config-path="javbus.internal.enabled" data-type="boolean" value="true" autocomplete="off">
+                                                    <label class="btn btn-outline-success" for="javbus-internal-enabled-true">开启</label>
+
+                                                    <input type="radio" class="btn-check config-input" name="javbus-internal-enabled" id="javbus-internal-enabled-false" data-config-path="javbus.internal.enabled" data-type="boolean" value="false" autocomplete="off">
+                                                    <label class="btn btn-outline-danger" for="javbus-internal-enabled-false">关闭</label>
+                                                </div>
+                                            </div>
+
+                                            <div class="row g-3">
+                                                <div class="col-md-6">
+                                                    <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="内部抓取任务并发数量，数值越高越快但同时也更占用资源。">
+                                                        最大并发数
+                                                    </label>
+                                                    <input type="number" min="1" class="form-control config-input" data-config-path="javbus.internal.max_concurrency">
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="内部抓取单个请求的超时时间（秒）。">
+                                                        单次请求超时（秒）
+                                                    </label>
+                                                    <input type="number" min="1" class="form-control config-input" data-config-path="javbus.internal.timeout">
+                                                </div>
+                                            </div>
+
+                                            <div class="row g-3 mt-1">
+                                                <div class="col-md-6">
+                                                    <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="内部缓存有效时间，单位秒。缓存内的影片信息将直接复用，避免重复抓取。">
+                                                        缓存保留时长（秒）
+                                                    </label>
+                                                    <input type="number" min="0" class="form-control config-input" data-config-path="javbus.internal.cache_ttl_seconds">
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="内部模式单页解析数量，适当调低可减轻对目标站点压力。">
+                                                        内部分页大小
+                                                    </label>
+                                                    <input type="number" min="1" class="form-control config-input" data-config-path="javbus.internal.page_size">
+                                                </div>
+                                            </div>
+
+                                            <div class="mt-3">
+                                                <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="当内部模式遇到缺页或异常时是否允许自动回退到外部 API。">
+                                                    异常时回退外部 API
+                                                </label>
+                                                <div class="btn-group w-100" role="group" aria-label="内部回退外部 API">
+                                                    <input type="radio" class="btn-check config-input" name="javbus-internal-fallback" id="javbus-internal-fallback-true" data-config-path="javbus.internal.allow_external_fallback" data-type="boolean" value="true" autocomplete="off">
+                                                    <label class="btn btn-outline-success" for="javbus-internal-fallback-true">允许</label>
+
+                                                    <input type="radio" class="btn-check config-input" name="javbus-internal-fallback" id="javbus-internal-fallback-false" data-config-path="javbus.internal.allow_external_fallback" data-type="boolean" value="false" autocomplete="off">
+                                                    <label class="btn btn-outline-danger" for="javbus-internal-fallback-false">禁用</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="mt-3">
+                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="内部模式失效时是否允许自动切回外部 API。">
+                                            允许外部回退
+                                        </label>
+                                        <div class="btn-group w-100" role="group" aria-label="允许外部回退">
+                                            <input type="radio" class="btn-check config-input" name="javbus-allow-fallback" id="javbus-allow-fallback-true" data-config-path="javbus.allow_external_fallback" data-type="boolean" value="true" autocomplete="off">
+                                            <label class="btn btn-outline-success" for="javbus-allow-fallback-true">开启</label>
+
+                                            <input type="radio" class="btn-check config-input" name="javbus-allow-fallback" id="javbus-allow-fallback-false" data-config-path="javbus.allow_external_fallback" data-type="boolean" value="false" autocomplete="off">
+                                            <label class="btn btn-outline-danger" for="javbus-allow-fallback-false">关闭</label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="tab-pane fade" id="tab-translation" role="tabpanel" aria-labelledby="tab-translation-tab">
+                        <div class="row g-4 pt-4">
+                            <div class="col-12 col-xl-6">
                                 <div class="p-3 rounded-3 section-card h-100">
                                     <h6 class="fw-bold mb-3">翻译服务</h6>
                                     <div class="mb-3">
@@ -162,121 +282,233 @@
                                     </div>
                                 </div>
                             </div>
-                        </div>
-                    </div>
-
-                    <div class="tab-pane fade" id="tab-javbus" role="tabpanel" aria-labelledby="tab-javbus-tab">
-                        <div class="pt-4">
-                            <div class="p-3 rounded-3 section-card">
-                                <h6 class="fw-bold mb-3">JavBus 数据源</h6>
-                                <div class="mb-3">
-                                    <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="选择影片数据来源。Internal 为本地解析模式，External 为调用外部 API。">
-                                        数据模式
-                                    </label>
-                                    <div class="btn-group w-100" role="group" aria-label="JavBus 数据模式">
-                                        <input type="radio" class="btn-check config-input" name="javbus-mode" id="javbus-mode-internal" data-config-path="javbus.mode" value="internal" autocomplete="off">
-                                        <label class="btn btn-outline-primary" for="javbus-mode-internal">Internal</label>
-
-                                        <input type="radio" class="btn-check config-input" name="javbus-mode" id="javbus-mode-external" data-config-path="javbus.mode" value="external" autocomplete="off">
-                                        <label class="btn btn-outline-primary" for="javbus-mode-external">External</label>
-                                    </div>
-                                    <small class="text-muted d-block mt-2">切换为 External 后即可填写外部 API 地址，并启用相关配置。</small>
-                                </div>
-
-                                <div class="mb-3 position-relative" data-require-mode-container>
-                                    <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="外部 JavBus API 地址，例如自建的 javbus-api 服务。">
-                                        外部 API 地址
-                                    </label>
-                                    <input type="text" class="form-control config-input" data-config-path="javbus.external_api_url" placeholder="http://127.0.0.1:8922/api" data-require-mode="external">
-                                    <small class="form-text text-muted">此项仅在 External 模式可编辑，若需要调用外部 API，请先切换模式。</small>
-                                </div>
-
-                                <div class="row g-3">
-                                    <div class="col-md-6">
-                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="与 JavBus 服务交互的网络超时时间（秒）。">
-                                            请求超时（秒）
+                            <div class="col-12 col-xl-6">
+                                <div class="p-3 rounded-3 section-card h-100">
+                                    <h6 class="fw-bold mb-3">语音转写 / 实时字幕</h6>
+                                    <div class="form-check form-switch mb-3">
+                                        <input class="form-check-input config-input"
+                                               type="checkbox"
+                                               id="transcription-enabled"
+                                               data-config-path="transcription.enabled">
+                                        <label class="form-check-label"
+                                               for="transcription-enabled"
+                                               data-bs-toggle="tooltip"
+                                               data-bs-placement="top"
+                                               title="启用语音转写和实时字幕功能">
+                                            启用语音转写
                                         </label>
-                                        <input type="number" min="1" class="form-control config-input" data-config-path="javbus.timeout">
                                     </div>
-                                    <div class="col-md-6">
-                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="每页返回的影片数量，适用于外部 API 或内部解析分页。">
-                                            每页条数
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="选择 STT 服务提供商：Speaches 使用 OpenAI 兼容接口，Faster-Whisper 使用本地部署服务">
+                                            STT 服务提供商
                                         </label>
-                                        <input type="number" min="1" class="form-control config-input" data-config-path="javbus.page_size">
-                                    </div>
-                                </div>
-
-                                <div class="mt-4" data-mode-section="internal">
-                                    <div class="p-3 bg-white rounded-3 border">
-                                        <h6 class="fw-semibold mb-3">内部模式</h6>
-                                        <div class="mb-3">
-                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="控制是否启用本地抓取逻辑。关闭后将总是使用外部 API。">
-                                                启用内部解析
-                                            </label>
-                                            <div class="btn-group w-100" role="group" aria-label="内部解析开关">
-                                                <input type="radio" class="btn-check config-input" name="javbus-internal-enabled" id="javbus-internal-enabled-true" data-config-path="javbus.internal.enabled" data-type="boolean" value="true" autocomplete="off">
-                                                <label class="btn btn-outline-success" for="javbus-internal-enabled-true">开启</label>
-
-                                                <input type="radio" class="btn-check config-input" name="javbus-internal-enabled" id="javbus-internal-enabled-false" data-config-path="javbus.internal.enabled" data-type="boolean" value="false" autocomplete="off">
-                                                <label class="btn btn-outline-danger" for="javbus-internal-enabled-false">关闭</label>
-                                            </div>
-                                        </div>
-
-                                        <div class="row g-3">
-                                            <div class="col-md-6">
-                                                <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="内部抓取任务并发数量，数值越高越快但同时也更占用资源。">
-                                                    最大并发数
-                                                </label>
-                                                <input type="number" min="1" class="form-control config-input" data-config-path="javbus.internal.max_concurrency">
-                                            </div>
-                                            <div class="col-md-6">
-                                                <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="内部抓取单个请求的超时时间（秒）。">
-                                                    单次请求超时（秒）
-                                                </label>
-                                                <input type="number" min="1" class="form-control config-input" data-config-path="javbus.internal.timeout">
-                                            </div>
-                                        </div>
-
-                                        <div class="row g-3 mt-1">
-                                            <div class="col-md-6">
-                                                <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="内部缓存有效时间，单位秒。缓存内的影片信息将直接复用，避免重复抓取。">
-                                                    缓存保留时长（秒）
-                                                </label>
-                                                <input type="number" min="0" class="form-control config-input" data-config-path="javbus.internal.cache_ttl_seconds">
-                                            </div>
-                                            <div class="col-md-6">
-                                                <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="内部模式单页解析数量，适当调低可减轻对目标站点压力。">
-                                                    内部分页大小
-                                                </label>
-                                                <input type="number" min="1" class="form-control config-input" data-config-path="javbus.internal.page_size">
-                                            </div>
-                                        </div>
-
-                                        <div class="mt-3">
-                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="当内部模式遇到缺页或异常时是否允许自动回退到外部 API。">
-                                                异常时回退外部 API
-                                            </label>
-                                            <div class="btn-group w-100" role="group" aria-label="内部回退外部 API">
-                                                <input type="radio" class="btn-check config-input" name="javbus-internal-fallback" id="javbus-internal-fallback-true" data-config-path="javbus.internal.allow_external_fallback" data-type="boolean" value="true" autocomplete="off">
-                                                <label class="btn btn-outline-success" for="javbus-internal-fallback-true">允许</label>
-
-                                                <input type="radio" class="btn-check config-input" name="javbus-internal-fallback" id="javbus-internal-fallback-false" data-config-path="javbus.internal.allow_external_fallback" data-type="boolean" value="false" autocomplete="off">
-                                                <label class="btn btn-outline-danger" for="javbus-internal-fallback-false">禁用</label>
-                                            </div>
+                                        <div class="btn-group w-100" role="group" aria-label="STT Provider">
+                                            <input type="radio" class="btn-check config-input" name="stt-provider" id="stt-provider-speaches" data-config-path="transcription.provider" value="speaches" autocomplete="off">
+                                            <label class="btn btn-outline-primary" for="stt-provider-speaches">Speaches</label>
+                                            <input type="radio" class="btn-check config-input" name="stt-provider" id="stt-provider-fwhisper" data-config-path="transcription.provider" value="fwhisper" autocomplete="off">
+                                            <label class="btn btn-outline-primary" for="stt-provider-fwhisper">Faster-Whisper</label>
                                         </div>
                                     </div>
-                                </div>
-
-                                <div class="mt-3">
-                                    <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="内部模式失效时是否允许自动切回外部 API。">
-                                        允许外部回退
-                                    </label>
-                                    <div class="btn-group w-100" role="group" aria-label="允许外部回退">
-                                        <input type="radio" class="btn-check config-input" name="javbus-allow-fallback" id="javbus-allow-fallback-true" data-config-path="javbus.allow_external_fallback" data-type="boolean" value="true" autocomplete="off">
-                                        <label class="btn btn-outline-success" for="javbus-allow-fallback-true">开启</label>
-
-                                        <input type="radio" class="btn-check config-input" name="javbus-allow-fallback" id="javbus-allow-fallback-false" data-config-path="javbus.allow_external_fallback" data-type="boolean" value="false" autocomplete="off">
-                                        <label class="btn btn-outline-danger" for="javbus-allow-fallback-false">关闭</label>
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold"
+                                               data-bs-toggle="tooltip"
+                                               data-bs-placement="top"
+                                               title="STT API 地址。Speaches 使用 /v1 端点，faster-whisper-service 使用 http://localhost:8001">
+                                            STT API 地址
+                                        </label>
+                                        <input type="text"
+                                               class="form-control config-input"
+                                               data-config-path="transcription.api_base_url"
+                                               placeholder="http://localhost:8001">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold"
+                                               data-bs-toggle="tooltip"
+                                               data-bs-placement="top"
+                                               title="STT API 密钥，Speaches 服务需要此字段">
+                                            API Key
+                                        </label>
+                                        <input type="text"
+                                               class="form-control config-input"
+                                               data-config-path="transcription.api_key"
+                                               placeholder="cant-be-empty">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold"
+                                               data-bs-toggle="tooltip"
+                                               data-bs-placement="top"
+                                               title="STT language，留空自动检测（如需指定可填 ja/en/zh）">
+                                            STT 语言（留空自动）
+                                        </label>
+                                        <input type="text"
+                                               class="form-control config-input"
+                                               data-config-path="transcription.language"
+                                               placeholder="ja / en / zh（留空自动）">
+                                    </div>
+                                    <div class="row g-3">
+                                        <div class="col-md-8">
+                                            <label class="form-label fw-semibold"
+                                                   data-bs-toggle="tooltip"
+                                                   data-bs-placement="top"
+                                                   title="Speaches 中已下载的 STT 模型名称">
+                                                STT 模型
+                                            </label>
+                                            <input type="text"
+                                                   class="form-control config-input"
+                                                   data-config-path="transcription.model"
+                                                   placeholder="Systran/faster-whisper-small">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold"
+                                                   data-bs-toggle="tooltip"
+                                                   data-bs-placement="top"
+                                                   title="每次转写请求的 HTTP 超时时间（秒）">
+                                                超时（秒）
+                                            </label>
+                                            <input type="number" min="1"
+                                                   class="form-control config-input"
+                                                   data-config-path="transcription.timeout">
+                                        </div>
+                                    </div>
+                                    <div class="row g-3 mt-2">
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold"
+                                                   data-bs-toggle="tooltip"
+                                                   data-bs-placement="top"
+                                                   title="分段策略：fixed=固定分片，vad=VAD+最大窗口（推荐）">
+                                                分段模式 (segmenter)
+                                            </label>
+                                            <select class="form-select config-input" data-config-path="transcription.segmenter">
+                                                <option value="vad">vad</option>
+                                                <option value="fixed">fixed</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold"
+                                                   data-bs-toggle="tooltip"
+                                                   data-bs-placement="top"
+                                                   title="VAD 最大窗口长度，超过即强制出段">
+                                                vad_max_window_secs
+                                            </label>
+                                            <input type="number" step="0.1" min="1"
+                                                   class="form-control config-input"
+                                                   data-config-path="transcription.vad_max_window_secs"
+                                                   placeholder="15.0">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold"
+                                                   data-bs-toggle="tooltip"
+                                                   data-bs-placement="top"
+                                                   title="VAD 段尾保留的重叠，用于衔接与去重">
+                                                vad_overlap_secs
+                                            </label>
+                                            <input type="number" step="0.05" min="0"
+                                                   class="form-control config-input"
+                                                   data-config-path="transcription.vad_overlap_secs"
+                                                   placeholder="0.35">
+                                        </div>
+                                    </div>
+                                    <div class="row g-3 mt-2">
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold"
+                                                   data-bs-toggle="tooltip"
+                                                   data-bs-placement="top"
+                                                   title="连续静音达到该时长判定断句">
+                                                vad_min_silence_secs
+                                            </label>
+                                            <input type="number" step="0.05" min="0.1"
+                                                   class="form-control config-input"
+                                                   data-config-path="transcription.vad_min_silence_secs"
+                                                   placeholder="0.4">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold"
+                                                   data-bs-toggle="tooltip"
+                                                   data-bs-placement="top"
+                                                   title="连续语音达到该时长判定开段">
+                                                vad_min_speech_secs
+                                            </label>
+                                            <input type="number" step="0.05" min="0.1"
+                                                   class="form-control config-input"
+                                                   data-config-path="transcription.vad_min_speech_secs"
+                                                   placeholder="0.6">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold"
+                                                   data-bs-toggle="tooltip"
+                                                   data-bs-placement="top"
+                                                   title="VAD 帧长（秒），越小越灵敏">
+                                                vad_frame_secs
+                                            </label>
+                                            <input type="number" step="0.01" min="0.01"
+                                                   class="form-control config-input"
+                                                   data-config-path="transcription.vad_frame_secs"
+                                                   placeholder="0.03">
+                                        </div>
+                                    </div>
+                                    <div class="row g-3 mt-2">
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold"
+                                                   data-bs-toggle="tooltip"
+                                                   data-bs-placement="top"
+                                                   title="VAD 能量阈值，越小越容易认为有语音">
+                                                vad_energy_threshold
+                                            </label>
+                                            <input type="number" step="0.0001" min="0.0001"
+                                                   class="form-control config-input"
+                                                   data-config-path="transcription.vad_energy_threshold"
+                                                   placeholder="0.001">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold"
+                                                   data-bs-toggle="tooltip"
+                                                   data-bs-placement="top"
+                                                   title="前缀长度，上一段末尾携带给下一段，减少断裂">
+                                                prefix_chars
+                                            </label>
+                                            <input type="number" step="1" min="0"
+                                                   class="form-control config-input"
+                                                   data-config-path="transcription.prefix_chars"
+                                                   placeholder="0">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold"
+                                                   data-bs-toggle="tooltip"
+                                                   data-bs-placement="top"
+                                                   title="重复抑制阈值，留空使用服务端默认">
+                                                compression_ratio_threshold
+                                            </label>
+                                            <input type="number" step="0.1" min="0"
+                                                   class="form-control config-input"
+                                                   data-config-path="transcription.compression_ratio_threshold"
+                                                   placeholder="0（留空默认）">
+                                        </div>
+                                    </div>
+                                    <div class="row g-3 mt-2">
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-semibold"
+                                                   data-bs-toggle="tooltip"
+                                                   data-bs-placement="top"
+                                                   title="固定分片 chunk_secs（仅在 segmenter=fixed 时使用）">
+                                                chunk_secs (fixed)
+                                            </label>
+                                            <input type="number" step="0.1" min="0.2"
+                                                   class="form-control config-input"
+                                                   data-config-path="transcription.chunk_secs"
+                                                   placeholder="4.0">
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-semibold"
+                                                   data-bs-toggle="tooltip"
+                                                   data-bs-placement="top"
+                                                   title="固定分片 overlap_secs（仅在 segmenter=fixed 时使用）">
+                                                overlap_secs (fixed)
+                                            </label>
+                                            <input type="number" step="0.1" min="0"
+                                                   class="form-control config-input"
+                                                   data-config-path="transcription.overlap_secs"
+                                                   placeholder="0.7">
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -902,6 +1134,7 @@
     configData.javbus = configData.javbus || {};
     configData.javbus.internal = configData.javbus.internal || {};
     configData.translation = configData.translation || {};
+    configData.transcription = configData.transcription || {};
     configData.cloud115 = configData.cloud115 || {};
     configData.cloud115.driver = configData.cloud115.driver || {};
     configData.cloud115.library_settings = configData.cloud115.library_settings || {};
@@ -997,6 +1230,9 @@
                 } else {
                     element.checked = value === element.value;
                 }
+            } else if (element.type === 'checkbox') {
+                const boolValue = typeof value === 'boolean' ? value : value === 'true';
+                element.checked = !!boolValue;
             } else if (element.tagName === 'TEXTAREA' && element.dataset.type === 'string-list') {
                 element.value = Array.isArray(value) ? value.join('\n') : '';
             } else if (element.type === 'number') {
@@ -1022,6 +1258,8 @@
             } else {
                 value = element.value;
             }
+        } else if (element.type === 'checkbox') {
+            value = element.checked;
         } else if (element.dataset.type === 'string-list') {
             value = element.value.split(/\r?\n/).map(line => line.trim()).filter(line => line.length > 0);
         } else if (element.type === 'number') {
@@ -1706,4 +1944,3 @@
     }
 </script>
 {% endblock %}
-
