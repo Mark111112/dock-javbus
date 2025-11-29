@@ -1009,7 +1009,7 @@
         async function setupTranscodedStream() {
             isTranscodingEnabled = true;
             showLoading('正在准备转码流...');
-            const videoElement = resolveJellyfinVideoElement();
+            const videoElement = getJellyfinVideoElement();
             
             try {
                 const streamUrl = await getTranscodedStreamUrl();
