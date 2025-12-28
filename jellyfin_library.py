@@ -4,6 +4,8 @@ import json
 import logging
 import re
 import sqlite3
+from datetime import datetime, timezone
+from typing import Optional
 from jellyfin_apiclient_python import JellyfinClient
 from modules.video_id_matcher import VideoIDMatcher
 
@@ -19,7 +21,8 @@ class JellyfinLibrary:
         """
         self.db_path = db_file
         self.client = None
-        
+        self.user_id = None
+
         # 设置日志
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
@@ -56,7 +59,16 @@ class JellyfinLibrary:
                 UNIQUE(item_id)
             )
             ''')
-            
+
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS jelibrary_sync (
+                library_id TEXT PRIMARY KEY,
+                last_sync_date_created TEXT,
+                last_sync_date_last_saved TEXT,
+                last_sync_ts INTEGER
+            )
+            ''')
+
             conn.commit()
         except sqlite3.Error as e:
             self.logger.error(f"创建表错误: {e}")
@@ -78,33 +90,285 @@ class JellyfinLibrary:
         try:
             self.client = JellyfinClient()
             self.client.config.app('BusPre', '1.0.0', 'BusPre', 'unique_device_id')
-            self.client.config.data["auth.ssl"] = True
-            
+            self.client.config.data["auth.ssl"] = str(server_url).startswith('https')
+
             # 使用API密钥认证
             if api_key:
                 self.client.config.data["app.name"] = 'BusPre'
                 self.client.config.data["app.version"] = '1.0.0'
                 self.client.authenticate({
                     "Servers": [{
-                        "AccessToken": api_key, 
-                        "address": server_url
+                        "AccessToken": api_key,
+                        "address": (server_url or "").rstrip("/")
                     }]
                 }, discover=False)
                 self.logger.info(f"使用API密钥连接到服务器 {server_url} 成功")
+                try:
+                    user_info = self.client.jellyfin.get_user()
+                    self.user_id = user_info.get("Id") if isinstance(user_info, dict) else None
+                except Exception:
+                    self.user_id = None
                 return True
-            
+
             # 使用用户名和密码认证
             elif username and password:
-                self.client.auth.connect_to_address(server_url)
-                result = self.client.auth.login(server_url, username, password)
+                self.client.auth.connect_to_address((server_url or "").rstrip("/"))
+                result = self.client.auth.login((server_url or "").rstrip("/"), username, password)
                 if result:
                     self.logger.info(f"使用用户名/密码连接到服务器 {server_url} 成功")
+                    try:
+                        user_info = self.client.jellyfin.get_user()
+                        self.user_id = user_info.get("Id") if isinstance(user_info, dict) else None
+                    except Exception:
+                        self.user_id = None
                 return bool(result)
-            
+
             return False
         except Exception as e:
             self.logger.error(f"连接Jellyfin服务器错误: {e}")
             return False
+
+    @staticmethod
+    def _parse_iso8601(value: str) -> Optional[datetime]:
+        if not value or not isinstance(value, str):
+            return None
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            # Jellyfin 常见格式：2023-04-12T12:52:30.0000000Z（7位小数 + Z）
+            if text.endswith("Z"):
+                text = text[:-1] + "+00:00"
+
+            tz_suffix = ""
+            if re.search(r"[+-]\d\d:\d\d$", text):
+                tz_suffix = text[-6:]
+                base = text[:-6]
+            else:
+                base = text
+
+            if "." in base:
+                prefix, frac = base.split(".", 1)
+                frac_digits = "".join(ch for ch in frac if ch.isdigit())
+                frac_digits = (frac_digits + "000000")[:6]
+                base = f"{prefix}.{frac_digits}"
+
+            parsed = datetime.fromisoformat(base + tz_suffix)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+        except Exception:
+            return None
+
+    def _probe_library_latest_date_created(self, library_id: str) -> Optional[str]:
+        try:
+            result = self.get_library_items(
+                library_id,
+                start_index=0,
+                limit=1,
+                sort_by="DateCreated",
+                sort_order="Descending",
+            )
+            items = result.get("items", []) or []
+            if items:
+                return items[0].get("DateCreated")
+        except Exception as e:
+            self.logger.warning(f"探测DateCreated失败 library_id={library_id}: {e}")
+        return None
+
+    def _probe_library_latest_date_last_saved(self, library_id: str) -> Optional[str]:
+        try:
+            result = self.get_library_items(
+                library_id,
+                start_index=0,
+                limit=1,
+                sort_by="DateLastSaved",
+                sort_order="Descending",
+            )
+            items = result.get("items", []) or []
+            if items:
+                return items[0].get("DateLastSaved")
+        except Exception as e:
+            self.logger.warning(f"探测DateLastSaved失败 library_id={library_id}: {e}")
+        return None
+
+    @classmethod
+    def _max_iso8601(cls, a: Optional[str], b: Optional[str]) -> Optional[str]:
+        if not a:
+            return b
+        if not b:
+            return a
+        da = cls._parse_iso8601(a)
+        db = cls._parse_iso8601(b)
+        if not da and not db:
+            return a
+        if not da:
+            return b
+        if not db:
+            return a
+        return a if da >= db else b
+
+    def get_library_sync_state(self, library_id: str) -> dict:
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT library_id, last_sync_date_created, last_sync_date_last_saved, last_sync_ts FROM jelibrary_sync WHERE library_id = ?",
+                (library_id,),
+            )
+            row = cursor.fetchone()
+            conn.close()
+            return dict(row) if row else {}
+        except Exception as e:
+            if "no such table" in str(e).lower():
+                try:
+                    self.ensure_database()
+                except Exception:
+                    pass
+            self.logger.warning(f"读取jelibrary_sync失败 library_id={library_id}: {e}")
+            return {}
+
+    def upsert_library_sync_state(
+        self,
+        library_id: str,
+        last_sync_date_created: Optional[str] = None,
+        last_sync_date_last_saved: Optional[str] = None,
+    ) -> None:
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            now = int(time.time())
+            cursor.execute(
+                '''
+                INSERT INTO jelibrary_sync (library_id, last_sync_date_created, last_sync_date_last_saved, last_sync_ts)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(library_id) DO UPDATE SET
+                    last_sync_date_created = COALESCE(excluded.last_sync_date_created, jelibrary_sync.last_sync_date_created),
+                    last_sync_date_last_saved = COALESCE(excluded.last_sync_date_last_saved, jelibrary_sync.last_sync_date_last_saved),
+                    last_sync_ts = excluded.last_sync_ts
+                ''',
+                (library_id, last_sync_date_created, last_sync_date_last_saved, now),
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            if "no such table" in str(e).lower():
+                try:
+                    self.ensure_database()
+                    return self.upsert_library_sync_state(
+                        library_id=library_id,
+                        last_sync_date_created=last_sync_date_created,
+                        last_sync_date_last_saved=last_sync_date_last_saved,
+                    )
+                except Exception:
+                    pass
+            self.logger.warning(f"写入jelibrary_sync失败 library_id={library_id}: {e}")
+
+    @staticmethod
+    def _format_duration(seconds: int) -> str:
+        try:
+            seconds = int(seconds)
+        except Exception:
+            return ""
+        if seconds <= 0:
+            return ""
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        secs = seconds % 60
+        if hours > 0:
+            return f"{hours}:{minutes:02d}:{secs:02d}"
+        return f"{minutes}:{secs:02d}"
+
+    @staticmethod
+    def _format_size(num_bytes: int) -> str:
+        try:
+            size = float(num_bytes)
+        except Exception:
+            return ""
+        if size <= 0:
+            return ""
+        units = ["B", "KB", "MB", "GB", "TB", "PB"]
+        unit_index = 0
+        while size >= 1024 and unit_index < len(units) - 1:
+            size /= 1024
+            unit_index += 1
+        if unit_index == 0:
+            return f"{int(size)} {units[unit_index]}"
+        return f"{size:.2f} {units[unit_index]}"
+
+    def get_item_metadata(self, item_id: str) -> dict:
+        """从 Jellyfin 读取单个项目的元数据（类别、演员、日期、简介、时长、分辨率、文件大小等）"""
+        if not self.client or not item_id:
+            return {}
+
+        try:
+            params = {
+                "Ids": item_id,
+                "Fields": "Overview,Genres,People,PremiereDate,RunTimeTicks,MediaSources,MediaStreams,Path",
+            }
+            raw = self.client.jellyfin.items(handler="", action="GET", params=params)
+            if isinstance(raw, dict) and raw.get("Items"):
+                item = raw.get("Items", [])[0] or {}
+            elif isinstance(raw, list) and raw:
+                item = raw[0] or {}
+            else:
+                item = raw or {}
+            if not isinstance(item, dict):
+                return {}
+
+            premiere_date = item.get("PremiereDate") or ""
+            if isinstance(premiere_date, str) and "T" in premiere_date:
+                premiere_date = premiere_date.split("T")[0]
+
+            runtime_ticks = item.get("RunTimeTicks") or 0
+            runtime_seconds = 0
+            try:
+                runtime_seconds = int(int(runtime_ticks) / 10_000_000)
+            except Exception:
+                runtime_seconds = 0
+
+            media_sources = item.get("MediaSources") or []
+            primary_source = media_sources[0] if media_sources else {}
+            file_size_bytes = primary_source.get("Size") or 0
+
+            media_streams = primary_source.get("MediaStreams") or item.get("MediaStreams") or []
+            video_stream = None
+            for stream in media_streams:
+                if isinstance(stream, dict) and stream.get("Type") == "Video":
+                    video_stream = stream
+                    break
+
+            width = (video_stream or {}).get("Width") if isinstance(video_stream, dict) else None
+            height = (video_stream or {}).get("Height") if isinstance(video_stream, dict) else None
+
+            actors = []
+            for person in item.get("People") or []:
+                if isinstance(person, dict) and person.get("Type") == "Actor" and person.get("Name"):
+                    actors.append(person["Name"])
+
+            genres = [g for g in (item.get("Genres") or []) if isinstance(g, str) and g.strip()]
+
+            resolution_text = ""
+            if width and height:
+                resolution_text = f"{width} x {height}"
+
+            return {
+                "genres": genres,
+                "actors": actors,
+                "premiere_date": premiere_date,
+                "overview": item.get("Overview") or "",
+                "runtime_seconds": runtime_seconds,
+                "runtime_text": self._format_duration(runtime_seconds),
+                "width": width,
+                "height": height,
+                "resolution_text": resolution_text,
+                "file_size_bytes": file_size_bytes,
+                "file_size_text": self._format_size(file_size_bytes),
+            }
+        except Exception as e:
+            self.logger.warning(f"读取Jellyfin项目元数据失败 item_id={item_id}: {e}")
+            return {}
     
     def get_libraries(self):
         """获取Jellyfin库列表"""
@@ -134,25 +398,43 @@ class JellyfinLibrary:
             self.logger.error(f"获取Jellyfin库列表错误: {e}")
             return []
     
-    def get_library_items(self, library_id, start_index=0, limit=100):
+    def get_library_items(
+        self,
+        library_id,
+        start_index=0,
+        limit=100,
+        sort_by=None,
+        sort_order=None,
+        min_date_created=None,
+        min_date_last_saved=None,
+    ):
         """获取指定库中的项目列表"""
         if not self.client:
             self.logger.error("未连接到Jellyfin服务器")
             return {"items": [], "total_count": 0}
-        
+
         try:
             self.logger.debug(f"尝试获取媒体库 {library_id} 的项目列表，startIndex={start_index}, limit={limit}")
-            
+
             params = {
                 "ParentId": library_id,
                 "StartIndex": start_index,
                 "Limit": limit,
                 "Recursive": True,  # 确保递归获取所有子项目
-                "Fields": "Path,Overview,PremiereDate,MediaSources,ProviderIds,MediaStreams",  # 添加ProviderIds获取更多元数据
+                "Fields": "Path,Overview,PremiereDate,MediaSources,ProviderIds,MediaStreams,ImageTags,BackdropImageTags,DateCreated,DateLastSaved",
                 "IncludeItemTypes": "Movie,Episode,Video",  # 明确指定需要的项目类型
-                "UserId": "{UserId}"  # 确保使用当前用户ID
             }
-            
+            if self.user_id:
+                params["UserId"] = self.user_id
+            if sort_by:
+                params["SortBy"] = sort_by
+            if sort_order:
+                params["SortOrder"] = sort_order
+            if min_date_created:
+                params["MinDateCreated"] = min_date_created
+            if min_date_last_saved:
+                params["MinDateLastSaved"] = min_date_last_saved
+
             # 使用items方法而不是get_items方法
             # 注意：items方法需要一个handler参数来指定API端点路径
             result = self.client.jellyfin.items(handler="", action="GET", params=params)
@@ -178,6 +460,78 @@ class JellyfinLibrary:
             import traceback
             self.logger.error(traceback.format_exc())  # 输出完整的错误堆栈
             return {"items": [], "total_count": 0}
+
+    def _save_jellyfin_item(self, cursor, item, library_id: str, library_name: str) -> dict:
+        item_id = item.get("Id")
+        title = item.get("Name", "")
+
+        if item.get("IsFolder", False):
+            return {"ok": False, "skipped": True, "item_id": item_id, "title": title}
+
+        # 从标题中提取video_id
+        video_id = self.extract_video_id(title)
+
+        # 如果从标题中提取失败，尝试从提供者ID中提取
+        if not video_id and item.get("ProviderIds"):
+            provider_ids = item.get("ProviderIds", {})
+            if provider_ids.get("Tmdb"):
+                video_id = f"TMDB-{provider_ids['Tmdb']}"
+            elif provider_ids.get("Imdb"):
+                video_id = f"IMDB-{provider_ids['Imdb']}"
+
+        # 获取播放URL
+        play_url = self.get_play_url(item_id)
+
+        # 获取路径
+        path = ""
+        if item.get("MediaSources") and len(item["MediaSources"]) > 0:
+            path = item["MediaSources"][0].get("Path", "")
+
+        # 获取封面图：优先 Backdrop，其次 Primary
+        cover_image = ""
+        if item_id:
+            server_url = (self.client.config.data.get('auth.server') or "").rstrip("/")
+            if item.get("BackdropImageTags"):
+                cover_image = f"{server_url}/Items/{item_id}/Images/Backdrop/0"
+            else:
+                cover_image = f"{server_url}/Items/{item_id}/Images/Primary"
+
+        # 获取演员
+        actors = []
+        if item.get("People"):
+            actors = [person.get("Name") for person in item["People"] if person.get("Type") == "Actor"]
+
+        # 获取日期
+        date = item.get("PremiereDate", "")
+        if date:
+            date = date.split("T")[0]
+
+        now = int(time.time())
+
+        cursor.execute(
+            '''
+            INSERT OR REPLACE INTO jelmovie
+            (title, jellyfin_id, item_id, video_id, library_name, library_id,
+            play_url, path, cover_image, actors, date, date_added)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                title,
+                self.client.config.data.get('auth.server'),
+                item_id,
+                video_id,
+                library_name,
+                library_id,
+                play_url,
+                path,
+                cover_image,
+                json.dumps(actors) if actors else "",
+                date,
+                now,
+            ),
+        )
+
+        return {"ok": True, "item_id": item_id, "title": title, "video_id": video_id}
     
     def extract_video_id(self, title):
         """从标题中提取视频ID"""
@@ -234,7 +588,9 @@ class JellyfinLibrary:
             failed_count = 0
             success_dict = {}
             failed_list = []
-            
+            max_date_created = None
+            max_date_last_saved = None
+
             # 分批获取所有项目
             start_index = 0
             limit = 200  # 增加每批的数量
@@ -252,96 +608,27 @@ class JellyfinLibrary:
                     break
                 
                 self.logger.info(f"正在处理批次: {start_index}-{start_index+len(items)}/{total_count}, 本批次项目数: {len(items)}")
-                
+
                 for item in items:
-                    item_id = item.get("Id")
-                    title = item.get("Name", "")
-                    
                     try:
-                        # 只过滤掉文件夹类型，接受所有媒体项目
-                        if item.get("IsFolder", False):
-                            self.logger.debug(f"跳过文件夹: {title}")
+                        saved = self._save_jellyfin_item(cursor, item, library_id=library_id, library_name=library_name)
+                        if saved.get("skipped"):
                             continue
-                        
-                        item_type = item.get('Type', '')
-                        media_type = item.get('MediaType', '')
-                        
-                        # 调试输出项目类型
-                        self.logger.debug(f"处理项目: {title}, 类型: {item_type}, MediaType: {media_type}")
-                        
-                        # 从标题中提取video_id
-                        video_id = self.extract_video_id(title)
-                        
-                        # 如果从标题中提取失败，尝试从提供者ID中提取
-                        if not video_id and item.get("ProviderIds"):
-                            provider_ids = item.get("ProviderIds", {})
-                            self.logger.debug(f"项目 {title} 的提供者ID: {provider_ids}")
-                            
-                            if provider_ids.get("Tmdb"):
-                                video_id = f"TMDB-{provider_ids['Tmdb']}"
-                            elif provider_ids.get("Imdb"):
-                                video_id = f"IMDB-{provider_ids['Imdb']}"
-                        
-                        # 如果仍然无法提取，则记录警告
-                        if not video_id:
-                            self.logger.warning(f"无法为项目 {title} 提取视频ID")
-                        
-                        # 获取播放URL
-                        play_url = self.get_play_url(item_id)
-                        
-                        # 获取路径
-                        path = ""
-                        if item.get("MediaSources") and len(item["MediaSources"]) > 0:
-                            path = item["MediaSources"][0].get("Path", "")
-                            self.logger.debug(f"项目 {title} 的路径: {path}")
-                        
-                        # 获取封面图
-                        cover_image = ""
-                        if item_id:
-                            cover_image = f"{self.client.config.data['auth.server']}/Items/{item_id}/Images/Primary"
-                        
-                        # 获取演员
-                        actors = []
-                        if item.get("People"):
-                            actors = [person.get("Name") for person in item["People"] if person.get("Type") == "Actor"]
-                            if actors:
-                                self.logger.debug(f"项目 {title} 的演员: {', '.join(actors)}")
-                        
-                        # 获取日期
-                        date = item.get("PremiereDate", "")
-                        if date:
-                            date = date.split("T")[0]  # 只保留日期部分
-                            self.logger.debug(f"项目 {title} 的日期: {date}")
-                        
-                        # 当前时间戳
-                        now = int(time.time())
-                        
-                        # 插入或更新数据库
-                        cursor.execute('''
-                        INSERT OR REPLACE INTO jelmovie
-                        (title, jellyfin_id, item_id, video_id, library_name, library_id, 
-                        play_url, path, cover_image, actors, date, date_added)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ''', (
-                            title,
-                            self.client.config.data['auth.server'],
-                            item_id,
-                            video_id,
-                            library_name,
-                            library_id,
-                            play_url,
-                            path,
-                            cover_image,
-                            json.dumps(actors) if actors else "",
-                            date,
-                            now
-                        ))
-                        
-                        imported_count += 1
-                        success_dict[item_id] = {"title": title, "video_id": video_id}
-                        self.logger.debug(f"成功导入: {title}, video_id: {video_id}")
-                        
+
+                        if saved.get("ok"):
+                            imported_count += 1
+                            item_id = saved.get("item_id")
+                            success_dict[item_id] = {"title": saved.get("title"), "video_id": saved.get("video_id")}
+
+                            max_date_created = self._max_iso8601(max_date_created, item.get("DateCreated"))
+                            max_date_last_saved = self._max_iso8601(max_date_last_saved, item.get("DateLastSaved"))
+                        else:
+                            failed_count += 1
+                            failed_list.append(f"{saved.get('title')} (ID: {saved.get('item_id')})")
+
                     except Exception as e:
+                        title = item.get("Name", "")
+                        item_id = item.get("Id")
                         self.logger.error(f"导入项目错误: {e}, 项目: {title}")
                         import traceback
                         self.logger.error(traceback.format_exc())
@@ -362,9 +649,29 @@ class JellyfinLibrary:
             
             conn.commit()
             conn.close()
-            
+
+            # Ensure we always set a sync point after full import (required for incremental sync).
+            # Prefer server-side probe (stable even if item list order / parsing differs).
+            probed_created = self._probe_library_latest_date_created(library_id)
+            probed_saved = self._probe_library_latest_date_last_saved(library_id)
+            if probed_created:
+                max_date_created = probed_created
+            if probed_saved:
+                max_date_last_saved = probed_saved
+            if not max_date_created:
+                max_date_created = datetime.now(timezone.utc).isoformat()
+
+            self.upsert_library_sync_state(
+                library_id=library_id,
+                last_sync_date_created=max_date_created,
+                last_sync_date_last_saved=max_date_last_saved,
+            )
+            self.logger.info(
+                f"库同步点已更新 library_id={library_id}, last_sync_date_created={max_date_created}, last_sync_date_last_saved={max_date_last_saved or ''}"
+            )
+
             self.logger.info(f"导入Jellyfin库 {library_name} 完成，导入 {imported_count} 个项目，失败 {failed_count} 个")
-            
+
             return {
                 "imported": imported_count,
                 "failed": failed_count,
@@ -375,6 +682,113 @@ class JellyfinLibrary:
             }
         except Exception as e:
             self.logger.error(f"导入Jellyfin库错误: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return {"imported": 0, "failed": 0, "details": {"success": {}, "failed": [str(e)]}}
+
+    def sync_library_incremental_by_date_created(self, library_id: str, library_name: str) -> dict:
+        """按 DateCreated 增量导入 Jellyfin 库（要求已做过至少一次全量导入以建立同步点）。"""
+        if not self.client:
+            self.logger.error("未连接到Jellyfin服务器")
+            return {"imported": 0, "failed": 0, "needs_full_import": True, "message": "未连接到Jellyfin服务器"}
+
+        sync_state = self.get_library_sync_state(library_id) or {}
+        last_created = (sync_state.get("last_sync_date_created") or "").strip()
+        if not last_created:
+            return {
+                "imported": 0,
+                "failed": 0,
+                "needs_full_import": True,
+                "message": "未找到该库的同步点，请先对该库执行一次“导入此库”（全量）以初始化增量同步。",
+            }
+
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            imported_count = 0
+            failed_count = 0
+            success_dict = {}
+            failed_list = []
+            max_date_created = last_created
+            max_date_last_saved = sync_state.get("last_sync_date_last_saved")
+
+            start_index = 0
+            limit = 200
+
+            self.logger.info(f"开始增量导入Jellyfin库(按DateCreated) {library_name} (ID: {library_id}), since={last_created}")
+
+            while True:
+                result = self.get_library_items(
+                    library_id,
+                    start_index=start_index,
+                    limit=limit,
+                    sort_by="DateCreated",
+                    sort_order="Ascending",
+                    min_date_created=last_created,
+                )
+                items = result.get("items", [])
+                total_count = result.get("total_count", 0)
+
+                if not items:
+                    break
+
+                self.logger.info(
+                    f"增量批次: {start_index}-{start_index+len(items)}/{total_count}, 本批次项目数: {len(items)}"
+                )
+
+                for item in items:
+                    try:
+                        saved = self._save_jellyfin_item(cursor, item, library_id=library_id, library_name=library_name)
+                        if saved.get("skipped"):
+                            continue
+                        if saved.get("ok"):
+                            imported_count += 1
+                            item_id = saved.get("item_id")
+                            success_dict[item_id] = {"title": saved.get("title"), "video_id": saved.get("video_id")}
+                            max_date_created = self._max_iso8601(max_date_created, item.get("DateCreated"))
+                            max_date_last_saved = self._max_iso8601(max_date_last_saved, item.get("DateLastSaved"))
+                        else:
+                            failed_count += 1
+                            failed_list.append(f"{saved.get('title')} (ID: {saved.get('item_id')})")
+                    except Exception as e:
+                        title = item.get("Name", "")
+                        item_id = item.get("Id")
+                        self.logger.error(f"增量导入项目错误: {e}, 项目: {title}")
+                        failed_count += 1
+                        failed_list.append(f"{title} (ID: {item_id})")
+
+                start_index += len(items)
+                conn.commit()
+
+                if start_index >= total_count:
+                    break
+
+            conn.commit()
+            conn.close()
+
+            # Always refresh sync point via probe (handles empty incremental batches and avoids timestamp parsing issues).
+            probed_created = self._probe_library_latest_date_created(library_id) or max_date_created
+            probed_saved = self._probe_library_latest_date_last_saved(library_id) or max_date_last_saved
+            if not probed_created:
+                probed_created = max_date_created or datetime.now(timezone.utc).isoformat()
+
+            self.upsert_library_sync_state(
+                library_id=library_id,
+                last_sync_date_created=probed_created,
+                last_sync_date_last_saved=probed_saved,
+            )
+
+            return {
+                "imported": imported_count,
+                "failed": failed_count,
+                "details": {"success": success_dict, "failed": failed_list},
+                "since_date_created": last_created,
+                "new_last_sync_date_created": probed_created,
+            }
+        except Exception as e:
+            self.logger.error(f"增量导入Jellyfin库错误: {e}")
             import traceback
             self.logger.error(traceback.format_exc())
             return {"imported": 0, "failed": 0, "details": {"success": {}, "failed": [str(e)]}}

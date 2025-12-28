@@ -18,7 +18,7 @@ from jellyfin_apiclient_python import JellyfinClient
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from flask import Flask, request, jsonify, render_template, redirect, url_for, send_from_directory, Response, stream_with_context, flash, abort
-from flask_cors import CORS
+from flask_cors import CORS, cross_origin
 from flask_sock import Sock
 from werkzeug.utils import secure_filename, safe_join
 from javbus_db import JavbusDatabase
@@ -164,6 +164,10 @@ TRANSCODE_PROBE_CACHE = {}
 TRANSCODE_LAST_CLEANUP = 0.0
 TRANSCODE_ACTIVE_STATUSES = {"queued", "starting", "running", "ready"}
 TRANSCODE_LOGGER = logging.getLogger("Cloud115Transcode")
+
+# 115目录导入任务管理
+IMPORT_115_TASKS = {}
+IMPORT_115_LOGGER = logging.getLogger("Import115")
 
 
 @sock.route('/ws/transcription')
@@ -3273,6 +3277,11 @@ def cloud115_library_route():
     """Show 115 cloud library page"""
     return redirect(url_for('cloud115_library'))
 
+@app.route('/cloud115/offline_downloads')
+def cloud115_offline_downloads():
+    """115离线下载管理页面"""
+    return render_template('cloud115_offline_downloads.html')
+
 @app.route('/cloud115/search')
 def cloud115_library_search():
     """Search 115 cloud library"""
@@ -6289,6 +6298,99 @@ def add_cloud115_file(file_data):
 
 # 115云盘文件操作相关API
 
+@app.route('/api/cloud115/list', methods=['GET'])
+def cloud115_list():
+    """获取115云盘文件列表（兼容path参数）"""
+    try:
+        # 支持path参数，映射到cid
+        path = request.args.get('path', '0')
+        # 处理根目录路径
+        if path == '/' or path == '':
+            cid = '0'
+        else:
+            cid = path
+
+        try:
+            limit = int(request.args.get('limit', '1150'))
+            offset = int(request.args.get('offset', '0'))
+        except ValueError:
+            return jsonify({
+                'success': False,
+                'message': '参数格式错误'
+            })
+
+        # 使用统一客户端
+        if CLOUD115_CLIENT is None:
+            return jsonify({
+                'success': False,
+                'message': '115客户端未初始化'
+            })
+
+        from modules.cloud115_client import Cloud115AuthError, Cloud115RateLimitError
+        try:
+            result = CLOUD115_CLIENT.list_files(
+                cid=cid,
+                limit=limit,
+                offset=offset,
+                show_dir=1,
+                aid=1,
+                order='user_utime',
+                asc=0
+            )
+
+            # 转换响应格式以匹配前端期望
+            data = result.get('data', [])
+            if isinstance(data, dict) and 'list' in data:
+                # 处理返回格式为 {list: [...], count: ...} 的情况
+                files = data.get('list', [])
+            elif isinstance(data, list):
+                files = data
+            else:
+                files = []
+
+            # 转换字段名以匹配前端期望
+            transformed_files = []
+            for item in files:
+                if not isinstance(item, dict):
+                    continue
+
+                # fc: "0" = 文件夹, "1" = 文件
+                is_folder = item.get('fc') == '0' or item.get('fc') == 0
+
+                transformed_files.append({
+                    'type': 'folder' if is_folder else 'file',
+                    'file_id': item.get('cid') if is_folder else item.get('fid', item.get('cid')),
+                    'file_name': item.get('n') or item.get('fn') or item.get('name', ''),
+                    'size': item.get('s') or item.get('size', 0),
+                    'pick_code': item.get('pc') or item.get('pick_code', ''),
+                })
+
+            return jsonify({
+                'success': True,
+                'data': {
+                    'files': transformed_files,
+                    'path': path
+                }
+            })
+        except Cloud115AuthError as e:
+            app.logger.warning(f"115 认证失败: {e}")
+            return jsonify({
+                'success': False,
+                'message': f'未授权: {str(e)}'
+            })
+        except Cloud115RateLimitError as e:
+            app.logger.warning(f"115 限流: {e}")
+            return jsonify({
+                'success': False,
+                'message': f'请求过于频繁: {str(e)}'
+            })
+    except Exception as e:
+        app.logger.error(f"获取115文件列表失败: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': f'获取文件列表失败: {str(e)}'
+        })
+
 @app.route('/api/cloud115/files', methods=['GET'])
 def cloud115_files():
     """获取115云盘文件列表"""
@@ -6395,6 +6497,144 @@ def cloud115_folder_info():
             'state': 0,
             'code': 500,
             'message': f'获取文件夹信息失败: {str(e)}'
+        })
+
+@app.route('/api/cloud115/delete', methods=['POST'])
+def cloud115_delete():
+    """删除115云盘文件或文件夹"""
+    try:
+        data = request.get_json()
+        if not data or 'file_id' not in data:
+            return jsonify({
+                'success': False,
+                'message': '缺少文件ID参数'
+            })
+
+        file_id = data.get('file_id', '').strip()
+        if not file_id:
+            return jsonify({
+                'success': False,
+                'message': '文件ID不能为空'
+            })
+
+        # 使用统一客户端
+        if CLOUD115_CLIENT is None:
+            return jsonify({
+                'success': False,
+                'message': '115客户端未初始化'
+            })
+
+        from modules.cloud115_client import Cloud115AuthError, Cloud115RateLimitError
+        try:
+            app.logger.info(f"尝试删除115文件: file_id={file_id}")
+            result = CLOUD115_CLIENT.delete_file(file_id)
+            app.logger.info(f"115删除响应: {result}")
+
+            # 检查删除结果
+            # 115返回格式: {"state": true, "error": "", "errno": ""}
+            # state为true/1表示成功，error和errno为空字符串或0都表示成功
+            state = result.get('state')
+
+            if state is True or state == 1 or state == '1':
+                return jsonify({
+                    'success': True,
+                    'message': '删除成功'
+                })
+            else:
+                error_msg = result.get('msg') or result.get('message') or '删除失败'
+                return jsonify({
+                    'success': False,
+                    'message': error_msg
+                })
+        except Cloud115AuthError as e:
+            app.logger.warning(f"115 认证失败: {e}")
+            return jsonify({
+                'success': False,
+                'message': f'未授权: {str(e)}'
+            })
+        except Cloud115RateLimitError as e:
+            app.logger.warning(f"115 限流: {e}")
+            return jsonify({
+                'success': False,
+                'message': f'请求过于频繁: {str(e)}'
+            })
+    except Exception as e:
+        app.logger.error(f"删除115文件失败: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': f'删除文件失败: {str(e)}'
+        })
+
+@app.route('/api/cloud115/move', methods=['POST'])
+def cloud115_move():
+    """移动115云盘文件或文件夹到指定目录"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({
+                'success': False,
+                'message': '缺少请求参数'
+            })
+
+        file_id = data.get('file_id', '').strip()
+        target_cid = data.get('target_cid', '').strip()
+
+        if not file_id:
+            return jsonify({
+                'success': False,
+                'message': '缺少文件ID参数'
+            })
+
+        if not target_cid:
+            return jsonify({
+                'success': False,
+                'message': '缺少目标目录ID参数'
+            })
+
+        # 使用统一客户端
+        if CLOUD115_CLIENT is None:
+            return jsonify({
+                'success': False,
+                'message': '115客户端未初始化'
+            })
+
+        from modules.cloud115_client import Cloud115AuthError, Cloud115RateLimitError
+        try:
+            app.logger.info(f"尝试移动115文件: file_id={file_id}, target_cid={target_cid}")
+            result = CLOUD115_CLIENT.move_file(file_id, target_cid)
+            app.logger.info(f"115移动响应: {result}")
+
+            # 检查移动结果
+            state = result.get('state')
+
+            if state is True or state == 1 or state == '1':
+                return jsonify({
+                    'success': True,
+                    'message': '移动成功'
+                })
+            else:
+                error_msg = result.get('msg') or result.get('message') or '移动失败'
+                return jsonify({
+                    'success': False,
+                    'message': error_msg
+                })
+        except Cloud115AuthError as e:
+            app.logger.warning(f"115 认证失败: {e}")
+            return jsonify({
+                'success': False,
+                'message': f'未授权: {str(e)}'
+            })
+        except Cloud115RateLimitError as e:
+            app.logger.warning(f"115 限流: {e}")
+            return jsonify({
+                'success': False,
+                'message': f'请求过于频繁: {str(e)}'
+            })
+    except Exception as e:
+        app.logger.error(f"移动115文件失败: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': f'移动文件失败: {str(e)}'
         })
 
 @app.route('/cloud115/login')
@@ -6590,6 +6830,388 @@ def cloud115_import_directory_api():
             'success': False,
             'message': f'导入目录失败: {str(e)}'
         })
+
+
+def _run_import_115_directory_task(task_id, folder_id, min_size_mb, category_type, access_token):
+    """后台执行115目录导入任务"""
+    try:
+        task = IMPORT_115_TASKS.get(task_id)
+        if not task:
+            IMPORT_115_LOGGER.error(f"任务 {task_id} 不存在")
+            return
+
+        task['status'] = 'running'
+        task['progress'] = 0
+        task['current_step'] = '正在获取文件列表...'
+        task['imported'] = 0
+        task['failed'] = 0
+        task['skipped_size'] = 0
+        task['skipped_existing'] = 0
+        task['total_files'] = 0
+        task['current_file'] = ''
+        task['error_files'] = []
+        task['imported_files'] = []
+        task['logs'] = ['开始导入任务...']
+
+        def update_progress(step, progress, current_file='', log_message=None):
+            task['current_step'] = step
+            task['progress'] = progress
+            if current_file:
+                task['current_file'] = current_file
+            if log_message:
+                task['logs'].append(log_message)
+                if len(task['logs']) > 500:  # 限制日志数量
+                    task['logs'] = task['logs'][-500:]
+
+        update_progress('正在获取文件夹信息...', 5, '初始化', '获取文件夹信息...')
+
+        # 获取文件夹信息
+        try:
+            folder_info_response = requests.get(
+                'https://proapi.115.com/open/folder/get_info',
+                params={'file_id': folder_id},
+                headers={'Authorization': f'Bearer {access_token}'},
+                timeout=30
+            )
+            folder_info = folder_info_response.json().get('data', {})
+            folder_name = folder_info.get('file_name', '未命名文件夹')
+            task['folder_name'] = folder_name
+            update_progress('正在获取文件列表...', 10, folder_name, f'目标文件夹: {folder_name}')
+        except Exception as e:
+            task['status'] = 'error'
+            task['error'] = str(e)
+            update_progress('获取文件夹信息失败', 0, '', f'错误: {str(e)}')
+            IMPORT_115_LOGGER.error(f"获取文件夹信息失败: {e}")
+            return
+
+        # 获取数据库中已有的115云盘文件ID列表
+        try:
+            db.ensure_connection()
+            db.local.cursor.execute('SELECT file_id FROM cloud115_library')
+            existing_file_ids = {row['file_id'] for row in db.local.cursor.fetchall() if row['file_id']}
+            update_progress('正在扫描文件...', 15, '', f'已存在 {len(existing_file_ids)} 个文件记录')
+        except Exception as e:
+            IMPORT_115_LOGGER.error(f"获取现有文件列表失败: {e}")
+            existing_file_ids = set()
+
+        # 递归获取文件夹内所有视频文件
+        video_files = []
+        skipped_files = 0
+        skipped_existing_files = 0
+        scanned_folders = 0
+        max_folders_to_scan = 10000  # 防止无限递归的安全限制
+
+        def get_videos_in_folder(fid, path="", folder_name=""):
+            """递归获取文件夹中的视频文件"""
+            nonlocal skipped_files, skipped_existing_files, scanned_folders
+
+            # 安全限制
+            scanned_folders += 1
+            if scanned_folders > max_folders_to_scan:
+                IMPORT_115_LOGGER.warning(f"已达到最大扫描目录数限制 ({max_folders_to_scan})")
+                task['error_files'].append({
+                    'title': folder_name or path,
+                    'error': f'达到最大扫描目录数限制 ({max_folders_to_scan})'
+                })
+                return
+
+            # 更新扫描进度
+            if scanned_folders % 5 == 0:  # 每5个目录更新一次
+                update_progress('正在扫描目录...', 20, folder_name or path,
+                              f'已扫描 {scanned_folders} 个目录，找到 {len(video_files)} 个视频文件')
+
+            offset = 0
+            limit = 100
+
+            while True:
+                try:
+                    files_response = requests.get(
+                        'https://proapi.115.com/open/ufile/files',
+                        params={
+                            'cid': fid,
+                            'limit': limit,
+                            'offset': offset,
+                            'show_dir': 1,
+                            'aid': 1
+                        },
+                        headers={'Authorization': f'Bearer {access_token}'},
+                        timeout=60  # 增加超时到60秒
+                    )
+                    files_data = files_response.json()
+
+                    # 检查响应状态
+                    if files_data.get('state') != 1:
+                        IMPORT_115_LOGGER.error(f"API返回错误: {files_data.get('message', '未知错误')}")
+                        task['error_files'].append({
+                            'title': folder_name or path,
+                            'error': f'API错误: {files_data.get("message", "未知错误")}'
+                        })
+                        break
+
+                    files = files_data.get('data', [])
+
+                    if not files:
+                        break
+
+                    for file in files:
+                        current_path = f"{path}/{file['fn']}" if path else file['fn']
+
+                        if file['fc'] == '0':  # 文件夹
+                            get_videos_in_folder(file['fid'], current_path, file['fn'])
+                        elif file['fc'] == '1':  # 文件
+                            # 检查是否为视频文件
+                            if file.get('isv') == 1 or file['ico'].lower() in ['mp4', 'mkv', 'avi', 'wmv', 'mov', 'flv', 'm4v', 'rmvb', 'rm', 'mpg', 'mpeg', 'webm', 'ts']:
+                                # 检查文件是否已存在
+                                if file['fid'] in existing_file_ids:
+                                    skipped_existing_files += 1
+                                    task['skipped_existing'] = skipped_existing_files
+                                    continue
+
+                                try:
+                                    # 优先使用文件列表中已返回的信息，减少API调用
+                                    pick_code = file.get('pc', '')
+
+                                    # 使用文件列表中的大小信息（如果有）
+                                    if 'fs' in file:
+                                        file_size_bytes = int(file['fs'])
+                                        file_size_str = f"{file_size_bytes / 1024 / 1024:.2f} MB"
+
+                                        # 检查文件大小
+                                        min_size_bytes = min_size_mb * 1024 * 1024
+                                        if min_size_mb > 0 and file_size_bytes < min_size_bytes:
+                                            skipped_files += 1
+                                            task['skipped_size'] = skipped_files
+                                            continue
+                                    else:
+                                        # 只有在没有大小信息时才调用get_info API
+                                        file_details_response = requests.get(
+                                            'https://proapi.115.com/open/folder/get_info',
+                                            params={'file_id': file['fid']},
+                                            headers={'Authorization': f'Bearer {access_token}'},
+                                            timeout=15  # 单个文件详情请求超时设为15秒
+                                        )
+                                        file_details = file_details_response.json().get('data', {})
+                                        pick_code = pick_code or file_details.get('pick_code', '')
+                                        file_size_str = file_details.get('size', '')
+
+                                        # 检查文件大小
+                                        min_size_bytes = min_size_mb * 1024 * 1024
+                                        if min_size_mb > 0:
+                                            try:
+                                                file_size_bytes = convert_human_size_to_bytes(file_size_str)
+                                                if file_size_bytes < min_size_bytes:
+                                                    skipped_files += 1
+                                                    task['skipped_size'] = skipped_files
+                                                    continue
+                                            except Exception:
+                                                continue
+
+                                    video_files.append({
+                                        'file_id': file['fid'],
+                                        'title': file['fn'],
+                                        'path': current_path,
+                                        'size': file_size_str if 'file_size_str' in locals() else '',
+                                        'category': category_type,
+                                        'thumbnail': file.get('thumb', ''),
+                                        'pick_code': pick_code
+                                    })
+                                except requests.Timeout:
+                                    task['error_files'].append({
+                                        'title': file['fn'],
+                                        'error': '获取文件详情超时，已跳过'
+                                    })
+                                except Exception as e:
+                                    task['error_files'].append({
+                                        'title': file['fn'],
+                                        'error': f'处理失败: {str(e)[:100]}'
+                                    })
+
+                    offset += len(files)
+                    if len(files) < limit:
+                        break
+                except requests.Timeout:
+                    IMPORT_115_LOGGER.error(f"获取目录列表超时: {folder_name or path}")
+                    task['error_files'].append({
+                        'title': folder_name or path,
+                        'error': '获取目录列表超时，已跳过'
+                    })
+                    break
+                except Exception as e:
+                    IMPORT_115_LOGGER.error(f"获取文件列表失败 {folder_name or path}: {e}")
+                    task['error_files'].append({
+                        'title': folder_name or path,
+                        'error': f'扫描失败: {str(e)[:100]}'
+                    })
+                    break
+
+        # 开始扫描文件
+        update_progress('正在扫描目录...', 20, '', '开始递归扫描文件夹...')
+        get_videos_in_folder(folder_id, '', task.get('folder_name', ''))
+
+        task['total_files'] = len(video_files)
+        update_progress('正在导入文件...', 30, '', f'扫描完成，扫描了 {scanned_folders} 个目录，找到 {len(video_files)} 个新视频文件')
+        IMPORT_115_LOGGER.info(f"扫描完成: {scanned_folders} 个目录, {len(video_files)} 个新视频文件")
+
+        # 导入视频文件到数据库
+        imported_count = 0
+        failed_count = 0
+
+        for idx, video in enumerate(video_files):
+            try:
+                task['current_file'] = video['title']
+                progress = 30 + int((idx / len(video_files)) * 65)  # 30-95%
+                task['progress'] = progress
+
+                if add_cloud115_file(video):
+                    imported_count += 1
+                    task['imported'] = imported_count
+                    task['imported_files'].append(video['title'])
+                    if idx % 10 == 0:  # 每10个文件记录一次日志
+                        update_progress('正在导入文件...', progress, video['title'],
+                                      f'已导入 {imported_count}/{len(video_files)} 个文件')
+                else:
+                    failed_count += 1
+                    task['failed'] = failed_count
+                    task['error_files'].append({
+                        'title': video['title'],
+                        'error': '添加到数据库失败'
+                    })
+            except Exception as e:
+                failed_count += 1
+                task['failed'] = failed_count
+                task['error_files'].append({
+                    'title': video.get('title', 'Unknown'),
+                    'error': str(e)
+                })
+                IMPORT_115_LOGGER.error(f"导入文件失败 {video.get('title')}: {e}")
+
+        # 任务完成
+        task['status'] = 'completed'
+        task['progress'] = 100
+        task['current_step'] = '导入完成'
+        task['end_time'] = time.time()
+        task['logs'].append(f'导入完成! 成功: {imported_count}, 失败: {failed_count}, '
+                           f'跳过(小文件): {skipped_files}, 跳过(已存在): {skipped_existing_files}')
+        IMPORT_115_LOGGER.info(f"导入任务 {task_id} 完成: 成功={imported_count}, 失败={failed_count}")
+
+    except Exception as e:
+        IMPORT_115_LOGGER.error(f"导入任务 {task_id} 执行失败: {e}", exc_info=True)
+        task = IMPORT_115_TASKS.get(task_id)
+        if task:
+            task['status'] = 'error'
+            task['error'] = str(e)
+            task['end_time'] = time.time()
+            task['logs'].append(f'任务执行失败: {str(e)}')
+
+
+@app.route('/api/cloud115/import_directory_async', methods=['POST'])
+def cloud115_import_directory_async():
+    """异步导入115云盘目录中的视频文件（支持进度跟踪）"""
+    try:
+        data = request.get_json()
+        if not data or 'folder_id' not in data:
+            return jsonify({
+                'success': False,
+                'message': '缺少文件夹ID'
+            })
+
+        folder_id = data['folder_id']
+        min_size_mb = data.get('min_size_mb', 50)
+        category_type = data.get('category_type', 'movies')
+
+        # 获取token
+        access_token = get_cloud115_valid_token()
+        if not access_token:
+            return jsonify({
+                'success': False,
+                'message': '未授权，请先登录115云盘'
+            })
+
+        # 创建任务
+        task_id = uuid.uuid4().hex
+
+        IMPORT_115_TASKS[task_id] = {
+            'id': task_id,
+            'status': 'queued',
+            'progress': 0,
+            'current_step': '等待开始...',
+            'current_file': '',
+            'folder_id': folder_id,
+            'min_size_mb': min_size_mb,
+            'category_type': category_type,
+            'imported': 0,
+            'failed': 0,
+            'skipped_size': 0,
+            'skipped_existing': 0,
+            'total_files': 0,
+            'start_time': time.time(),
+            'end_time': None,
+            'error': None,
+            'error_files': [],
+            'imported_files': [],
+            'logs': ['任务已创建，等待执行...']
+        }
+
+        # 启动后台线程
+        thread = threading.Thread(
+            target=_run_import_115_directory_task,
+            args=(task_id, folder_id, min_size_mb, category_type, access_token),
+            daemon=True
+        )
+        thread.start()
+
+        IMPORT_115_LOGGER.info(f"创建导入任务 {task_id}")
+
+        return jsonify({
+            'success': True,
+            'task_id': task_id,
+            'message': '导入任务已创建',
+            'status_url': url_for('cloud115_import_status', task_id=task_id)
+        })
+
+    except Exception as e:
+        app.logger.error(f"创建导入任务失败: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': f'创建导入任务失败: {str(e)}'
+        })
+
+
+@app.route('/api/cloud115/import_status/<task_id>', methods=['GET'])
+def cloud115_import_status(task_id):
+    """获取115目录导入任务状态"""
+    task = IMPORT_115_TASKS.get(task_id)
+    if not task:
+        return jsonify({
+            'success': False,
+            'message': '任务不存在'
+        }), 404
+
+    response = {
+        'success': True,
+        'task_id': task['id'],
+        'status': task['status'],
+        'progress': task['progress'],
+        'current_step': task['current_step'],
+        'current_file': task['current_file'],
+        'imported': task['imported'],
+        'failed': task['failed'],
+        'skipped_size': task['skipped_size'],
+        'skipped_existing': task['skipped_existing'],
+        'total_files': task['total_files'],
+        'error': task.get('error'),
+        'logs': task['logs'][-50:]  # 只返回最近50条日志
+    }
+
+    # 只有在任务完成时才返回完整结果
+    if task['status'] in ['completed', 'error']:
+        response['error_files'] = task['error_files']
+        response['imported_files'] = task['imported_files']
+        if task['end_time']:
+            response['duration'] = task['end_time'] - task['start_time']
+
+    return jsonify(response)
+
 
 @app.route('/api/cloud115/video_play_url', methods=['GET'])
 def cloud115_video_play_url():
@@ -7771,10 +8393,112 @@ def cloud115_proxy_stream():
                     
         logging.info(f"115云盘代理流成功: {content_type}")
         return proxy_response
-        
+
     except Exception as e:
         logging.error(f"115云盘代理流失败: {str(e)}")
         return jsonify({"error": str(e)}), 500
+
+@app.route('/api/cloud115/download_file', methods=['GET', 'OPTIONS'])
+def cloud115_download_file_proxy():
+    """代理下载115云盘文件（处理认证cookie）"""
+
+    def add_cors_headers(response):
+        """添加CORS头到响应"""
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Origin, X-Requested-With, Content-Type, Accept'
+        response.headers['Access-Control-Expose-Headers'] = 'Content-Disposition, Content-Type'
+        return response
+
+    # Handle OPTIONS preflight request
+    if request.method == 'OPTIONS':
+        response = Response()
+        return add_cors_headers(response)
+
+    pickcode = request.args.get('pickcode', '').strip()
+    file_name = request.args.get('file_name', 'download').strip()
+
+    if not pickcode:
+        response = Response("Missing pickcode parameter", status=400)
+        return add_cors_headers(response)
+
+    if CLOUD115_CLIENT is None:
+        response = Response("115客户端未初始化", status=503)
+        return add_cors_headers(response)
+
+    from modules.cloud115_client import Cloud115AuthError, Cloud115RateLimitError
+
+    try:
+        # 获取下载信息（包含auth cookie）
+        download_info = CLOUD115_CLIENT.get_download_info(pickcode)
+
+        download_url = download_info.get('url')
+        if not download_url:
+            response = Response("无法获取下载链接", status=500)
+            return add_cors_headers(response)
+
+        # 获取认证cookie
+        auth_cookie = download_info.get('auth_cookie')
+
+        # 使用CLOUD115_CLIENT的已认证session下载文件
+        try:
+            resp = CLOUD115_CLIENT.download_file(download_url, auth_cookie)
+
+            if resp.status_code != 200:
+                app.logger.error(f"115文件下载失败: HTTP {resp.status_code}")
+                response = Response(f"下载失败: HTTP {resp.status_code}", status=resp.status_code)
+                return add_cors_headers(response)
+
+            # 获取文件大小和内容类型
+            file_size = resp.headers.get('Content-Length', '')
+            content_type = resp.headers.get('Content-Type', 'application/octet-stream')
+
+            # 处理文件名编码
+            try:
+                from urllib.parse import quote
+                encoded_filename = quote(file_name.encode('utf-8'))
+                content_disposition = f'attachment; filename*=UTF-8\'\'{encoded_filename}'
+            except:
+                content_disposition = f'attachment; filename="{file_name}"'
+
+            # 创建流式响应
+            def generate():
+                for chunk in resp.iter_content(chunk_size=8192):
+                    if chunk:
+                        yield chunk
+
+            response = Response(
+                stream_with_context(generate()),
+                headers={
+                    'Content-Type': content_type,
+                    'Content-Disposition': content_disposition,
+                    'Cache-Control': 'no-cache',
+                }
+            )
+
+            if file_size:
+                response.headers['Content-Length'] = file_size
+
+            app.logger.info(f"开始代理下载115文件: pickcode={pickcode}, name={file_name}")
+            return add_cors_headers(response)
+
+        except requests.RequestException as e:
+            app.logger.error(f"115文件下载失败: {str(e)}")
+            response = Response(f"下载失败: {str(e)}", status=500)
+            return add_cors_headers(response)
+
+    except Cloud115AuthError as e:
+        app.logger.error(f"115下载认证失败: {e}")
+        response = Response(f"认证失败: {e}", status=401)
+        return add_cors_headers(response)
+    except Cloud115RateLimitError as e:
+        app.logger.error(f"115下载限流: {e}")
+        response = Response(f"请求过于频繁: {e}", status=429)
+        return add_cors_headers(response)
+    except Exception as e:
+        app.logger.error(f"115文件下载失败: {str(e)}", exc_info=True)
+        response = Response(f"下载失败: {str(e)}", status=500)
+        return add_cors_headers(response)
 
 @app.route('/api/cloud115/add_offline_download', methods=['POST'])
 def cloud115_add_offline_download():
@@ -7856,6 +8580,102 @@ def cloud115_add_offline_download():
         return jsonify({
             'success': False,
             'message': f'添加离线下载任务失败: {str(e)}'
+        })
+
+@app.route('/api/cloud115/offline_tasks', methods=['GET'])
+def cloud115_offline_tasks():
+    """获取115云盘离线下载任务列表"""
+    try:
+        # 获取token
+        access_token = get_cloud115_valid_token()
+        if not access_token:
+            return jsonify({
+                'success': False,
+                'message': '未授权，请先登录115云盘'
+            })
+
+        app.logger.debug("Fetching 115 offline download tasks")
+
+        # 发送请求获取离线任务列表
+        response = requests.get(
+            'https://proapi.115.com/open/offline/list',
+            headers={
+                'Authorization': f'Bearer {access_token}'
+            },
+            timeout=15
+        )
+
+        app.logger.debug(f"115 offline tasks response status: {response.status_code}")
+
+        # 解析响应
+        try:
+            response_data = response.json()
+            app.logger.debug(f"115 offline tasks response: {response_data}")
+
+            # 检查响应状态
+            if response_data.get('state') == 1:
+                data = response_data.get('data', {})
+                tasks = []
+
+                # 处理任务列表数据
+                # 115的返回格式可能是 {data: {list: [...]}}
+                if isinstance(data, dict):
+                    task_list = data.get('list', [])
+                elif isinstance(data, list):
+                    task_list = data
+                else:
+                    task_list = []
+
+                # 转换任务格式以匹配前端期望
+                for task in task_list:
+                    task_info = task.get('info', {}) if isinstance(task, dict) else task
+
+                    # 状态映射
+                    # 1 = 下载中, 2 = 完成, 3 = 完成(已验证), 4 = 失败
+                    status_code = task.get('status', task_info.get('status', 0))
+                    status = 'unknown'
+                    if status_code == 1:
+                        status = 'downloading'
+                    elif status_code in (2, 3):
+                        status = 'finished'
+                    elif status_code == 4:
+                        status = 'failed'
+
+                    tasks.append({
+                        'name': task.get('name', task_info.get('name', '')),
+                        'url': task.get('url', task_info.get('url', '')),
+                        'file_size': task.get('file_size', task_info.get('file_size', '')),
+                        'percent': task.get('percent', task_info.get('percent', 0)),
+                        'status': status,
+                        'status_code': status_code,
+                        'add_time': task.get('add_time', task_info.get('add_time', ''))
+                    })
+
+                return jsonify({
+                    'success': True,
+                    'data': {
+                        'tasks': tasks,
+                        'count': len(tasks)
+                    }
+                })
+            else:
+                # 返回错误信息
+                error_message = response_data.get('message', '获取离线任务列表失败')
+                return jsonify({
+                    'success': False,
+                    'message': error_message
+                })
+        except Exception as e:
+            app.logger.error(f"Error parsing 115 offline tasks response: {str(e)}", exc_info=True)
+            return jsonify({
+                'success': False,
+                'message': f'解析响应失败: {str(e)}'
+            })
+    except Exception as e:
+        app.logger.error(f"Error fetching 115 offline tasks: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': f'获取离线任务列表失败: {str(e)}'
         })
 
 @app.route('/api/clear_all_data', methods=['POST'])
@@ -8890,9 +9710,10 @@ def jellyfin_player(item_id):
     
     # 获取关联的电影详细信息
     movie_detail = None
+    jellyfin_meta = {}
     video_id = movie_dict.get('video_id', '')
     app.logger.info(f"Jellyfin文件item_id={item_id}, video_id={video_id}")
-    
+
     if video_id:
         # 直接查询数据库获取完整记录
         try:
@@ -8920,10 +9741,24 @@ def jellyfin_player(item_id):
                 app.logger.warning(f"未找到video_id={video_id}的电影记录")
         except Exception as e:
             app.logger.error(f"获取电影信息失败: {e}", exc_info=True)
-    
+
+    try:
+        if not jellyfin_lib.client:
+            jellyfin_cfg = CURRENT_CONFIG.get("jellyfin", {}) or {}
+            server_url = jellyfin_cfg.get("server_url", "")
+            api_key = jellyfin_cfg.get("api_key", "")
+            username = jellyfin_cfg.get("username", "")
+            password = jellyfin_cfg.get("password", "")
+            if server_url and (api_key or (username and password)):
+                jellyfin_lib.connect_to_server(server_url, username=username, password=password, api_key=api_key)
+        jellyfin_meta = jellyfin_lib.get_item_metadata(item_id) if jellyfin_lib.client else {}
+    except Exception as e:
+        app.logger.warning(f"读取Jellyfin元数据失败 item_id={item_id}: {e}")
+
     return render_template('jellyfin_player.html',
                           movie=movie_dict,
                           movie_detail=movie_detail,
+                          jellyfin_meta=jellyfin_meta,
                           page_title=movie_dict.get('title', '影片播放'),
                           fwh_ws_host=transcription_ws_host,
                           fwh_ws_port=transcription_ws_port,
@@ -9010,22 +9845,70 @@ def jellyfin_import_library():
         
         if not library_id or not library_name:
             return jsonify({"status": "error", "message": "库ID和名称不能为空"}), 400
-        
+
         # 检查是否已连接
         if not jellyfin_lib.client:
-            return jsonify({"status": "error", "message": "未连接到Jellyfin服务器"}), 400
-        
+            jellyfin_cfg = CURRENT_CONFIG.get("jellyfin", {}) or {}
+            server_url = jellyfin_cfg.get("server_url", "")
+            api_key = jellyfin_cfg.get("api_key", "")
+            username = jellyfin_cfg.get("username", "")
+            password = jellyfin_cfg.get("password", "")
+            if server_url and (api_key or (username and password)):
+                jellyfin_lib.connect_to_server(server_url, username=username, password=password, api_key=api_key)
+            if not jellyfin_lib.client:
+                return jsonify({"status": "error", "message": "未连接到Jellyfin服务器"}), 400
+
         # 导入库
         result = jellyfin_lib.import_library(library_id, library_name)
         
         return jsonify({
-            "status": "success", 
+            "status": "success",
             "message": f"导入完成，共导入 {result['imported']} 个项目，失败 {result['failed']} 个",
             "result": result
         })
             
     except Exception as e:
         error_message = f"导入Jellyfin库失败: {str(e)}"
+        logging.error(error_message)
+        return jsonify({"status": "error", "message": error_message}), 500
+
+@app.route('/api/jellyfin/sync_library', methods=['POST'])
+def jellyfin_sync_library():
+    """Incrementally sync a Jellyfin library (by DateCreated)"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"status": "error", "message": "缺少必要参数"}), 400
+
+        library_id = data.get('library_id', '')
+        library_name = data.get('library_name', '')
+
+        if not library_id or not library_name:
+            return jsonify({"status": "error", "message": "库ID和名称不能为空"}), 400
+
+        if not jellyfin_lib.client:
+            jellyfin_cfg = CURRENT_CONFIG.get("jellyfin", {}) or {}
+            server_url = jellyfin_cfg.get("server_url", "")
+            api_key = jellyfin_cfg.get("api_key", "")
+            username = jellyfin_cfg.get("username", "")
+            password = jellyfin_cfg.get("password", "")
+            if server_url and (api_key or (username and password)):
+                jellyfin_lib.connect_to_server(server_url, username=username, password=password, api_key=api_key)
+
+        if not jellyfin_lib.client:
+            return jsonify({"status": "error", "message": "未连接到Jellyfin服务器"}), 400
+
+        result = jellyfin_lib.sync_library_incremental_by_date_created(library_id, library_name)
+        if result.get("needs_full_import"):
+            return jsonify({"status": "error", "message": result.get("message") or "需要先全量导入以初始化增量同步", "result": result}), 400
+
+        return jsonify({
+            "status": "success",
+            "message": f"增量同步完成，共导入 {result.get('imported', 0)} 个项目，失败 {result.get('failed', 0)} 个",
+            "result": result
+        })
+    except Exception as e:
+        error_message = f"增量同步Jellyfin库失败: {str(e)}"
         logging.error(error_message)
         return jsonify({"status": "error", "message": error_message}), 500
 
@@ -9548,6 +10431,94 @@ def sha256_base_encoding(text):
             "message": str(e),
             "result": ""
         })
+
+
+# ==================== 播放位置记忆API ====================
+
+@app.route('/api/playback/position', methods=['GET'])
+def get_playback_position():
+    """获取视频的播放位置"""
+    try:
+        file_id = request.args.get('file_id', '')
+        if not file_id:
+            return jsonify({'success': False, 'message': '缺少file_id参数'}), 400
+
+        position_data = db.get_playback_position(file_id)
+        if position_data:
+            return jsonify({
+                'success': True,
+                'position': position_data['position'],
+                'duration': position_data['duration'],
+                'last_played_at': position_data['last_played_at'],
+                'title': position_data.get('title'),
+                'file_size': position_data.get('file_size')
+            })
+        else:
+            return jsonify({'success': False, 'message': '未找到播放记录'}), 404
+    except Exception as e:
+        app.logger.error(f"获取播放位置失败: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/playback/position', methods=['POST'])
+def save_playback_position():
+    """保存视频的播放位置"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'message': '缺少请求体'}), 400
+
+        file_id = data.get('file_id', '')
+        file_type = data.get('file_type', 'cloud115')
+        position = data.get('position', 0)
+        duration = data.get('duration', 0)
+        title = data.get('title', '')
+        file_size = data.get('file_size', '')
+
+        if not file_id:
+            return jsonify({'success': False, 'message': '缺少file_id参数'}), 400
+
+        # 只有当播放位置大于5秒时才保存（避免意外点击产生记录）
+        if position < 5:
+            return jsonify({'success': True, 'message': '播放时间太短，不保存'})
+
+        if db.save_playback_position(file_id, file_type, position, duration, title, file_size):
+            return jsonify({'success': True, 'message': '播放位置已保存'})
+        else:
+            return jsonify({'success': False, 'message': '保存失败'}), 500
+    except Exception as e:
+        app.logger.error(f"保存播放位置失败: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/playback/position/<file_id>', methods=['DELETE'])
+def delete_playback_position(file_id):
+    """删除视频的播放位置"""
+    try:
+        if db.delete_playback_position(file_id):
+            return jsonify({'success': True, 'message': '播放位置已删除'})
+        else:
+            return jsonify({'success': False, 'message': '删除失败'}), 500
+    except Exception as e:
+        app.logger.error(f"删除播放位置失败: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/playback/positions', methods=['GET'])
+def get_all_playback_positions():
+    """获取所有播放位置记录（可选按类型筛选）"""
+    try:
+        file_type = request.args.get('file_type', '')
+        limit = request.args.get('limit', '')
+
+        positions = db.get_all_playback_positions(
+            file_type=file_type if file_type else None,
+            limit=int(limit) if limit.isdigit() else None
+        )
+        return jsonify({'success': True, 'positions': positions})
+    except Exception as e:
+        app.logger.error(f"获取播放位置列表失败: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 
 def _periodic_cleanup_worker():

@@ -142,7 +142,21 @@ class JavbusDatabase:
                 UNIQUE(filepath)
             )
             ''')
-            
+
+            # 创建播放位置表 (用于记录115/STRM视频的播放进度)
+            self.local.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS playback_positions (
+                file_id TEXT PRIMARY KEY,
+                file_type TEXT NOT NULL,
+                position REAL NOT NULL DEFAULT 0,
+                duration REAL NOT NULL DEFAULT 0,
+                last_played_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                title TEXT,
+                file_size TEXT
+            )
+            ''')
+
             self.local.conn.commit()
         except sqlite3.Error as e:
             print(f"创建表错误: {e}")
@@ -1738,6 +1752,120 @@ class JavbusDatabase:
         except sqlite3.Error as e:
             print(f"更新115云盘电影信息错误: {e}")
             return False
+
+    # ==================== 播放位置相关方法 ====================
+
+    def save_playback_position(self, file_id, file_type, position, duration=0, title=None, file_size=None):
+        """保存视频播放位置
+
+        Args:
+            file_id: 文件唯一标识 (cloud115的id, strm的id, 或其他唯一标识)
+            file_type: 文件类型 ('cloud115', 'strm', 'jellyfin' 等)
+            position: 播放位置（秒）
+            duration: 视频总时长（秒）
+            title: 视频标题
+            file_size: 文件大小（用于校验）
+
+        Returns:
+            bool: 成功返回True
+        """
+        self.ensure_connection()
+        try:
+            now = int(time.time())
+            self.local.cursor.execute('''
+            INSERT OR REPLACE INTO playback_positions
+            (file_id, file_type, position, duration, last_played_at, updated_at, title, file_size)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (file_id, file_type, position, duration, now, now, title, file_size))
+            self.local.conn.commit()
+            return True
+        except sqlite3.Error as e:
+            print(f"保存播放位置错误: {e}")
+            return False
+
+    def get_playback_position(self, file_id):
+        """获取视频播放位置
+
+        Args:
+            file_id: 文件唯一标识
+
+        Returns:
+            dict: {'position': 秒数, 'duration': 总时长, 'last_played_at': 时间戳, 'title': 标题}
+                  或 None
+        """
+        self.ensure_connection()
+        try:
+            self.local.cursor.execute('''
+            SELECT position, duration, last_played_at, title, file_size, updated_at
+            FROM playback_positions
+            WHERE file_id = ?
+            ''', (file_id,))
+
+            row = self.local.cursor.fetchone()
+            if row:
+                return {
+                    'position': row['position'],
+                    'duration': row['duration'],
+                    'last_played_at': row['last_played_at'],
+                    'title': row['title'],
+                    'file_size': row['file_size'],
+                    'updated_at': row['updated_at']
+                }
+            return None
+        except sqlite3.Error as e:
+            print(f"获取播放位置错误: {e}")
+            return None
+
+    def delete_playback_position(self, file_id):
+        """删除视频播放位置
+
+        Args:
+            file_id: 文件唯一标识
+
+        Returns:
+            bool: 成功返回True
+        """
+        self.ensure_connection()
+        try:
+            self.local.cursor.execute('''
+            DELETE FROM playback_positions WHERE file_id = ?
+            ''', (file_id,))
+            self.local.conn.commit()
+            return True
+        except sqlite3.Error as e:
+            print(f"删除播放位置错误: {e}")
+            return False
+
+    def get_all_playback_positions(self, file_type=None, limit=None):
+        """获取所有播放位置记录
+
+        Args:
+            file_type: 可选，按文件类型筛选
+            limit: 可选，返回数量限制
+
+        Returns:
+            list: 播放位置记录列表
+        """
+        self.ensure_connection()
+        try:
+            if file_type:
+                self.local.cursor.execute('''
+                SELECT file_id, file_type, position, duration, last_played_at, updated_at, title
+                FROM playback_positions
+                WHERE file_type = ?
+                ORDER BY last_played_at DESC
+                ''' + (f' LIMIT {limit}' if limit else ''), (file_type,))
+            else:
+                self.local.cursor.execute('''
+                SELECT file_id, file_type, position, duration, last_played_at, updated_at, title
+                FROM playback_positions
+                ORDER BY last_played_at DESC
+                ''' + (f' LIMIT {limit}' if limit else ''))
+
+            return [dict(row) for row in self.local.cursor.fetchall()]
+        except sqlite3.Error as e:
+            print(f"获取播放位置列表错误: {e}")
+            return []
 
 # 全局函数，用于从其他模块调用数据库操作
 def update_movie_translation(movie_id, translated_title=None, translated_summary=None):

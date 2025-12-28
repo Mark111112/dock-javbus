@@ -103,17 +103,31 @@
                                         <td>{{ library.name }}</td>
                                         <td>{{ library.server }}</td>
                                         <td>{{ library.item_count }}</td>
-                                        <td>{{ library.last_updated | timestamp_to_date }}</td>
-                                        <td>
-                                            <div class="btn-group" role="group">
-                                                <a href="{{ url_for('jellyfin_movies', library_id=library.id) }}" class="btn btn-sm btn-primary">
-                                                    <i class="fas fa-film"></i> 浏览
-                                                </a>
-                                                <button 
-                                                    type="button" 
-                                                    class="btn btn-sm btn-danger delete-library" 
-                                                    data-library-id="{{ library.id }}"
-                                                    data-library-name="{{ library.name }}">
+                                         <td>{{ library.last_updated | timestamp_to_date }}</td>
+                                         <td>
+                                             <div class="btn-group" role="group">
+                                                 <a href="{{ url_for('jellyfin_movies', library_id=library.id) }}" class="btn btn-sm btn-primary">
+                                                     <i class="fas fa-film"></i> 浏览
+                                                 </a>
+                                                 <button
+                                                     type="button"
+                                                     class="btn btn-sm btn-outline-warning full-import-library"
+                                                     data-library-id="{{ library.id }}"
+                                                     data-library-name="{{ library.name }}">
+                                                     <i class="fas fa-download"></i> 全量导入
+                                                 </button>
+                                                 <button
+                                                     type="button"
+                                                     class="btn btn-sm btn-outline-secondary sync-library"
+                                                     data-library-id="{{ library.id }}"
+                                                     data-library-name="{{ library.name }}">
+                                                     <i class="fas fa-sync"></i> 增量同步
+                                                 </button>
+                                                 <button
+                                                     type="button"
+                                                     class="btn btn-sm btn-danger delete-library"
+                                                     data-library-id="{{ library.id }}"
+                                                     data-library-name="{{ library.name }}">
                                                     <i class="fas fa-trash"></i> 删除
                                                 </button>
                                             </div>
@@ -358,11 +372,60 @@
                 alert('导入错误: ' + error.message);
             });
         }
-        
+
+        function syncJellyfinLibrary(libraryId, libraryName) {
+            const importProgressModal = new bootstrap.Modal(document.getElementById('importProgressModal'));
+            document.getElementById('import-library-name').textContent = `${libraryName}（增量同步）`;
+            importProgressModal.show();
+
+            fetch('/api/jellyfin/sync_library', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    library_id: libraryId,
+                    library_name: libraryName
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                importProgressModal.hide();
+
+                if (data.status === 'success') {
+                    alert(data.message);
+                    window.location.reload();
+                } else {
+                    alert('增量同步失败: ' + data.message);
+                }
+            })
+            .catch(error => {
+                importProgressModal.hide();
+                console.error('Error:', error);
+                alert('增量同步错误: ' + error.message);
+            });
+        }
+
         // Delete library functionality
         let libraryToDelete = null;
         const deleteModal = new bootstrap.Modal(document.getElementById('deleteLibraryModal'));
-        
+
+        document.querySelectorAll('.sync-library').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const libraryId = this.dataset.libraryId;
+                const libraryName = this.dataset.libraryName;
+                syncJellyfinLibrary(libraryId, libraryName);
+            });
+        });
+
+        document.querySelectorAll('.full-import-library').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const libraryId = this.dataset.libraryId;
+                const libraryName = this.dataset.libraryName;
+                importJellyfinLibrary(libraryId, libraryName);
+            });
+        });
+
         document.querySelectorAll('.delete-library').forEach(btn => {
             btn.addEventListener('click', function() {
                 const libraryId = this.dataset.libraryId;

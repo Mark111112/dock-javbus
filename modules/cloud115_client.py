@@ -22,6 +22,7 @@ from requests.cookies import create_cookie
 
 from modules import m115_crypto
 
+_logger = logging.getLogger(__name__)
 
 __all__ = [
     "Cloud115Client",
@@ -171,6 +172,28 @@ class OpenAPIClient:
 
     def get_video_play(self, pickcode: str) -> Dict[str, Any]:
         return self._request("video/play", {"pick_code": pickcode})
+
+    def delete_files(self, file_ids: List[str]) -> Dict[str, Any]:
+        """删除文件或文件夹
+
+        Args:
+            file_ids: 文件ID列表（可以是文件或文件夹的ID）
+
+        Returns:
+            删除操作的结果
+        """
+        return self._request("file/delete_s", {"fid": file_ids})
+
+    def delete_file(self, file_id: str) -> Dict[str, Any]:
+        """删除单个文件或文件夹
+
+        Args:
+            file_id: 文件或文件夹的ID
+
+        Returns:
+            删除操作的结果
+        """
+        return self.delete_files([file_id])
 
 
 # ============================================================================
@@ -427,13 +450,27 @@ class DriverClient:
             if file_size_int < 0:
                 raise RuntimeError("115 driver 返回的文件大小无效，可能下载任务失败")
 
+            # 处理url字段，可能是字典或字符串
+            url_obj = info.get("url")
+            if isinstance(url_obj, dict):
+                download_url = url_obj.get("url")
+                url_client = url_obj.get("client")
+                url_oss_id = url_obj.get("oss_id")
+                url_auth_cookie = url_obj.get("auth_cookie")
+            else:
+                download_url = url_obj
+                url_client = None
+                url_oss_id = None
+                url_auth_cookie = None
+
             result = {
                 "file_name": info.get("file_name"),
                 "file_size": file_size_int,
                 "pick_code": info.get("pick_code"),
-                "url": info.get("url", {}).get("url") if isinstance(info.get("url"), dict) else info.get("url"),
-                "client": info.get("url", {}).get("client") if isinstance(info.get("url"), dict) else None,
-                "oss_id": info.get("url", {}).get("oss_id") if isinstance(info.get("url"), dict) else None,
+                "url": download_url,
+                "client": url_client,
+                "oss_id": url_oss_id,
+                "auth_cookie": url_auth_cookie or info.get("auth_cookie"),
                 "raw": info,
                 "decoded_data": download_data,
                 "encoded_data": encoded_response,
@@ -447,6 +484,172 @@ class DriverClient:
             return result
 
         raise RuntimeError("115 driver 下载信息中未找到文件记录")
+
+    def delete_files(self, file_ids: List[str]) -> Dict[str, Any]:
+        """删除文件或文件夹
+
+        Args:
+            file_ids: 文件ID列表（可以是文件或文件夹的ID）
+
+        Returns:
+            删除操作的结果
+        """
+        self.ensure_login()
+
+        # 115的删除API格式
+        # 单个: fid=文件ID
+        # 多个: fid[]=ID1&fid[]=ID2 或 fid=ID1,ID2,ID3
+        if len(file_ids) == 1:
+            params = {"fid": str(file_ids[0])}
+        else:
+            # 多个文件用逗号分隔
+            params = {"fid": ",".join(str(fid) for fid in file_ids)}
+
+        last_error = None
+        # 使用115的回收站删除API
+        delete_urls = [
+            "https://webapi.115.com/rb/delete",
+            "http://web.api.115.com/rb/delete"
+        ]
+
+        for delete_url in delete_urls:
+            try:
+                with self._lock:
+                    response = self.session.post(delete_url, data=params, timeout=self.timeout)
+
+                if response.status_code == 403:
+                    last_error = Cloud115RateLimitError("115driver 删除文件限流 (HTTP 403)")
+                    continue
+
+                response.raise_for_status()
+                payload = response.json()
+
+                # 115删除成功返回: {"state": true, "errno": 0, "msg": ""}
+                # 或者: {"state": true, "error": 0} 之类的格式
+                return payload
+            except Cloud115RateLimitError as exc:
+                last_error = exc
+                continue
+            except Exception as exc:
+                last_error = exc
+                continue
+
+        if last_error:
+            raise last_error
+        raise RuntimeError("115 driver 删除文件失败")
+
+    def delete_file(self, file_id: str) -> Dict[str, Any]:
+        """删除单个文件或文件夹
+
+        Args:
+            file_id: 文件或文件夹的ID
+
+        Returns:
+            删除操作的结果
+        """
+        return self.delete_files([file_id])
+
+    def download_file(self, url: str, auth_cookie: Optional[Dict[str, str]] = None) -> requests.Response:
+        """使用已认证的session下载文件
+
+        Args:
+            url: 下载URL
+            auth_cookie: 可选的认证cookie字典
+
+        Returns:
+            requests.Response对象
+        """
+        self.ensure_login()
+
+        # 如果提供了auth_cookie，临时添加到session
+        if auth_cookie:
+            cookie_name = auth_cookie.get('name')
+            cookie_value = auth_cookie.get('value')
+            cookie_path = auth_cookie.get('path', '/')
+            if cookie_name and cookie_value:
+                from http.cookiejar import Cookie
+                cookie = Cookie(
+                    version=0,
+                    name=cookie_name,
+                    value=cookie_value,
+                    port=None,
+                    port_specified=False,
+                    domain='115cdn.net',
+                    domain_specified=True,
+                    domain_initial_dot=False,
+                    path=cookie_path,
+                    path_specified=True,
+                    secure=True,
+                    expires=None,
+                    discard=False,
+                    comment=None,
+                    comment_url=None,
+                    rest={},
+                    rfc2109=False
+                )
+                self.session.cookies.set_cookie(cookie)
+
+        # 使用已认证的session下载
+        return self.session.get(url, stream=True, timeout=60)
+
+    def move_file(self, file_id: str, target_cid: str, file_name: Optional[str] = None) -> Dict[str, Any]:
+        """移动文件或文件夹到指定目录
+
+        Args:
+            file_id: 要移动的文件或文件夹ID
+            target_cid: 目标目录ID
+            file_name: 可选的新文件名（用于重命名+移动）
+
+        Returns:
+            操作结果
+        """
+        self.ensure_login()
+
+        # 115移动API参数格式（参考115driver库）
+        # pid: 目标目录ID (parent directory id)
+        # fid[0]: 文件ID（数组格式）
+        params = {
+            "pid": str(target_cid),
+            "fid[0]": str(file_id),
+        }
+
+        if file_name:
+            params["file_name"] = file_name
+
+        _logger.info(f"115移动参数: {params}")
+
+        last_error = None
+        # 使用115的移动API端点
+        move_urls = [
+            "https://webapi.115.com/files/move",
+            "http://web.api.115.com/files/move"
+        ]
+        for move_url in move_urls:
+            try:
+                with self._lock:
+                    response = self.session.post(move_url, data=params, timeout=self.timeout)
+
+                if response.status_code == 403:
+                    last_error = Cloud115RateLimitError("115driver 移动文件限流 (HTTP 403)")
+                    continue
+
+                response.raise_for_status()
+                payload = response.json()
+
+                _logger.info(f"115移动响应: {payload}")
+
+                # 115移动成功返回: {"state": true, "errno": 0, "msg": ""}
+                return payload
+            except Cloud115RateLimitError as exc:
+                last_error = exc
+                continue
+            except Exception as exc:
+                last_error = exc
+                continue
+
+        if last_error:
+            raise last_error
+        raise RuntimeError("115 driver 移动文件失败")
 
     def _normalize_list_response(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         files = payload.get("data") or []
@@ -789,4 +992,22 @@ class Cloud115Client:
             raise Cloud115ConfigError("115driver 未配置，无法获取下载信息")
         return self.driver.get_download_info(*args, **kwargs)
 
+    def delete_files(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        """删除文件或文件夹（优先使用driver）"""
+        return self._call("delete_files", *args, **kwargs)
 
+    def delete_file(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        """删除单个文件或文件夹（优先使用driver）"""
+        return self._call("delete_file", *args, **kwargs)
+
+    def download_file(self, url: str, auth_cookie: Optional[Dict[str, str]] = None) -> requests.Response:
+        """使用已认证的session下载文件（仅driver支持）"""
+        if not self.driver:
+            raise Cloud115ConfigError("115driver 未配置，无法下载文件")
+        return self.driver.download_file(url, auth_cookie)
+
+    def move_file(self, file_id: str, target_cid: str, file_name: Optional[str] = None) -> Dict[str, Any]:
+        """移动文件或文件夹到指定目录（仅driver支持）"""
+        if not self.driver:
+            raise Cloud115ConfigError("115driver 未配置，无法移动文件")
+        return self.driver.move_file(file_id, target_cid, file_name)

@@ -22,7 +22,223 @@
             max-width: 100%;
         }
     }
-    
+
+    /* 容器全屏时的样式 */
+    .video-container:fullscreen,
+    .video-container:-webkit-full-screen,
+    .video-container:-moz-full-screen,
+    .video-container:-ms-fullscreen {
+        padding-top: 0;
+        width: 100vw;
+        height: 100vh;
+        background: #000;
+        border-radius: 0;
+    }
+
+    .video-container:fullscreen #player115,
+    .video-container:fullscreen #alistPlayer,
+    .video-container:fullscreen #direct115Player,
+    .video-container:-webkit-full-screen #player115,
+    .video-container:-webkit-full-screen #alistPlayer,
+    .video-container:-webkit-full-screen #direct115Player {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        background: #000;
+    }
+
+    /* 容器全屏时字幕层样式 */
+    .video-container:fullscreen .live-caption-layer,
+    .video-container:-webkit-full-screen .live-caption-layer {
+        bottom: 14%;
+        max-width: 90%;
+        font-size: 1.4rem;
+        padding: 6px 14px;
+    }
+
+    /* 隐藏原生控件 */
+    #player115::-webkit-media-controls,
+    #alistPlayer::-webkit-media-controls,
+    #direct115Player::-webkit-media-controls {
+        display: none !important;
+    }
+
+    #player115::-webkit-media-controls-enclosure,
+    #alistPlayer::-webkit-media-controls-enclosure,
+    #direct115Player::-webkit-media-controls-enclosure {
+        display: none !important;
+    }
+
+    /* 统一控制条样式 */
+    .unified-controls {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 14px;
+        background: linear-gradient(transparent, rgba(0, 0, 0, 0.8));
+        opacity: 0;
+        transition: opacity 0.3s ease;
+        z-index: 150;
+    }
+
+    .video-container:hover .unified-controls,
+    .unified-controls:hover,
+    .video-container.controls-visible .unified-controls {
+        opacity: 1;
+    }
+
+    .video-container:fullscreen .unified-controls,
+    .video-container:-webkit-full-screen .unified-controls {
+        opacity: 0;
+        transition: opacity 0.3s ease;
+    }
+
+    .video-container:fullscreen.controls-visible .unified-controls,
+    .video-container:-webkit-full-screen.controls-visible .unified-controls {
+        opacity: 1;
+    }
+
+    .unified-controls-left,
+    .unified-controls-right {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .unified-controls-center {
+        flex: 1;
+        margin: 0 16px;
+    }
+
+    .unified-btn {
+        background: transparent;
+        border: none;
+        color: #fff;
+        padding: 6px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 4px;
+        transition: background 0.2s;
+    }
+
+    .unified-btn:hover {
+        background: rgba(255, 255, 255, 0.2);
+    }
+
+    .unified-btn i {
+        font-size: 1.2rem;
+    }
+
+    .unified-time {
+        color: #fff;
+        font-size: 0.85rem;
+        font-family: Arial, Helvetica, sans-serif;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .unified-progress {
+        position: relative;
+        width: 100%;
+        height: 5px;
+        background: rgba(255, 255, 255, 0.3);
+        border-radius: 3px;
+        cursor: pointer;
+        transition: height 0.2s;
+    }
+
+    .unified-progress:hover {
+        height: 8px;
+    }
+
+    /* 进度条悬停提示 */
+    .unified-progress-tooltip {
+        position: absolute;
+        bottom: 100%;
+        transform: translateX(-50%);
+        margin-bottom: 8px;
+        padding: 4px 8px;
+        font-size: 12px;
+        color: #fff;
+        background: rgba(0, 0, 0, 0.85);
+        border-radius: 4px;
+        white-space: nowrap;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.15s ease;
+        z-index: 200;
+    }
+
+    .unified-progress-tooltip::after {
+        content: '';
+        position: absolute;
+        top: 100%;
+        left: 50%;
+        transform: translateX(-50%);
+        border: 4px solid transparent;
+        border-top-color: rgba(0, 0, 0, 0.85);
+    }
+
+    .unified-progress-tooltip.visible {
+        opacity: 1;
+    }
+
+    .unified-buffer {
+        position: absolute;
+        left: 0;
+        top: 0;
+        height: 100%;
+        background: rgba(255, 255, 255, 0.4);
+        border-radius: 3px;
+        width: 0%;
+        transition: width 0.1s linear;
+    }
+
+    .unified-filled {
+        position: absolute;
+        left: 0;
+        top: 0;
+        height: 100%;
+        background: #3b82f6;
+        border-radius: 3px;
+        width: 0%;
+        transition: width 0.1s linear;
+    }
+
+    .unified-volume-slider {
+        width: 80px;
+        height: 4px;
+        background: rgba(255, 255, 255, 0.3);
+        border-radius: 2px;
+        outline: none;
+        cursor: pointer;
+    }
+
+    .unified-volume-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 12px;
+        height: 12px;
+        background: #fff;
+        border-radius: 50%;
+        cursor: pointer;
+    }
+
+    .unified-volume-slider::-moz-range-thumb {
+        width: 12px;
+        height: 12px;
+        background: #fff;
+        border: none;
+        border-radius: 50%;
+        cursor: pointer;
+    }
+
     .video-js {
         position: absolute;
         top: 0;
@@ -59,166 +275,12 @@
         z-index: 9999;
         white-space: pre-wrap;
     }
-    
-    /* 隐藏原生控件的进度条（仅在使用转码流时） */
-    #direct115Player.custom-progress-bar::-webkit-media-controls-timeline,
-    #direct115Player.custom-progress-bar::-webkit-media-controls-current-time-display,
-    #direct115Player.custom-progress-bar::-webkit-media-controls-time-remaining-display {
+
+    /* 隐藏原生控件 */
+    #direct115Player::-webkit-media-controls-enclosure {
         display: none !important;
     }
 
-    /* 完全隐藏原生控件（用于自定义控制条模式） */
-    #direct115Player.custom-no-native-controls::-webkit-media-controls-enclosure {
-        display: none !important;
-    }
-    
-    /* 自定义进度条容器 */
-    .custom-progress-container {
-        position: absolute;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        height: 64px;
-        background: linear-gradient(to top, rgba(0,0,0,0.8), transparent);
-        display: flex;
-        align-items: center;
-        padding: 0 15px;
-        z-index: 10;
-        pointer-events: none;
-        gap: 8px;
-    }
-    
-    .custom-progress-container.active {
-        pointer-events: all;
-    }
-
-    .custom-controls-left,
-    .custom-controls-right {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        flex-shrink: 0;
-    }
-
-    .custom-controls-left {
-        margin-right: 4px;
-    }
-
-    .custom-controls-right {
-        margin-left: 4px;
-    }
-
-    .custom-control-button {
-        border: none;
-        background: rgba(0, 0, 0, 0.4);
-        color: #fff;
-        border-radius: 4px;
-        padding: 3px 6px;
-        font-size: 12px;
-        line-height: 1;
-        cursor: pointer;
-    }
-
-    .custom-control-button:hover {
-        background: rgba(255, 255, 255, 0.15);
-    }
-
-    .custom-volume-slider {
-        width: 80px;
-    }
-    
-    /* 自定义进度条 */
-    .custom-progress-bar {
-        width: 100%;
-        height: 6px;
-        background: rgba(255, 255, 255, 0.3);
-        border-radius: 3px;
-        position: relative;
-        cursor: pointer;
-        margin: 0 10px;
-    }
-    
-    .custom-progress-bar:hover {
-        height: 8px;
-    }
-    
-    .custom-progress-filled {
-        height: 100%;
-        background: #007bff;
-        border-radius: 3px;
-        position: relative;
-        transition: width 0.1s linear;
-    }
-    
-    .custom-progress-bar:hover .custom-progress-filled {
-        background: #0056b3;
-    }
-    
-    .custom-progress-buffer {
-        position: absolute;
-        top: 0;
-        left: 0;
-        height: 100%;
-        background: rgba(255, 255, 255, 0.5);
-        border-radius: 3px;
-        pointer-events: none;
-    }
-    
-    .custom-progress-handle {
-        position: absolute;
-        top: 50%;
-        right: -8px;
-        width: 16px;
-        height: 16px;
-        background: #fff;
-        border-radius: 50%;
-        transform: translateY(-50%);
-        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
-        opacity: 0;
-        transition: opacity 0.2s;
-        pointer-events: none;
-    }
-    
-    .custom-progress-bar:hover .custom-progress-handle {
-        opacity: 1;
-    }
-
-    /* 进度条悬停提示 */
-    .custom-progress-tooltip {
-        position: absolute;
-        bottom: 100%;
-        transform: translateX(-50%);
-        padding: 2px 6px;
-        font-size: 11px;
-        color: #fff;
-        background: rgba(0, 0, 0, 0.8);
-        border-radius: 3px;
-        white-space: nowrap;
-        pointer-events: none;
-        opacity: 0;
-        transition: opacity 0.15s;
-    }
-
-    .custom-progress-tooltip.visible {
-        opacity: 1;
-    }
-    
-    /* 时间显示 */
-    .custom-time-display {
-        color: #fff;
-        font-size: 12px;
-        font-weight: 500;
-        text-shadow: 0 1px 2px rgba(0,0,0,0.8);
-        white-space: nowrap;
-        min-width: 80px;
-        text-align: right;
-    }
-    
-    .custom-time-display.current {
-        text-align: left;
-        min-width: 80px;
-    }
-    
     .video-info {
         padding: 1rem;
         background-color: #f8f9fa;
@@ -254,7 +316,7 @@
         width: 100%;
         height: 100%;
         background-color: rgba(0,0,0,0.8);
-        display: flex;
+        display: none;
         justify-content: center;
         align-items: center;
         z-index: 100;
@@ -725,9 +787,8 @@
                             <div class="mode-section {% if initial_mode == 'alist' %}active{% endif %}" id="alistSection">
                                 {% if alist_enabled %}
                                 <div class="video-container">
-                                    <video id="alistPlayer" 
-                                           controls 
-                                           crossorigin="anonymous" 
+                                    <video id="alistPlayer"
+                                           crossorigin="anonymous"
                                            preload="metadata"
                                            playsinline
                                            webkit-playsinline
@@ -745,6 +806,33 @@
                                         </div>
                                         <p>正在通过Alist获取视频地址...</p>
                                     </div>
+                                    <!-- 统一控制条 -->
+                                    <div class="unified-controls" data-video="alistPlayer">
+                                        <div class="unified-controls-left">
+                                            <button class="unified-btn unified-play-btn" title="播放/暂停">
+                                                <i class="bi bi-play-fill"></i>
+                                            </button>
+                                            <div class="unified-time">
+                                                <span class="current-time">00:00</span> / <span class="total-time">00:00</span>
+                                            </div>
+                                        </div>
+                                        <div class="unified-controls-center">
+                                            <div class="unified-progress">
+                                                <div class="unified-progress-tooltip">00:00</div>
+                                                <div class="unified-buffer"></div>
+                                                <div class="unified-filled"></div>
+                                            </div>
+                                        </div>
+                                        <div class="unified-controls-right">
+                                            <button class="unified-btn unified-mute-btn" title="静音">
+                                                <i class="bi bi-volume-up"></i>
+                                            </button>
+                                            <input type="range" class="unified-volume-slider" min="0" max="1" step="0.1" value="1">
+                                            <button class="unified-btn unified-fullscreen-btn" title="全屏">
+                                                <i class="bi bi-fullscreen"></i>
+                                            </button>
+                                        </div>
+                                    </div>
                                 </div>
                                 {% else %}
                                 <div class="alert alert-warning mt-3">
@@ -756,7 +844,6 @@
                             <div class="mode-section {% if initial_mode == 'direct' %}active{% endif %}" id="direct115Section">
                                 <div class="video-container">
                                     <video id="direct115Player"
-                                           controls
                                            crossorigin="anonymous"
                                            preload="metadata"
                                            playsinline
@@ -770,24 +857,31 @@
                                         </p>
                                     </video>
                                     <div id="liveCaptionLayerDirect" class="live-caption-layer"></div>
-                                    <!-- 自定义进度条和控制条（仅在使用转码流时显示） -->
-                                    <div id="customProgressContainer" class="custom-progress-container" style="display: none;">
-                                        <div class="custom-controls-left">
-                                            <button id="customPlayPauseBtn" class="custom-control-button" type="button">▶</button>
-                                            <button id="customMuteBtn" class="custom-control-button" type="button">🔊</button>
-                                            <input id="customVolumeSlider" class="custom-volume-slider" type="range" min="0" max="1" step="0.05" value="1">
-                                        </div>
-                                        <div class="custom-time-display current" id="customCurrentTime">00:00</div>
-                                        <div class="custom-progress-bar" id="customProgressBar">
-                                            <div class="custom-progress-tooltip" id="customProgressTooltip">00:00</div>
-                                            <div class="custom-progress-buffer" id="customProgressBuffer"></div>
-                                            <div class="custom-progress-filled" id="customProgressFilled">
-                                                <div class="custom-progress-handle"></div>
+                                    <!-- 统一控制条 -->
+                                    <div class="unified-controls" data-video="direct115Player">
+                                        <div class="unified-controls-left">
+                                            <button class="unified-btn unified-play-btn" title="播放/暂停">
+                                                <i class="bi bi-play-fill"></i>
+                                            </button>
+                                            <div class="unified-time">
+                                                <span class="current-time">00:00</span> / <span class="total-time">00:00</span>
                                             </div>
                                         </div>
-                                        <div class="custom-time-display" id="customTotalTime">00:00</div>
-                                        <div class="custom-controls-right">
-                                            <button id="customFullscreenBtn" class="custom-control-button" type="button">⛶</button>
+                                        <div class="unified-controls-center">
+                                            <div class="unified-progress">
+                                                <div class="unified-progress-tooltip">00:00</div>
+                                                <div class="unified-buffer"></div>
+                                                <div class="unified-filled"></div>
+                                            </div>
+                                        </div>
+                                        <div class="unified-controls-right">
+                                            <button class="unified-btn unified-mute-btn" title="静音">
+                                                <i class="bi bi-volume-up"></i>
+                                            </button>
+                                            <input type="range" class="unified-volume-slider" min="0" max="1" step="0.1" value="1">
+                                            <button class="unified-btn unified-fullscreen-btn" title="全屏">
+                                                <i class="bi bi-fullscreen"></i>
+                                            </button>
                                         </div>
                                     </div>
                                     <div id="direct-loading-overlay" class="loading-overlay">
@@ -801,8 +895,7 @@
 
                             <div class="mode-section {% if initial_mode not in ['alist', 'direct'] %}active{% endif %}" id="cloud115Section">
                                 <div class="video-container">
-                                    <video id="player115" 
-                                           controls 
+                                    <video id="player115"
                                            crossorigin="anonymous"
                                            playsinline
                                            webkit-playsinline
@@ -816,6 +909,34 @@
                                     </video>
 
                                     <div id="liveCaptionLayer" class="live-caption-layer"></div>
+
+                                    <!-- 统一控制条 -->
+                                    <div class="unified-controls" data-video="player115">
+                                        <div class="unified-controls-left">
+                                            <button class="unified-btn unified-play-btn" title="播放/暂停">
+                                                <i class="bi bi-play-fill"></i>
+                                            </button>
+                                            <div class="unified-time">
+                                                <span class="current-time">00:00</span> / <span class="total-time">00:00</span>
+                                            </div>
+                                        </div>
+                                        <div class="unified-controls-center">
+                                            <div class="unified-progress">
+                                                <div class="unified-progress-tooltip">00:00</div>
+                                                <div class="unified-buffer"></div>
+                                                <div class="unified-filled"></div>
+                                            </div>
+                                        </div>
+                                        <div class="unified-controls-right">
+                                            <button class="unified-btn unified-mute-btn" title="静音">
+                                                <i class="bi bi-volume-up"></i>
+                                            </button>
+                                            <input type="range" class="unified-volume-slider" min="0" max="1" step="0.1" value="1">
+                                            <button class="unified-btn unified-fullscreen-btn" title="全屏">
+                                                <i class="bi bi-fullscreen"></i>
+                                            </button>
+                                        </div>
+                                    </div>
 
                                     <div id="loading-overlay" class="loading-overlay">
                                         <div class="spinner-border text-light mb-3" role="status">
@@ -1073,24 +1194,8 @@
         let directTranscodeFallbackTriggered = false;
         const stopTranscodeBtn = document.getElementById('stop-transcode-btn');
         const openTranscodeAdminBtn = document.getElementById('open-transcode-admin-btn');
-        
-        // 自定义进度条相关元素
-        const customProgressContainer = document.getElementById('customProgressContainer');
-        const customProgressBar = document.getElementById('customProgressBar');
-        const customProgressFilled = document.getElementById('customProgressFilled');
-        const customProgressBuffer = document.getElementById('customProgressBuffer');
-        const customProgressTooltip = document.getElementById('customProgressTooltip');
-        const customCurrentTime = document.getElementById('customCurrentTime');
-        const customTotalTime = document.getElementById('customTotalTime');
-        const customPlayPauseBtn = document.getElementById('customPlayPauseBtn');
-        const customMuteBtn = document.getElementById('customMuteBtn');
-        const customVolumeSlider = document.getElementById('customVolumeSlider');
-        const customFullscreenBtn = document.getElementById('customFullscreenBtn');
-        
-        // 自定义进度条状态
-        let customProgressTotalDuration = 0; // 视频总时长（秒）
-        let customProgressIsDragging = false;
-        let customProgressOffset = 0; // 当前转码流起始偏移（秒）
+
+        // 转码流播放相关状态
         let pendingSeekTarget = null;
 
         const ACTIVE_STATUSES = ['queued','starting','running','ready'];
@@ -1110,17 +1215,6 @@
                 stopTranscodeBtn.textContent = '停止转码';
             } else {
                 stopTranscodeBtn.disabled = true;
-            }
-        }
-
-        function setDirectNativeControlsEnabled(enabled) {
-            if (!directPlayer) return;
-            if (enabled) {
-                directPlayer.setAttribute('controls', '');
-                directPlayer.classList.remove('custom-no-native-controls');
-            } else {
-                directPlayer.removeAttribute('controls');
-                directPlayer.classList.add('custom-no-native-controls');
             }
         }
 
@@ -1250,210 +1344,18 @@
             directHlsInstance = null;
         }
 
-        // 初始化自定义进度条
-        function initCustomProgressBar() {
-            if (!customProgressBar || !directPlayer) return;
-            
-            function updateTooltip(e) {
-                if (!customProgressTooltip || !customProgressTotalDuration || customProgressTotalDuration <= 0) return;
-                const rect = customProgressBar.getBoundingClientRect();
-                const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
-                const percentage = x / rect.width;
-                const hoverTime = percentage * customProgressTotalDuration;
-                customProgressTooltip.style.left = `${(percentage * 100)}%`;
-                customProgressTooltip.textContent = formatTime(hoverTime);
-                customProgressTooltip.classList.add('visible');
-            }
-
-            function hideTooltip() {
-                if (!customProgressTooltip) return;
-                customProgressTooltip.classList.remove('visible');
-            }
-
-            // 点击进度条跳转
-            customProgressBar.addEventListener('click', function(e) {
-                if (!customProgressTotalDuration || customProgressTotalDuration <= 0) return;
-                
-                const rect = customProgressBar.getBoundingClientRect();
-                const clickX = e.clientX - rect.left;
-                const percentage = Math.max(0, Math.min(1, clickX / rect.width));
-                const targetTime = percentage * customProgressTotalDuration;
-                
-                // 跳转到目标时间
-                seekToTime(targetTime);
-            });
-
-            customProgressBar.addEventListener('mousemove', function(e) {
-                updateTooltip(e);
-            });
-
-            customProgressBar.addEventListener('mouseleave', function() {
-                hideTooltip();
-            });
-            
-            // 拖拽进度条
-            let isDragging = false;
-            customProgressBar.addEventListener('mousedown', function(e) {
-                if (!customProgressTotalDuration || customProgressTotalDuration <= 0) return;
-                isDragging = true;
-                customProgressIsDragging = true;
-                updateProgressOnDrag(e);
-                updateTooltip(e);
-            });
-            
-            document.addEventListener('mousemove', function(e) {
-                if (isDragging && customProgressIsDragging) {
-                    updateProgressOnDrag(e);
-                    updateTooltip(e);
-                }
-            });
-            
-            document.addEventListener('mouseup', function() {
-                if (isDragging && customProgressIsDragging) {
-                    isDragging = false;
-                    customProgressIsDragging = false;
-                    hideTooltip();
-                }
-            });
-            
-            function updateProgressOnDrag(e) {
-                if (!customProgressBar || !customProgressTotalDuration) return;
-                const rect = customProgressBar.getBoundingClientRect();
-                const dragX = e.clientX - rect.left;
-                const percentage = Math.max(0, Math.min(1, dragX / rect.width));
-                const targetTime = percentage * customProgressTotalDuration;
-                
-                // 更新进度条显示
-                updateCustomProgress(targetTime, customProgressTotalDuration);
-            }
-        }
-        
-        // 更新自定义进度条
-        function updateCustomProgress(currentTime, totalDuration) {
-            if (!customProgressFilled || !customCurrentTime || !customTotalTime) return;
-            
-            if (totalDuration > 0) {
-                const playbackTime = Math.max(0, Math.min(totalDuration, currentTime + customProgressOffset));
-                const percentage = (playbackTime / totalDuration) * 100;
-                customProgressFilled.style.width = percentage + '%';
-                customCurrentTime.textContent = formatTime(playbackTime);
-                customTotalTime.textContent = formatTime(totalDuration);
-            }
-        }
-
-        // 自定义播放/暂停、音量和全屏控制
-        if (customPlayPauseBtn && directPlayer) {
-            customPlayPauseBtn.addEventListener('click', function() {
-                if (directPlayer.paused) {
-                    directPlayer.play().catch(() => {});
-                } else {
-                    directPlayer.pause();
-                }
-            });
-
-            directPlayer.addEventListener('play', function() {
-                customPlayPauseBtn.textContent = '⏸';
-            });
-
-            directPlayer.addEventListener('pause', function() {
-                customPlayPauseBtn.textContent = '▶';
-            });
-        }
-
-        if (customVolumeSlider && directPlayer) {
-            // 初始化显示
-            customVolumeSlider.value = typeof directPlayer.volume === 'number' ? directPlayer.volume : 1;
-
-            customVolumeSlider.addEventListener('input', function() {
-                const v = parseFloat(customVolumeSlider.value);
-                if (!isNaN(v)) {
-                    directPlayer.volume = v;
-                    if (customMuteBtn) {
-                        customMuteBtn.textContent = v === 0 ? '🔇' : '🔊';
-                    }
-                }
-            });
-        }
-
-        if (customMuteBtn && directPlayer) {
-            customMuteBtn.addEventListener('click', function() {
-                directPlayer.muted = !directPlayer.muted;
-                if (directPlayer.muted) {
-                    customMuteBtn.textContent = '🔇';
-                    if (customVolumeSlider) customVolumeSlider.value = 0;
-                } else {
-                    customMuteBtn.textContent = '🔊';
-                    if (customVolumeSlider && parseFloat(customVolumeSlider.value) === 0) {
-                        customVolumeSlider.value = 1;
-                        directPlayer.volume = 1;
-                    }
-                }
-            });
-        }
-
-        if (customFullscreenBtn && directPlayer) {
-            customFullscreenBtn.addEventListener('click', function() {
-                const container = document.getElementById('direct115Section') || directPlayer.parentElement || directPlayer;
-                if (!document.fullscreenElement) {
-                    if (container.requestFullscreen) {
-                        container.requestFullscreen().catch(() => {});
-                    } else if (container.webkitRequestFullscreen) {
-                        container.webkitRequestFullscreen();
-                    }
-                } else {
-                    if (document.exitFullscreen) {
-                        document.exitFullscreen().catch(() => {});
-                    } else if (document.webkitExitFullscreen) {
-                        document.webkitExitFullscreen();
-                    }
-                }
-            });
-        }
-        
-        // 显示/隐藏自定义进度条和自定义控制条
-        function showCustomProgressBar(show, totalDuration, offset = 0) {
-            if (!customProgressContainer || !directPlayer) return;
-            
-            if (show && totalDuration > 0) {
-                customProgressTotalDuration = totalDuration;
-                customProgressOffset = Math.max(0, offset);
-                customProgressContainer.style.display = 'flex';
-                customProgressContainer.classList.add('active');
-                // 隐藏原生控件的进度条
-                setDirectNativeControlsEnabled(false);
-                // 更新总时长显示
-                if (customTotalTime) {
-                    customTotalTime.textContent = formatTime(totalDuration);
-                }
-                if (customCurrentTime) {
-                    customCurrentTime.textContent = formatTime(customProgressOffset);
-                }
-            } else {
-                customProgressContainer.style.display = 'none';
-                customProgressContainer.classList.remove('active');
-                setDirectNativeControlsEnabled(true);
-                customProgressTotalDuration = 0;
-                customProgressOffset = 0;
-            }
-        }
-        
         // 跳转到指定时间
         function seekToTime(targetTime) {
             if (!directUsingTranscode || !directTranscodeInfo) return;
-            
+
             const taskId = directTranscodeInfo.task_id || directTranscodeInfo.id;
             if (!taskId) return;
-            
-            console.log(`[CustomProgress] 跳转到 ${targetTime.toFixed(2)} 秒`);
-            
+
+            console.log(`[Transcode] 跳转到 ${targetTime.toFixed(2)} 秒`);
+
             pendingSeekTarget = targetTime;
             stopDirectTranscodePolling();
-            
-            // 更新进度条显示，使用户能看到目标位置
-            if (customProgressTotalDuration > 0) {
-                updateCustomProgress(targetTime, customProgressTotalDuration);
-            }
-            
+
             // 暂停播放并清空当前缓冲
             try {
                 directPlayer.pause();
@@ -1462,11 +1364,11 @@
             } catch (err) {
                 console.warn('清空播放器状态失败:', err);
             }
-            
+
             // 销毁当前 HLS 实例，避免继续请求旧的片段
             clearDirectHlsInstance();
             directUsingTranscode = false;
-            
+
             setAlert(directStatus, `<i class="fas fa-spinner fa-spin"></i> 正在跳转到 ${formatTime(targetTime)}...`, 'info');
             
             fetch(`/api/cloud115/transcode/seek/${taskId}`, {
@@ -1501,7 +1403,7 @@
                 }
             })
             .catch(err => {
-                console.error(`[CustomProgress] 跳转请求失败: ${err.message}`);
+                console.error(`[Transcode] 跳转请求失败: ${err.message}`);
                 setAlert(directStatus, `<i class="fas fa-exclamation-triangle"></i> 跳转请求失败: ${err.message}`, 'danger');
             });
         }
@@ -1512,10 +1414,9 @@
             }
             directUsingTranscode = true;
             directTranscodeInfo = Object.assign({}, directTranscodeInfo || {}, info);
-            const startOffset = parseFloat(info.start_offset || 0) || 0;
-            customProgressOffset = startOffset;
+
+            // 清除pending seek target
             if (pendingSeekTarget !== null && pendingSeekTarget !== undefined) {
-                customProgressOffset = pendingSeekTarget;
                 pendingSeekTarget = null;
             }
             stopDirectTranscodePolling();
@@ -1531,9 +1432,6 @@
                 const durationSeconds = parseFloat(info.duration);
                 if (durationSeconds > 0) {
                     videoDurationEl.textContent = formatTime(durationSeconds);
-                    // 显示自定义进度条
-                    showCustomProgressBar(true, durationSeconds, customProgressOffset);
-                    updateCustomProgress(0, durationSeconds);
                 }
             }
 
@@ -1577,7 +1475,7 @@
                             if (directTranscodeInfo) {
                                 directTranscodeInfo.duration = totalDuration;
                             }
-                            
+
                             // 尝试通过 HLS.js level 设置总时长
                             if (directHlsInstance.levels && directHlsInstance.levels.length > 0) {
                                 const level = directHlsInstance.levels[0];
@@ -1585,17 +1483,14 @@
                                     level.totalduration = totalDuration;
                                 }
                             }
-                            
+
                             // 更新 UI 显示的时长
                             if (videoDurationEl) {
                                 videoDurationEl.textContent = formatTime(totalDuration);
                             }
-                            
-                            // 显示自定义进度条，保持当前的起始偏移量
-                            showCustomProgressBar(true, totalDuration, customProgressOffset);
                         }
                     }
-                    
+
                     // 等待元数据加载后，更新时长显示
                     const onMetadataLoaded = () => {
                         directPlayer.removeEventListener('loadedmetadata', onMetadataLoaded);
@@ -1607,6 +1502,7 @@
                                 videoDurationEl.textContent = formatTime(detectedDuration);
                             }
                         }
+                        // 位置恢复由applySavedPosition统一处理
                     };
                     directPlayer.addEventListener('loadedmetadata', onMetadataLoaded, { once: true });
                     directPlayer.play().catch(err => {
@@ -1638,7 +1534,7 @@
                         }
                     }
                 }
-                
+
                 const onLoaded = () => {
                     directPlayer.removeEventListener('loadedmetadata', onLoaded);
                     updateDurationAndResolution(directPlayer);
@@ -1647,6 +1543,8 @@
                         const detectedDuration = parseFloat(info.duration);
                         videoDurationEl.textContent = formatTime(detectedDuration);
                     }
+                    // 位置恢复由applySavedPosition统一处理
+
                     setAlert(directStatus, '<i class="fas fa-check-circle"></i> 已切换到转码播放', 'success');
                     directPlayer.play().catch(err => {
                         setAlert(directStatus, `<i class="fas fa-info-circle"></i> 自动播放被阻止: ${err.message}`, 'info');
@@ -1789,7 +1687,66 @@
             updateTranscodeButtons();
         }
 
+        // 模式切换时的播放位置记忆
+        let lastModePlaybackPosition = null;
+        let lastModeName = null;
+
+        // 获取当前模式的播放位置
+        function getCurrentModePlaybackPosition() {
+            const video = getActiveVideo();
+            if (video && video.duration && video.currentTime > 0) {
+                return {
+                    position: video.currentTime,
+                    duration: video.duration
+                };
+            }
+            return null;
+        }
+
+        // 询问是否跳转到上一个模式的播放位置
+        function askJumpToLastModePosition(targetVideoElement) {
+            if (!lastModePlaybackPosition || lastModePlaybackPosition.position < 10) {
+                return; // 位置太小或不存在，不询问
+            }
+
+            const position = lastModePlaybackPosition.position;
+            const minutes = Math.floor(position / 60);
+            const seconds = Math.floor(position % 60);
+            const timeStr = minutes > 0 ? `${minutes}分${seconds}秒` : `${seconds}秒`;
+
+            if (confirm(`${lastModeName === 'alist' ? 'Alist播放' : lastModeName === 'direct' ? '直链播放' : '115播放'}播放到 ${timeStr}，是否跳转到此位置继续播放？`)) {
+                // 设置待跳转的位置
+                if (typeof pendingSeekPosition === 'number' && pendingSeekPosition > 0) {
+                    // 如果有待恢复的保存位置，优先使用用户刚刚确认的"上一个模式"的位置
+                    console.log(`[ModeSwitch] 用户选择跳转到上一个模式的位置: ${position}秒（覆盖保存的${pendingSeekPosition}秒）`);
+                }
+                pendingSeekPosition = position;
+
+                // 立即应用到视频并播放
+                applySavedPosition(targetVideoElement);
+
+                // 自动播放
+                targetVideoElement.play().catch(err => {
+                    console.log('[ModeSwitch] 自动播放被阻止:', err);
+                });
+            }
+
+            // 清空已使用的位置
+            lastModePlaybackPosition = null;
+            lastModeName = null;
+        }
+
         function applyMode(mode) {
+            // 保存当前模式的播放位置（如果不是首次切换）
+            if (currentMode && currentMode !== mode) {
+                const currentPosition = getCurrentModePlaybackPosition();
+                if (currentPosition && currentPosition.position >= 10) {
+                    lastModePlaybackPosition = currentPosition;
+                    lastModeName = currentMode;
+                    console.log(`[ModeSwitch] 保存${currentMode}模式的播放位置: ${currentPosition.position}秒`);
+                }
+            }
+
             if (!['alist', 'cloud115', 'direct'].includes(mode)) {
                 mode = alistEnabled ? 'alist' : (hasDirectCapability ? 'direct' : 'cloud115');
             }
@@ -1839,6 +1796,14 @@
                     initAlistPlayer();
                 }
                 updatePotplayerLink(lastAlistSource);
+
+                // 询问是否跳转到上一个模式的播放位置
+                setTimeout(() => {
+                    const alistVideo = document.getElementById('alistPlayer');
+                    if (alistVideo) {
+                        askJumpToLastModePosition(alistVideo);
+                    }
+                }, 500);
             } else if (mode === 'direct') {
                 if (alistStatus) {
                     alistStatus.style.display = 'none';
@@ -1875,6 +1840,14 @@
                     const hasTaskId = directTranscodeInfo && (directTranscodeInfo.task_id || directTranscodeInfo.id);
                     stopTranscodeBtn.style.display = hasTaskId ? 'inline-block' : 'none';
                 }
+
+                // 询问是否跳转到上一个模式的播放位置
+                setTimeout(() => {
+                    const directVideo = document.getElementById('direct115Player');
+                    if (directVideo) {
+                        askJumpToLastModePosition(directVideo);
+                    }
+                }, 500);
             } else {
                 if (alistStatus) {
                     alistStatus.style.display = 'none';
@@ -1898,6 +1871,14 @@
                 if (stopTranscodeBtn) {
                     stopTranscodeBtn.style.display = 'none';
                 }
+
+                // 询问是否跳转到上一个模式的播放位置
+                setTimeout(() => {
+                    const cloud115Video = document.getElementById('player115');
+                    if (cloud115Video) {
+                        askJumpToLastModePosition(cloud115Video);
+                    }
+                }, 500);
             }
         }
 
@@ -2042,9 +2023,7 @@
             }
 
             directInitialized = true;
-            
-            // 初始化自定义进度条
-            initCustomProgressBar();
+
             setAlert(directStatus, '<i class="fas fa-spinner fa-spin"></i> 正在准备115直链播放...', 'info');
             if (directLoadingOverlay) {
                 directLoadingOverlay.style.display = 'flex';
@@ -2162,8 +2141,6 @@
 
                     clearDirectHlsInstance();
                     directUsingTranscode = false;
-                    // 隐藏自定义进度条
-                    showCustomProgressBar(false);
                     directPlayer.setAttribute('playsinline', '');
                     directPlayer.setAttribute('webkit-playsinline', '');
                     directPlayer.setAttribute('x5-playsinline', '');
@@ -2221,12 +2198,6 @@
             directPlayer.addEventListener('timeupdate', function() {
                 if (currentMode === 'direct') {
                     updateDurationAndResolution(directPlayer);
-                    
-                    // 更新自定义进度条
-                    if (directUsingTranscode && customProgressTotalDuration > 0) {
-                        const currentTime = directPlayer.currentTime || 0;
-                        updateCustomProgress(currentTime, customProgressTotalDuration);
-                    }
                 }
             });
             // 添加 seeking 事件处理，支持跳转到未转码部分
@@ -2406,29 +2377,28 @@
                 loadingOverlay.style.display = 'none';
                 return;
             }
-            
+
             addDebugLog(`准备播放视频: ${videoUrl}`);
-            
+
             loadingOverlay.style.display = 'flex';
             updateVideoStatus('<i class="fas fa-spinner fa-spin"></i> 正在加载视频...', 'info');
-            
+
             if (videoElement.currentTime && !isNaN(videoElement.currentTime)) {
                 lastPlayedPosition = videoElement.currentTime;
             }
-            
+
             destroyHls();
-            
+
             const proxyUrl = build115ProxyUrl(videoUrl);
             addDebugLog(`使用代理URL: ${proxyUrl}`);
-            
-                const handleMetadataLoaded = function() {
+
+            const handleMetadataLoaded = function() {
                 addDebugLog('视频元数据已加载');
-                if (startTime > 0) {
-                    videoElement.currentTime = startTime;
-                }
+
+                // 位置恢复由applySavedPosition统一处理
                 updateVideoInfo();
-                    loadingOverlay.style.display = 'none';
-                };
+                loadingOverlay.style.display = 'none';
+            };
                 
                 const handleError = function(e) {
                     console.error('Video error:', e);
@@ -2813,18 +2783,367 @@
 
         applyMode(currentMode);
 
+        // 播放位置记录功能
+        let playbackPositionSaveInterval = null;
+        let hasAskedResume = false;
+
+        // 获取当前激活的video元素
+        function getActiveVideo() {
+            const activeSection = document.querySelector('.mode-section.active');
+            if (!activeSection) return null;
+            if (activeSection.id === 'alistSection') return document.getElementById('alistPlayer');
+            if (activeSection.id === 'direct115Section') return document.getElementById('direct115Player');
+            if (activeSection.id === 'cloud115Section') return document.getElementById('player115');
+            return null;
+        }
+
+        // 保存播放位置
+        function savePlaybackPosition() {
+            const video = getActiveVideo();
+            if (!video || !video.duration || video.currentTime < 1) return;
+
+            const file_id = fileId || directPickcode;
+            if (!file_id) return;
+
+            const position = video.currentTime;
+            const duration = video.duration;
+
+            fetch('/api/playback/position', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    file_id: file_id,
+                    file_type: 'cloud115',
+                    position: position,
+                    duration: duration,
+                    title: file_id
+                })
+            }).catch(err => console.log('保存播放位置失败:', err));
+        }
+
+        // 加载播放位置
+        async function loadPlaybackPosition() {
+            const file_id = fileId || directPickcode;
+            console.log(`[PlaybackResume] 尝试加载播放位置, file_id=${file_id}, fileId=${fileId}, directPickcode=${directPickcode}`);
+            if (!file_id) {
+                console.log('[PlaybackResume] file_id为空，无法加载播放位置');
+                return null;
+            }
+
+            try {
+                const response = await fetch(`/api/playback/position?file_id=${encodeURIComponent(file_id)}`);
+                const data = await response.json();
+                console.log(`[PlaybackResume] API响应:`, data);
+                if (data.success && data.position && data.position > 0) {
+                    return data.position;
+                }
+            } catch (err) {
+                console.log('获取播放位置失败:', err);
+            }
+            return null;
+        }
+
+        // 存储待恢复的播放位置
+        let pendingSeekPosition = null;
+
+        // 询问是否恢复播放位置
+        async function askResumePlayback() {
+            if (hasAskedResume) return;
+            hasAskedResume = true;
+
+            console.log('[PlaybackResume] 开始检查播放位置...');
+            const savedPosition = await loadPlaybackPosition();
+            console.log(`[PlaybackResume] 保存的播放位置: ${savedPosition}秒`);
+            if (savedPosition && savedPosition > 10) { // 只在超过10秒时询问
+                const minutes = Math.floor(savedPosition / 60);
+                const seconds = Math.floor(savedPosition % 60);
+                const timeStr = minutes > 0 ? `${minutes}分${seconds}秒` : `${seconds}秒`;
+
+                if (confirm(`上次播放到 ${timeStr}，是否继续播放？`)) {
+                    // 存储待恢复的播放位置
+                    pendingSeekPosition = savedPosition;
+                    console.log(`[PlaybackResume] 已记录待恢复位置: ${savedPosition}秒`);
+
+                    // 尝试立即应用到当前video（如果已存在）
+                    const video = getActiveVideo();
+                    if (video) {
+                        applySavedPosition(video);
+                    }
+                }
+            }
+        }
+
+        // 应用保存的播放位置
+        function applySavedPosition(video) {
+            if (pendingSeekPosition === null || pendingSeekPosition === undefined) return;
+
+            const positionToApply = pendingSeekPosition;
+
+            console.log(`[PlaybackResume] 应用播放位置: ${positionToApply}秒, video.src=${video.src ? '已设置' : '未设置'}`);
+
+            const applyPosition = () => {
+                console.log(`[PlaybackResume] 实际设置currentTime = ${positionToApply}, 当前currentTime=${video.currentTime}, readyState=${video.readyState}`);
+                video.currentTime = positionToApply;
+                // 清空pendingSeekPosition，只在实际应用后清空
+                pendingSeekPosition = null;
+                // 验证是否设置成功
+                setTimeout(() => {
+                    console.log(`[PlaybackResume] 验证: currentTime=${video.currentTime}`);
+                }, 200);
+            };
+
+            if (video.readyState >= 1 && video.src) {
+                // 视频已加载元数据且有源，延迟一小段时间后设置
+                setTimeout(applyPosition, 100);
+            } else {
+                // 等待元数据加载和源设置
+                const waitForReady = () => {
+                    video.addEventListener('loadedmetadata', function onMetadata() {
+                        console.log(`[PlaybackResume] loadedmetadata事件触发, readyState=${video.readyState}`);
+                        // 等待canplay事件以确保视频可以设置位置
+                        video.addEventListener('canplay', function onCanPlay() {
+                            video.removeEventListener('canplay', onCanPlay);
+                            // 再次检查pendingSeekPosition（可能已被其他代码处理）
+                            if (pendingSeekPosition !== null) {
+                                applyPosition();
+                            }
+                        }, { once: true });
+                    }, { once: true });
+                };
+
+                // 检查是否已经有源但没有触发事件（边缘情况）
+                if (video.src) {
+                    waitForReady();
+                } else {
+                    // 如果源还没设置，监听src变化
+                    const observer = new MutationObserver(() => {
+                        if (video.src) {
+                            observer.disconnect();
+                            waitForReady();
+                        }
+                    });
+                    observer.observe(video, { attributes: true, attributeFilter: ['src'] });
+                    // 设置超时，如果5秒后还没源，放弃
+                    setTimeout(() => {
+                        observer.disconnect();
+                        console.log('[PlaybackResume] 等待视频源超时');
+                    }, 5000);
+                }
+            }
+        }
+
+        // 开始自动保存播放位置（每10秒）
+        function startPlaybackPositionSave() {
+            if (playbackPositionSaveInterval) {
+                clearInterval(playbackPositionSaveInterval);
+            }
+            playbackPositionSaveInterval = setInterval(savePlaybackPosition, 10000);
+
+            // 页面卸载时保存一次
+            window.addEventListener('beforeunload', savePlaybackPosition);
+        }
+
+        // 初始化播放位置功能
+        setTimeout(() => {
+            askResumePlayback();
+            startPlaybackPositionSave();
+        }, 1000);
+
+        // 初始化统一控制条
+        initUnifiedControls();
     });
 
+    // 统一控制条功能
+    function initUnifiedControls() {
+        const controlBars = document.querySelectorAll('.unified-controls');
+
+        controlBars.forEach(controlBar => {
+            const videoId = controlBar.dataset.video;
+            const video = document.getElementById(videoId);
+            const playBtn = controlBar.querySelector('.unified-play-btn');
+            const progress = controlBar.querySelector('.unified-progress');
+            const tooltip = controlBar.querySelector('.unified-progress-tooltip');
+            const buffer = controlBar.querySelector('.unified-buffer');
+            const filled = controlBar.querySelector('.unified-filled');
+            const currentTimeEl = controlBar.querySelector('.current-time');
+            const totalTimeEl = controlBar.querySelector('.total-time');
+            const muteBtn = controlBar.querySelector('.unified-mute-btn');
+            const volumeSlider = controlBar.querySelector('.unified-volume-slider');
+            const fullscreenBtn = controlBar.querySelector('.unified-fullscreen-btn');
+
+            // 调试：检查video元素是否存在
+            if (!video) {
+                console.warn(`[UnifiedControls] 未找到video元素: ${videoId}`);
+                return;
+            }
+            console.log(`[UnifiedControls] 已绑定到video元素: ${videoId}`);
+
+            // 格式化时间
+            function formatTime(seconds) {
+                if (!seconds || isNaN(seconds)) return '00:00';
+                const mins = Math.floor(seconds / 60);
+                const secs = Math.floor(seconds % 60);
+                return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+            }
+
+            // 播放/暂停
+            function togglePlay() {
+                if (video) {
+                    if (video.paused) {
+                        console.log(`[UnifiedControls] 尝试播放: ${videoId}, src=${video.src}`);
+                        video.play().catch(err => {
+                            console.error(`[UnifiedControls] 播放失败:`, err);
+                        });
+                    } else {
+                        video.pause();
+                    }
+                }
+            }
+
+            // 更新播放/暂停图标
+            function updatePlayPauseIcon() {
+                const icon = playBtn?.querySelector('i');
+                if (!icon) return;
+                if (video && !video.paused) {
+                    icon.classList.remove('bi-play-fill');
+                    icon.classList.add('bi-pause-fill');
+                } else {
+                    icon.classList.remove('bi-pause-fill');
+                    icon.classList.add('bi-play-fill');
+                }
+            }
+
+            // 更新进度
+            function updateProgress() {
+                if (!video || !video.duration) return;
+                const percent = (video.currentTime / video.duration) * 100;
+                if (filled) filled.style.width = percent + '%';
+                if (currentTimeEl) currentTimeEl.textContent = formatTime(video.currentTime);
+                // 更新缓冲进度
+                if (video.buffered.length > 0 && buffer) {
+                    const bufferedEnd = video.buffered.end(video.buffered.length - 1);
+                    const bufferPercent = (bufferedEnd / video.duration) * 100;
+                    buffer.style.width = bufferPercent + '%';
+                }
+            }
+
+            // 点击进度条跳转
+            if (progress && video) {
+                progress.addEventListener('click', function(e) {
+                    const rect = progress.getBoundingClientRect();
+                    const pos = (e.clientX - rect.left) / rect.width;
+                    video.currentTime = pos * video.duration;
+                });
+
+                // 进度条悬停提示
+                if (tooltip) {
+                    progress.addEventListener('mousemove', function(e) {
+                        if (!video.duration) return;
+                        const rect = progress.getBoundingClientRect();
+                        const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                        const hoverTime = pos * video.duration;
+                        tooltip.textContent = formatTime(hoverTime);
+                        tooltip.style.left = (pos * 100) + '%';
+                        tooltip.classList.add('visible');
+                    });
+
+                    progress.addEventListener('mouseleave', function() {
+                        tooltip.classList.remove('visible');
+                    });
+                }
+            }
+
+            // 音量控制
+            if (volumeSlider) {
+                volumeSlider.addEventListener('input', function() {
+                    if (video) video.volume = this.value;
+                    updateVolumeIcon();
+                });
+            }
+
+            function updateVolumeIcon() {
+                const icon = muteBtn?.querySelector('i');
+                if (!icon) return;
+                if (video && (video.muted || video.volume === 0)) {
+                    icon.className = 'bi bi-volume-mute';
+                } else if (video && video.volume < 0.5) {
+                    icon.className = 'bi bi-volume-down';
+                } else {
+                    icon.className = 'bi bi-volume-up';
+                }
+            }
+
+            // 静音切换
+            if (muteBtn) {
+                muteBtn.addEventListener('click', function() {
+                    if (video) video.muted = !video.muted;
+                    updateVolumeIcon();
+                });
+            }
+
+            // 全屏切换 - 确保无论video是否存在都能工作
+            if (fullscreenBtn) {
+                fullscreenBtn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log('全屏按钮被点击');
+                    toggleFullScreen();
+                });
+            }
+
+            // video事件监听
+            if (video) {
+                video.addEventListener('play', updatePlayPauseIcon);
+                video.addEventListener('pause', updatePlayPauseIcon);
+                video.addEventListener('timeupdate', updateProgress);
+                video.addEventListener('loadedmetadata', function() {
+                    if (totalTimeEl) totalTimeEl.textContent = formatTime(video.duration);
+                });
+                video.addEventListener('progress', function() {
+                    if (video.buffered.length > 0 && buffer) {
+                        const bufferedEnd = video.buffered.end(video.buffered.length - 1);
+                        const bufferPercent = (bufferedEnd / video.duration) * 100;
+                        buffer.style.width = bufferPercent + '%';
+                    }
+                });
+
+                // 播放/暂停按钮
+                if (playBtn) {
+                    playBtn.addEventListener('click', togglePlay);
+                }
+                video.addEventListener('click', togglePlay);
+            }
+        });
+    }
+
     function toggleFullScreen() {
-        const video = document.getElementById('player115');
-        
-        if (!document.fullscreenElement) {
-            if (video.requestFullscreen) {
-                video.requestFullscreen();
-            } else if (video.webkitRequestFullscreen) {
-                video.webkitRequestFullscreen();
-            } else if (video.msRequestFullscreen) {
-                video.msRequestFullscreen();
+        // 通过DOM查询获取当前激活的模式
+        const activeSection = document.querySelector('.mode-section.active');
+        if (!activeSection) return;
+
+        let container = null;
+        if (activeSection.id === 'alistSection') {
+            container = activeSection.querySelector('.video-container');
+        } else if (activeSection.id === 'direct115Section') {
+            container = activeSection.querySelector('.video-container');
+        } else if (activeSection.id === 'cloud115Section') {
+            container = activeSection.querySelector('.video-container');
+        }
+
+        if (!container) {
+            console.log('未找到video容器');
+            return;
+        }
+
+        console.log('找到容器，准备全屏:', container.className);
+
+        if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+            if (container.requestFullscreen) {
+                container.requestFullscreen().catch(err => console.log('全屏失败:', err));
+            } else if (container.webkitRequestFullscreen) {
+                container.webkitRequestFullscreen();
+            } else if (container.msRequestFullscreen) {
+                container.msRequestFullscreen();
             }
         } else {
             if (document.exitFullscreen) {
@@ -2836,7 +3155,74 @@
             }
         }
     }
-    
+
+    // 全屏控件自动隐藏功能
+    let controlsHideTimeout = null;
+
+    function showControls() {
+        const activeSection = document.querySelector('.mode-section.active');
+        if (!activeSection) return;
+        const container = activeSection.querySelector('.video-container');
+        if (!container) return;
+
+        // 只在全屏状态下处理
+        if (!document.fullscreenElement && !document.webkitFullscreenElement) return;
+
+        container.classList.add('controls-visible');
+
+        // 清除之前的定时器
+        if (controlsHideTimeout) {
+            clearTimeout(controlsHideTimeout);
+        }
+
+        // 2秒后隐藏控件
+        controlsHideTimeout = setTimeout(() => {
+            container.classList.remove('controls-visible');
+        }, 2000);
+    }
+
+    function setupAutoHideControls() {
+        const activeSection = document.querySelector('.mode-section.active');
+        if (!activeSection) return;
+        const container = activeSection.querySelector('.video-container');
+        if (!container) return;
+
+        // 鼠标移动时显示控件
+        container.addEventListener('mousemove', showControls);
+        container.addEventListener('click', showControls);
+
+        // 监听全屏变化
+        document.addEventListener('fullscreenchange', handleFullscreenChange);
+        document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    }
+
+    function handleFullscreenChange() {
+        const activeSection = document.querySelector('.mode-section.active');
+        if (!activeSection) return;
+        const container = activeSection.querySelector('.video-container');
+        if (!container) return;
+
+        if (document.fullscreenElement || document.webkitFullscreenElement) {
+            // 进入全屏，显示控件并开始自动隐藏
+            container.classList.add('controls-visible');
+            if (controlsHideTimeout) {
+                clearTimeout(controlsHideTimeout);
+            }
+            controlsHideTimeout = setTimeout(() => {
+                container.classList.remove('controls-visible');
+            }, 2000);
+        } else {
+            // 退出全屏，清除定时器和状态
+            if (controlsHideTimeout) {
+                clearTimeout(controlsHideTimeout);
+            }
+            container.classList.remove('controls-visible');
+        }
+    }
+
+    // 初始化自动隐藏功能
+    setupAutoHideControls();
+
     function toggleDebugInfo() {
         const debugInfo = document.getElementById('debugInfo');
         if (debugInfo.style.display === 'none' || !debugInfo.style.display) {

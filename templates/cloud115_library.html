@@ -529,7 +529,7 @@
                         <li class="breadcrumb-item active" data-folder-id="0">根目录</li>
                     </ol>
                 </nav>
-                
+
                 <!-- 115目录浏览 -->
                 <div class="table-responsive">
                     <table class="table table-hover" id="cloud115FileList">
@@ -555,12 +555,12 @@
                         </tbody>
                     </table>
                 </div>
-                
+
                 <!-- 无文件时显示 -->
                 <div id="cloud115NoFiles" class="alert alert-info text-center d-none">
                     <i class="fas fa-info-circle me-2"></i> 当前目录为空
                 </div>
-                
+
                 <!-- 未登录提示 -->
                 <div id="cloud115NotLoggedIn" class="alert alert-warning text-center d-none">
                     <i class="fas fa-exclamation-circle me-2"></i> 请先登录115云盘
@@ -568,32 +568,32 @@
                         <i class="fas fa-sign-in-alt me-1"></i> 去登录
                     </button>
                 </div>
-                
+
                 <!-- 显示当前选中的文件夹 -->
                 <div id="selectedFolderInfo" class="alert alert-success mt-3 d-none">
                     <strong>已选择：</strong> <span id="selectedFolderName"></span>
                 </div>
-                
+
                 <!-- 最小文件大小筛选 -->
                 <div class="form-group mt-3">
                     <label for="minFileSizeInput" class="form-label">文件大于 <span id="minFileSizeValue">50</span> MB</label>
                     <input type="range" class="form-range" id="minFileSizeInput" min="0" max="500" step="10" value="50">
                     <div class="form-text">小于该大小的视频文件将被忽略（设为0关闭筛选）</div>
                 </div>
-                
+
                 <!-- 分类选择 -->
                 <div class="form-group mt-3">
                     <label class="form-label">导入分类</label>
                     <div class="btn-group w-100" role="group">
                         <input type="radio" class="btn-check" name="categorySelect" id="category-movies" value="movies" autocomplete="off" checked>
                         <label class="btn btn-outline-primary" for="category-movies">电影</label>
-                        
+
                         <input type="radio" class="btn-check" name="categorySelect" id="category-tv" value="tv" autocomplete="off">
                         <label class="btn btn-outline-primary" for="category-tv">电视剧</label>
-                        
+
                         <input type="radio" class="btn-check" name="categorySelect" id="category-other" value="other" autocomplete="off">
                         <label class="btn btn-outline-primary" for="category-other">其他</label>
-                        
+
                         <input type="radio" class="btn-check" name="categorySelect" id="category-folder" value="folder" autocomplete="off">
                         <label class="btn btn-outline-primary" for="category-folder">使用文件夹名称</label>
                     </div>
@@ -603,6 +603,179 @@
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
                 <button type="button" class="btn btn-primary" id="confirm115Import" disabled>确定导入</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Import 115 Progress Modal -->
+<div class="modal fade" id="import115ProgressModal" tabindex="-1" aria-labelledby="import115ProgressModalLabel" aria-hidden="true" data-bs-backdrop="static">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="import115ProgressModalLabel">
+                    <i class="fas fa-cloud-upload-alt me-2"></i>导入进度
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close" id="closeProgressBtn"></button>
+            </div>
+            <div class="modal-body">
+                <!-- 进度信息 -->
+                <div class="row mb-3">
+                    <div class="col-md-12">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span id="importCurrentStep" class="text-primary">准备中...</span>
+                            <span id="importProgressText" class="text-muted">0%</span>
+                        </div>
+                        <div class="progress" style="height: 25px;">
+                            <div id="importProgressBar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%">0%</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 当前处理的文件 -->
+                <div id="importCurrentFileContainer" class="alert alert-info d-none">
+                    <div class="d-flex align-items-center">
+                        <i class="fas fa-file-video me-2"></i>
+                        <div class="flex-grow-1">
+                            <small class="text-muted">正在处理：</small>
+                            <span id="importCurrentFile" class="word-break">-</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 统计信息 -->
+                <div class="row text-center">
+                    <div class="col-md-3">
+                        <div class="card bg-success bg-opacity-10">
+                            <div class="card-body py-2">
+                                <h6 class="card-title mb-1 text-success" id="importSuccessCount">0</h6>
+                                <small class="text-muted">已导入</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card bg-danger bg-opacity-10">
+                            <div class="card-body py-2">
+                                <h6 class="card-title mb-1 text-danger" id="importFailedCount">0</h6>
+                                <small class="text-muted">失败</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card bg-warning bg-opacity-10">
+                            <div class="card-body py-2">
+                                <h6 class="card-title mb-1 text-warning" id="importSkippedSizeCount">0</h6>
+                                <small class="text-muted">跳过(小文件)</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card bg-secondary bg-opacity-10">
+                            <div class="card-body py-2">
+                                <h6 class="card-title mb-1 text-secondary" id="importSkippedExistingCount">0</h6>
+                                <small class="text-muted">跳过(已存在)</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 日志区域 -->
+                <div class="mt-3">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <small class="text-muted">导入日志</small>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="toggleLogsBtn">
+                            <i class="fas fa-chevron-down me-1"></i>展开
+                        </button>
+                    </div>
+                    <div id="importLogsContainer" class="border rounded bg-dark text-light p-2" style="max-height: 150px; overflow-y: auto; display: none; font-family: monospace; font-size: 12px;">
+                        <div id="importLogs"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-primary d-none" id="importDoneBtn">
+                    <i class="fas fa-check me-1"></i>完成
+                </button>
+                <button type="button" class="btn btn-secondary" id="importViewDetailsBtn" disabled>
+                    <i class="fas fa-list me-1"></i>查看详情
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Import 115 Result Details Modal -->
+<div class="modal fade" id="import115ResultModal" tabindex="-1" aria-labelledby="import115ResultModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="import115ResultModalLabel">
+                    <i class="fas fa-clipboard-list me-2"></i>导入结果详情
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <!-- 导入结果统计 -->
+                <div class="row mb-3">
+                    <div class="col-md-12">
+                        <div class="alert alert-info">
+                            <div class="row text-center">
+                                <div class="col-md-3">
+                                    <h5 id="resultTotalFiles">0</h5>
+                                    <small class="text-muted">总文件数</small>
+                                </div>
+                                <div class="col-md-3">
+                                    <h5 id="resultImported" class="text-success">0</h5>
+                                    <small class="text-muted">导入成功</small>
+                                </div>
+                                <div class="col-md-3">
+                                    <h5 id="resultFailed" class="text-danger">0</h5>
+                                    <small class="text-muted">导入失败</small>
+                                </div>
+                                <div class="col-md-3">
+                                    <h5 id="resultDuration">-</h5>
+                                    <small class="text-muted">耗时</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 导入失败的文件 -->
+                <div id="resultErrorFilesSection" class="mb-3 d-none">
+                    <h6 class="text-danger"><i class="fas fa-exclamation-triangle me-2"></i>导入失败的文件</h6>
+                    <div class="table-responsive" style="max-height: 200px; overflow-y: auto;">
+                        <table class="table table-sm table-striped">
+                            <thead>
+                                <tr>
+                                    <th>文件名</th>
+                                    <th>错误信息</th>
+                                </tr>
+                            </thead>
+                            <tbody id="resultErrorFilesList"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- 成功导入的文件 -->
+                <div id="resultSuccessFilesSection" class="mb-3">
+                    <h6 class="text-success"><i class="fas fa-check-circle me-2"></i>成功导入的文件</h6>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <small class="text-muted">共 <span id="resultSuccessCount">0</span> 个文件</small>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="toggleSuccessFilesBtn">
+                            <i class="fas fa-chevron-down me-1"></i>展开
+                        </button>
+                    </div>
+                    <div id="resultSuccessFilesContainer" class="table-responsive bg-success bg-opacity-10 rounded p-2" style="max-height: 200px; overflow-y: auto; display: none;">
+                        <div id="resultSuccessFilesList" class="small text-muted word-break"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                <button type="button" class="btn btn-primary" id="resultRefreshBtn">
+                    <i class="fas fa-sync me-1"></i>刷新页面
+                </button>
             </div>
         </div>
     </div>
@@ -1551,23 +1724,110 @@
                 });
             });
         }
-        
+
+        // 导入进度管理
+        let importTaskId = null;
+        let importPollingTimer = null;
+        let importFinalResult = null;
+
+        // 更新进度UI
+        function updateImportProgressUI(data) {
+            // 更新进度条
+            const progressBar = document.getElementById('importProgressBar');
+            const progressText = document.getElementById('importProgressText');
+            const currentStep = document.getElementById('importCurrentStep');
+
+            progressBar.style.width = data.progress + '%';
+            progressBar.textContent = data.progress + '%';
+            progressText.textContent = data.progress + '%';
+            currentStep.textContent = data.current_step || '处理中...';
+
+            // 更新统计数字
+            document.getElementById('importSuccessCount').textContent = data.imported || 0;
+            document.getElementById('importFailedCount').textContent = data.failed || 0;
+            document.getElementById('importSkippedSizeCount').textContent = data.skipped_size || 0;
+            document.getElementById('importSkippedExistingCount').textContent = data.skipped_existing || 0;
+
+            // 更新当前文件
+            const currentFileContainer = document.getElementById('importCurrentFileContainer');
+            const currentFile = document.getElementById('importCurrentFile');
+            if (data.current_file) {
+                currentFileContainer.classList.remove('d-none');
+                currentFile.textContent = data.current_file;
+            } else {
+                currentFileContainer.classList.add('d-none');
+            }
+
+            // 更新日志
+            if (data.logs && data.logs.length > 0) {
+                const logsContainer = document.getElementById('importLogs');
+                logsContainer.innerHTML = data.logs.map(log => `<div>${log}</div>`).join('');
+                // 自动滚动到底部
+                const logsWrapper = document.getElementById('importLogsContainer');
+                logsWrapper.scrollTop = logsWrapper.scrollHeight;
+            }
+        }
+
+        // 轮询导入状态
+        function pollImportStatus(taskId) {
+            if (importPollingTimer) {
+                clearInterval(importPollingTimer);
+            }
+
+            importPollingTimer = setInterval(() => {
+                fetch(`/api/cloud115/import_status/${taskId}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            updateImportProgressUI(data);
+
+                            // 任务完成或出错
+                            if (data.status === 'completed' || data.status === 'error') {
+                                clearInterval(importPollingTimer);
+                                importPollingTimer = null;
+                                importFinalResult = data;
+
+                                // 更新UI状态
+                                const progressBar = document.getElementById('importProgressBar');
+                                const doneBtn = document.getElementById('importDoneBtn');
+                                const viewDetailsBtn = document.getElementById('importViewDetailsBtn');
+                                const closeProgressBtn = document.getElementById('closeProgressBtn');
+
+                                if (data.status === 'completed') {
+                                    progressBar.classList.remove('progress-bar-striped', 'progress-bar-animated');
+                                    progressBar.classList.add('bg-success');
+                                    doneBtn.classList.remove('d-none');
+                                    viewDetailsBtn.disabled = false;
+                                    closeProgressBtn.disabled = false;
+                                } else {
+                                    progressBar.classList.remove('progress-bar-striped', 'progress-bar-animated');
+                                    progressBar.classList.add('bg-danger');
+                                }
+                            }
+                        }
+                    })
+                    .catch(error => {
+                        console.error('轮询导入状态失败:', error);
+                    });
+            }, 2000); // 每2秒轮询一次
+        }
+
         // 确定导入按钮点击事件
         confirmImportBtn.addEventListener('click', function() {
             if (!selectedFolderId) {
                 alert('请选择要导入的文件夹');
                 return;
             }
-            
+
             // 获取最小文件大小设置（MB）
             const minFileSizeMB = parseInt(minFileSizeInput.value) || 0;
-            
-            // 显示加载状态
+
+            // 禁用按钮
             this.disabled = true;
-            this.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 导入中...';
-            
-            // 发送请求导入文件夹
-            fetch('/api/cloud115/import_directory', {
+            this.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 创建任务中...';
+
+            // 发送异步导入请求
+            fetch('/api/cloud115/import_directory_async', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -1583,36 +1843,155 @@
                 // 恢复按钮状态
                 confirmImportBtn.disabled = false;
                 confirmImportBtn.innerHTML = '确定导入';
-                
-                if (data.success) {
-                    // 导入成功，关闭模态框并刷新页面
-                    const modal = bootstrap.Modal.getInstance(document.getElementById('import115DirModal'));
-                    modal.hide();
-                    
-                    // 构建成功消息，包含文件大小筛选信息
-                    let successMessage = `导入成功！共导入 ${data.imported} 个视频文件`;
-                    if (data.skipped && data.skipped > 0) {
-                        successMessage += `，跳过 ${data.skipped} 个小于 ${minFileSizeMB} MB 的文件`;
-                    }
-                    
-                    // 显示成功消息
-                    alert(successMessage);
-                    
-                    // 刷新页面
-                    setTimeout(() => {
-                        window.location.reload();
-                    }, 1000);
+
+                if (data.success && data.task_id) {
+                    // 保存任务ID
+                    importTaskId = data.task_id;
+                    importFinalResult = null;
+
+                    // 关闭目录选择模态框
+                    const dirModal = bootstrap.Modal.getInstance(document.getElementById('import115DirModal'));
+                    dirModal.hide();
+
+                    // 显示进度模态框
+                    const progressModal = new bootstrap.Modal(document.getElementById('import115ProgressModal'));
+                    progressModal.show();
+
+                    // 重置进度UI
+                    document.getElementById('importProgressBar').style.width = '0%';
+                    document.getElementById('importProgressBar').textContent = '0%';
+                    document.getElementById('importProgressBar').classList.add('progress-bar-striped', 'progress-bar-animated');
+                    document.getElementById('importProgressBar').classList.remove('bg-success', 'bg-danger');
+                    document.getElementById('importCurrentStep').textContent = '任务已创建，等待开始...';
+                    document.getElementById('importCurrentFileContainer').classList.add('d-none');
+                    document.getElementById('importLogs').innerHTML = '';
+                    document.getElementById('importDoneBtn').classList.add('d-none');
+                    document.getElementById('importViewDetailsBtn').disabled = true;
+                    document.getElementById('closeProgressBtn').disabled = true;
+
+                    // 开始轮询状态
+                    pollImportStatus(data.task_id);
                 } else {
-                    // 导入失败
-                    alert('导入失败：' + (data.message || '未知错误'));
+                    alert('创建导入任务失败：' + (data.message || '未知错误'));
                 }
             })
             .catch(error => {
-                console.error('导入错误:', error);
+                console.error('创建导入任务错误:', error);
                 confirmImportBtn.disabled = false;
                 confirmImportBtn.innerHTML = '确定导入';
-                alert('导入请求失败，请重试');
+                alert('创建导入任务失败，请重试');
             });
+        });
+
+        // 日志展开/折叠
+        document.getElementById('toggleLogsBtn')?.addEventListener('click', function() {
+            const container = document.getElementById('importLogsContainer');
+            const icon = this.querySelector('i');
+            if (container.style.display === 'none') {
+                container.style.display = 'block';
+                icon.classList.remove('fa-chevron-down');
+                icon.classList.add('fa-chevron-up');
+                this.innerHTML = '<i class="fas fa-chevron-up me-1"></i>收起';
+            } else {
+                container.style.display = 'none';
+                icon.classList.remove('fa-chevron-up');
+                icon.classList.add('fa-chevron-down');
+                this.innerHTML = '<i class="fas fa-chevron-down me-1"></i>展开';
+            }
+        });
+
+        // 完成按钮 - 关闭进度模态框
+        document.getElementById('importDoneBtn')?.addEventListener('click', function() {
+            const progressModal = bootstrap.Modal.getInstance(document.getElementById('import115ProgressModal'));
+            progressModal.hide();
+
+            // 如果有结果，显示详情模态框
+            if (importFinalResult) {
+                showImportResultDetails(importFinalResult);
+            }
+        });
+
+        // 查看详情按钮
+        document.getElementById('importViewDetailsBtn')?.addEventListener('click', function() {
+            if (importFinalResult) {
+                const progressModal = bootstrap.Modal.getInstance(document.getElementById('import115ProgressModal'));
+                progressModal.hide();
+                showImportResultDetails(importFinalResult);
+            }
+        });
+
+        // 显示导入结果详情
+        function showImportResultDetails(result) {
+            // 填充统计数据
+            document.getElementById('resultTotalFiles').textContent = result.total_files || 0;
+            document.getElementById('resultImported').textContent = result.imported || 0;
+            document.getElementById('resultFailed').textContent = result.failed || 0;
+
+            // 计算耗时
+            if (result.duration) {
+                const seconds = Math.floor(result.duration);
+                const minutes = Math.floor(seconds / 60);
+                const remainingSeconds = seconds % 60;
+                document.getElementById('resultDuration').textContent =
+                    minutes > 0 ? `${minutes}分${remainingSeconds}秒` : `${remainingSeconds}秒`;
+            }
+
+            // 填充失败的文件
+            const errorSection = document.getElementById('resultErrorFilesSection');
+            const errorList = document.getElementById('resultErrorFilesList');
+            errorList.innerHTML = '';
+            if (result.error_files && result.error_files.length > 0) {
+                errorSection.classList.remove('d-none');
+                result.error_files.forEach(file => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td class="word-break">${file.title || 'Unknown'}</td>
+                        <td class="text-danger word-break">${file.error || '未知错误'}</td>
+                    `;
+                    errorList.appendChild(row);
+                });
+            } else {
+                errorSection.classList.add('d-none');
+            }
+
+            // 填充成功导入的文件
+            const successSection = document.getElementById('resultSuccessFilesSection');
+            const successList = document.getElementById('resultSuccessFilesList');
+            const successCount = document.getElementById('resultSuccessCount');
+            successList.innerHTML = '';
+            if (result.imported_files && result.imported_files.length > 0) {
+                successCount.textContent = result.imported_files.length;
+                successList.innerHTML = result.imported_files.map(file => `<div>${file}</div>`).join('');
+            } else {
+                successCount.textContent = '0';
+                successList.innerHTML = '<div class="text-muted">无文件</div>';
+            }
+
+            // 显示结果模态框
+            const resultModal = new bootstrap.Modal(document.getElementById('import115ResultModal'));
+            resultModal.show();
+        }
+
+        // 成功文件列表展开/折叠
+        document.getElementById('toggleSuccessFilesBtn')?.addEventListener('click', function() {
+            const container = document.getElementById('resultSuccessFilesContainer');
+            const icon = this.querySelector('i');
+            if (container.style.display === 'none') {
+                container.style.display = 'block';
+                icon.classList.remove('fa-chevron-down');
+                icon.classList.add('fa-chevron-up');
+                this.innerHTML = '<i class="fas fa-chevron-up me-1"></i>收起';
+            } else {
+                container.style.display = 'none';
+                icon.classList.remove('fa-chevron-up');
+                icon.classList.add('fa-chevron-down');
+                this.innerHTML = '<i class="fas fa-chevron-down me-1"></i>展开';
+            }
+        });
+
+        // 刷新页面按钮
+        document.getElementById('resultRefreshBtn')?.addEventListener('click', function() {
+            window.location.reload();
         });
     });
 

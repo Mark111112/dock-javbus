@@ -179,16 +179,7 @@
         line-height: 1.7;
         text-align: justify;
     }
-    
-    /* 播放器容器 */
-    #player-container {
-        position: relative;
-        width: 100%;
-        background: #000;
-        border-radius: 8px;
-        overflow: hidden;
-    }
-    
+
     #loading-overlay {
         position: absolute;
         top: 0;
@@ -233,14 +224,40 @@
         text-align: center;
         color: #fff;
         text-shadow: 0 0 4px rgba(0,0,0,0.8);
-        font-size: 1.05rem;
+        font-size: 0.98rem;
         padding: 4px 10px;
-        background: rgba(0, 0, 0, 0.35);
+        background: rgba(0, 0, 0, 0.18);
         border-radius: 4px;
         pointer-events: none;
         z-index: 120;
     }
 
+    .live-caption-layer.fullscreen {
+        position: fixed;
+        left: 50%;
+        bottom: 10%;
+        transform: translateX(-50%);
+        max-width: 90vw;
+        width: auto;
+        z-index: 10000;
+    }
+
+    .live-caption-layer:empty {
+        padding: 0;
+        background: transparent;
+        display: none;
+    }
+
+    /* 播放器容器用于控件自动隐藏 */
+    #player-container {
+        position: relative;
+        width: 100%;
+        background: #000;
+        border-radius: 8px;
+        overflow: hidden;
+    }
+
+    /* 实时字幕按钮 - 默认隐藏，鼠标悬停时显示 */
     .live-caption-toggle {
         position: absolute;
         left: 12px;
@@ -255,8 +272,28 @@
         background: rgba(0, 0, 0, 0.55);
         cursor: pointer;
         z-index: 125;
-        transition: background 0.2s, opacity 0.2s;
+        transition: opacity 0.3s ease, background 0.2s;
         font-size: 0.75rem;
+        /* 默认隐藏 */
+        opacity: 0;
+    }
+
+    /* 鼠标悬停或活动时显示控件 */
+    #player-container:hover .live-caption-toggle,
+    .live-caption-toggle:hover,
+    #player-container.controls-visible .live-caption-toggle {
+        opacity: 1;
+    }
+
+    /* 全屏时的控件显示逻辑 */
+    #player-container:fullscreen .live-caption-toggle,
+    #player-container:-webkit-full-screen .live-caption-toggle {
+        opacity: 0;
+    }
+
+    #player-container:fullscreen.controls-visible .live-caption-toggle,
+    #player-container:-webkit-full-screen.controls-visible .live-caption-toggle {
+        opacity: 1;
     }
 
     .live-caption-toggle:hover {
@@ -265,6 +302,26 @@
 
     .live-caption-toggle.active {
         background: rgba(0, 123, 255, 0.9);
+    }
+
+    /* 控件自动隐藏功能 */
+    .video-js .vjs-control-bar {
+        opacity: 1 !important;
+    }
+
+    /* 窗口模式下也自动隐藏Video.js控制条 */
+    .video-js:not(.vjs-has-started) .vjs-control-bar {
+        opacity: 1 !important;
+    }
+
+    .video-js.vjs-has-started .vjs-control-bar {
+        opacity: 0 !important;
+        transition: opacity 0.3s ease;
+    }
+
+    .video-js.vjs-has-started:hover .vjs-control-bar,
+    .video-js.vjs-has-started.vjs-user-active .vjs-control-bar {
+        opacity: 1 !important;
     }
     
     .transcode-controls {
@@ -359,21 +416,31 @@
         <!-- 左右分栏布局 -->
         <div class="player-layout">
             <!-- 左侧：电影信息 -->
-            <aside class="movie-info-sidebar">
-                {% if movie_detail %}
-                    {% set parsed_data = movie_detail.get('parsed_data', {}) %}
-                    
-                    <!-- 封面图 -->
+             <aside class="movie-info-sidebar">
+                {% set jellyfin_cover = movie.cover_image %}
+                {% set default_cover = url_for('static', filename='img/no_image.jpg') %}
+                {% set jellyfin_meta = jellyfin_meta or {} %}
+                 {% if movie_detail %}
+                     {% set parsed_data = movie_detail.get('parsed_data', {}) %}
+ 
+                     <!-- 封面图 -->
                     {% if movie.video_id %}
-                    <img src="/images/covers/{{ movie.video_id }}.jpg" 
-                         onerror="this.onerror=null; this.src='{{ movie_detail.get('cover', url_for('static', filename='img/no_image.jpg')) }}';" 
+                    <img src="{{ url_for('serve_image', filename='covers/' + movie.video_id + '.jpg') }}"
+                         onerror="this.onerror=null; this.src='{{ jellyfin_cover or movie_detail.get('cover') or default_cover }}';"
                          alt="{{ movie.video_id }}"
                          class="cover-image"
                          onload="this.classList.add('loaded')">
+                    {% elif jellyfin_cover %}
+                    <img src="{{ jellyfin_cover }}"
+                         onerror="this.onerror=null; this.src='{{ default_cover }}';"
+                         alt="封面"
+                         class="cover-image"
+                         onload="this.classList.add('loaded')">
                     {% else %}
-                    <img src="{{ url_for('static', filename='img/no_image.jpg') }}" 
-                         alt="默认封面" 
-                         class="cover-image">
+                    <img src="{{ default_cover }}"
+                         alt="默认封面"
+                         class="cover-image"
+                         onload="this.classList.add('loaded')">
                     {% endif %}
                     
                     <!-- 类别标签 -->
@@ -420,11 +487,50 @@
                     <h5><i class="fas fa-language"></i> 简介（翻译）</h5>
                     <div class="description-text" style="white-space: pre-line;">{{ translated_description }}</div>
                     {% endif %}
-                {% else %}
-                    <img src="{{ url_for('static', filename='img/no_image.jpg') }}" 
-                         alt="默认封面" 
-                         class="cover-image">
+                 {% else %}
+                    {% if jellyfin_cover %}
+                    <img src="{{ jellyfin_cover }}"
+                         onerror="this.onerror=null; this.src='{{ default_cover }}';"
+                         alt="封面"
+                         class="cover-image"
+                         onload="this.classList.add('loaded')">
+                    {% else %}
+                     <img src="{{ default_cover }}"
+                          alt="默认封面"
+                          class="cover-image"
+                          onload="this.classList.add('loaded')">
+                     {% endif %}
+                    {% if jellyfin_meta %}
+                        {% if jellyfin_meta.get('genres') and jellyfin_meta.get('genres')|length > 0 %}
+                        <h5><i class="fas fa-tags"></i> 类别</h5>
+                        <div class="genre-tags">
+                            {% for genre in jellyfin_meta.get('genres', []) %}
+                            <span class="genre-tag">{{ genre }}</span>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+
+                        {% if jellyfin_meta.get('actors') and jellyfin_meta.get('actors')|length > 0 %}
+                        <h5><i class="fas fa-users"></i> 演员</h5>
+                        <div class="actors-list" style="display: flex; flex-wrap: wrap; gap: 8px;">
+                            {% for name in jellyfin_meta.get('actors', []) %}
+                            <span class="badge bg-secondary">{{ name }}</span>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+
+                        {% if jellyfin_meta.get('premiere_date') %}
+                        <h5><i class="fas fa-calendar"></i> 发行日期</h5>
+                        <p>{{ jellyfin_meta.get('premiere_date') }}</p>
+                        {% endif %}
+
+                        {% if jellyfin_meta.get('overview') %}
+                        <h5><i class="fas fa-info-circle"></i> 简介</h5>
+                        <div class="description-text" style="white-space: pre-line;">{{ jellyfin_meta.get('overview') }}</div>
+                        {% endif %}
+                    {% else %}
                     <p class="text-muted text-center"><small>暂无电影详细信息</small></p>
+                    {% endif %}
                     {% if movie.video_id %}
                     <p class="text-center">
                         <a href="{{ url_for('movie_detail', movie_id=movie.video_id) }}" class="btn btn-outline-info btn-sm">
@@ -432,8 +538,8 @@
                         </a>
                     </p>
                     {% endif %}
-                {% endif %}
-            </aside>
+                 {% endif %}
+             </aside>
             
             <!-- 右侧：播放器 -->
             <div class="player-main-content">
@@ -441,18 +547,19 @@
                 <div class="card-body p-0">
                     <!-- Video player container with loading overlay -->
                     <div id="player-container">
-                    <video
-                        id="jellyfin-player"
-                        class="video-js vjs-big-play-centered vjs-fluid"
-                        controls
-                        preload="auto"
-                            {% if movie.video_id %}
-                            poster="{{ url_for('serve_image', filename='covers/' + movie.video_id + '.jpg') }}"
-                            {% else %}
-                        poster="{{ movie.cover_image }}"
+                      <video
+                          id="jellyfin-player"
+                          class="video-js vjs-big-play-centered vjs-fluid"
+                          controls
+                          crossorigin="anonymous"
+                          preload="auto"
+                             {% if movie_detail and movie.video_id %}
+                             poster="{{ url_for('serve_image', filename='covers/' + movie.video_id + '.jpg') }}"
+                             {% else %}
+                         poster="{{ jellyfin_cover or default_cover }}"
                             {% endif %}
-                        data-setup="{}"
-                    >
+                         data-setup="{}"
+                     >
                             <source src="{{ movie.play_url }}" type="video/mp4" id="main-source" />
                         <p class="vjs-no-js">
                             To view this video please enable JavaScript, and consider upgrading to a
@@ -463,6 +570,10 @@
                         <button id="jellyfinLiveCaptionBtn" class="live-caption-toggle" type="button" title="开启/关闭实时字幕">
                             <i class="fas fa-closed-captioning" style="font-size: 0.9rem;"></i>
                             <span>实时字幕</span>
+                        </button>
+                        <button id="jellyfinTranslationBtn" class="live-caption-toggle" type="button" title="显示/隐藏译文" disabled style="bottom: 86px;">
+                            <i class="fas fa-language" style="font-size: 0.9rem;"></i>
+                            <span>译文</span>
                         </button>
                         <div id="jellyfinLiveCaptionLayer" class="live-caption-layer"></div>
                         
@@ -499,9 +610,9 @@
                             <p style="margin: 0;"><strong>播放模式：</strong><span id="playbackMode">Jellyfin 播放</span></p>
                             <p style="margin: 0;"><strong>路径：</strong><span id="filePath" class="text-break">{{ movie.path }}</span></p>
                             <p style="margin: 0;"><strong>文件名：</strong><span id="fileName">{{ movie.path.split('/')[-1] if movie.path else '--' }}</span></p>
-                            <p style="margin: 0;"><strong>时长：</strong><span id="videoDuration">--:--</span></p>
-                            <p style="margin: 0;"><strong>分辨率：</strong><span id="videoResolution">-- x --</span></p>
-                            <p style="margin: 0;"><strong>文件大小：</strong><span id="fileSize">--</span></p>
+                            <p style="margin: 0;"><strong>时长：</strong><span id="videoDuration">{{ jellyfin_meta.get('runtime_text') or '--:--' }}</span></p>
+                            <p style="margin: 0;"><strong>分辨率：</strong><span id="videoResolution">{{ jellyfin_meta.get('resolution_text') or '-- x --' }}</span></p>
+                            <p style="margin: 0;"><strong>文件大小：</strong><span id="fileSize">{{ jellyfin_meta.get('file_size_text') or '--' }}</span></p>
                         </div>
                     </div>
                     <div class="status-container" style="margin-left: auto; max-width: 340px; width: 100%;">
@@ -549,14 +660,21 @@
         let player;
         let savedTime = localStorage.getItem('jellyfin_' + itemId);
         let isTranscodingEnabled = false;
-        let jellyfinConfig;
-        let liveCaptionEnabled = false;
-        let captionWs = null;
-        let audioCtx = null;
-        let sourceNode = null;
-        let processor = null;
-        const liveCaptionLayer = document.getElementById('jellyfinLiveCaptionLayer');
-        const liveCaptionBtn = document.getElementById('jellyfinLiveCaptionBtn');
+         let jellyfinConfig;
+         let liveCaptionEnabled = false;
+         let captionWs = null;
+         let audioCtx = null;
+         let sourceNode = null;
+         let sourceElement = null;
+         let processor = null;
+         let captionClearTimer = null;
+         let seekRestartTimer = null;
+         let showTranslation = false;
+         let lastCaptionBase = '';
+         let lastCaptionTranslated = '';
+         const liveCaptionLayer = document.getElementById('jellyfinLiveCaptionLayer');
+         const liveCaptionBtn = document.getElementById('jellyfinLiveCaptionBtn');
+         const translationBtn = document.getElementById('jellyfinTranslationBtn');
         
         // Extract item_id and api_key from play_url if available
         let extractedItemId = itemId;
@@ -575,6 +693,68 @@
             }
         }
         
+        (function() {
+            if (!liveCaptionLayer) return;
+
+            const originalParent = liveCaptionLayer.parentElement;
+            const nextSibling = liveCaptionLayer.nextSibling;
+            let lastTarget = null;
+            let lastTargetOriginalPosition = '';
+
+            function moveCaptionTo(target) {
+                if (!target || liveCaptionLayer.parentElement === target) return;
+                const style = window.getComputedStyle(target);
+                if (style.position === 'static') {
+                    lastTargetOriginalPosition = target.style.position;
+                    target.style.position = 'relative';
+                    target.dataset._captionPositionAdjusted = '1';
+                }
+                target.appendChild(liveCaptionLayer);
+                lastTarget = target;
+            }
+
+            function restoreCaption() {
+                if (!originalParent || liveCaptionLayer.parentElement === originalParent) return;
+                if (nextSibling && nextSibling.parentNode === originalParent) {
+                    originalParent.insertBefore(liveCaptionLayer, nextSibling);
+                } else {
+                    originalParent.appendChild(liveCaptionLayer);
+                }
+                if (lastTarget && lastTarget.dataset._captionPositionAdjusted === '1') {
+                    lastTarget.style.position = lastTargetOriginalPosition || '';
+                    delete lastTarget.dataset._captionPositionAdjusted;
+                }
+                lastTarget = null;
+                lastTargetOriginalPosition = '';
+            }
+
+            function getFullscreenTarget(fsEl) {
+                if (!fsEl) return null;
+                if (fsEl.querySelector) {
+                    const container = fsEl.querySelector('.video-container') || fsEl.querySelector('#player-container');
+                    if (container) return container;
+                }
+                if (fsEl.tagName === 'VIDEO' && fsEl.parentElement) {
+                    return fsEl.parentElement;
+                }
+                return fsEl;
+            }
+
+            function syncCaptionFullscreenState() {
+                const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+                const target = getFullscreenTarget(fsEl);
+                if (target) {
+                    moveCaptionTo(target);
+                } else {
+                    restoreCaption();
+                }
+            }
+
+            document.addEventListener('fullscreenchange', syncCaptionFullscreenState);
+            document.addEventListener('webkitfullscreenchange', syncCaptionFullscreenState);
+            syncCaptionFullscreenState();
+        })();
+
         // Get Jellyfin configuration
         async function getJellyfinConfig() {
             try {
@@ -587,11 +767,18 @@
             }
         }
         
-        // Live caption helpers - 完全按照 video_player.html 的实现
+        // Live caption helpers - 参考 video_player.html 的实现
         function updateLiveCaptionLayer(text) {
             if (liveCaptionLayer) {
                 liveCaptionLayer.textContent = text || '';
             }
+        }
+
+        function renderCaption() {
+            const baseText = lastCaptionBase || '';
+            const translated = lastCaptionTranslated || '';
+            const merged = (showTranslation && translated) ? `${baseText}\n${translated}` : baseText;
+            updateLiveCaptionLayer(merged);
         }
 
         function floatTo16BitPCM(float32Array) {
@@ -614,7 +801,7 @@
             return document.getElementById('jellyfin-player_html5_api') || document.getElementById('jellyfin-player');
         }
 
-        function startLiveCaption() {
+        function startLiveCaption(withTranslation = false) {
             if (liveCaptionEnabled) return;
 
             const videoEl = getJellyfinVideoElement();
@@ -633,9 +820,15 @@
                 audioCtx.resume();
             }
 
-            if (!sourceNode) {
+            if (!sourceNode || sourceElement !== videoEl) {
+                if (sourceNode && sourceElement && sourceElement !== videoEl) {
+                    try { sourceNode.disconnect(); } catch (e) {}
+                    sourceNode = null;
+                    sourceElement = null;
+                }
                 try {
                     sourceNode = audioCtx.createMediaElementSource(videoEl);
+                    sourceElement = videoEl;
                 } catch (e) {
                     console.error('无法从视频元素创建音频源:', e);
                     liveCaptionEnabled = false;
@@ -653,15 +846,14 @@
             try { sourceNode.connect(audioCtx.destination); } catch (e) {}
 
             const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-            const hostPart = fwhHost || window.location.hostname;
-            const portPart = fwhPort ? `:${fwhPort}` : (window.location.port ? `:${window.location.port}` : ':8001');
-            const wsUrl = `${wsProtocol}://${hostPart}${portPart}/ws/realtime`;
+            const wsUrl = `${wsProtocol}://${window.location.host}/ws/caption`;
             captionWs = new WebSocket(wsUrl);
 
             captionWs.onopen = function () {
                 try {
                     captionWs.send(JSON.stringify({
                         type: 'start',
+                        translate: !!withTranslation,
                         segmenter: fwhSegmenter || 'vad',
                         movieId: '{{ movie.video_id or movie.item_id }}',
                         language: fwhLanguage ? fwhLanguage : undefined,
@@ -686,7 +878,18 @@
                 try {
                     const data = JSON.parse(event.data);
                     if (data.type === 'transcript') {
-                        updateLiveCaptionLayer(data.text || '');
+                        if (captionClearTimer) {
+                            clearTimeout(captionClearTimer);
+                            captionClearTimer = null;
+                        }
+                        lastCaptionBase = data.text || '';
+                        lastCaptionTranslated = data.translated_text || '';
+                        renderCaption();
+                        captionClearTimer = setTimeout(function () {
+                            lastCaptionBase = '';
+                            lastCaptionTranslated = '';
+                            updateLiveCaptionLayer('');
+                        }, 5000);
                     }
                 } catch (e) {
                     console.error('Transcription WS parse error:', e);
@@ -731,9 +934,22 @@
                 } catch (e) {}
                 captionWs = null;
             }
+            if (captionClearTimer) {
+                clearTimeout(captionClearTimer);
+                captionClearTimer = null;
+            }
+            lastCaptionBase = '';
+            lastCaptionTranslated = '';
+            renderCaption();
             updateLiveCaptionLayer('');
         }
-        
+
+        function restartLiveCaption() {
+            if (!liveCaptionEnabled) return;
+            stopLiveCaption();
+            startLiveCaption(showTranslation);
+        }
+
         // Initialize video player
         function initializePlayer(src, type, autoStart) {
             if (liveCaptionEnabled) {
@@ -741,6 +957,11 @@
                 if (liveCaptionBtn) {
                     liveCaptionBtn.classList.remove('active');
                 }
+                if (translationBtn) {
+                    translationBtn.disabled = true;
+                    translationBtn.classList.remove('active');
+                }
+                showTranslation = false;
             }
             // 注意：不在这里断开 audioCtx 连接，避免影响播放器音频
             // 只在停止实时字幕时清理 WebSocket 连接
@@ -793,9 +1014,19 @@
             player.on('loadedmetadata', function() {
                 updateVideoMetadata();
             });
-            
+
             player.on('canplay', function() {
                 updateVideoMetadata();
+            });
+
+            player.on('seeked', function () {
+                if (!liveCaptionEnabled) return;
+                if (seekRestartTimer) {
+                    clearTimeout(seekRestartTimer);
+                }
+                seekRestartTimer = setTimeout(function () {
+                    restartLiveCaption();
+                }, 150);
             });
             
             updatePlaybackInfo(!isTranscodingEnabled ? '直接播放' : '转码播放');
@@ -1180,15 +1411,84 @@
         if (liveCaptionBtn) {
             liveCaptionBtn.addEventListener('click', function() {
                 if (!liveCaptionEnabled) {
-                    startLiveCaption();
+                    startLiveCaption(showTranslation);
                     liveCaptionBtn.classList.add('active');
+                    if (translationBtn) translationBtn.disabled = false;
                 } else {
                     stopLiveCaption();
                     liveCaptionBtn.classList.remove('active');
+                    if (translationBtn) {
+                        translationBtn.disabled = true;
+                        translationBtn.classList.remove('active');
+                    }
+                    showTranslation = false;
                 }
             });
         }
-        
+
+        if (translationBtn) {
+            translationBtn.addEventListener('click', function () {
+                if (!liveCaptionEnabled) return;
+                showTranslation = !showTranslation;
+                if (showTranslation) {
+                    translationBtn.classList.add('active');
+                } else {
+                    translationBtn.classList.remove('active');
+                }
+                restartLiveCaption();
+            });
+        }
+
+        // 控件自动隐藏功能（全屏和窗口模式）
+        let controlsHideTimeout = null;
+        const playerContainer = document.getElementById('player-container');
+
+        function showControls() {
+            if (!playerContainer) return;
+
+            playerContainer.classList.add('controls-visible');
+
+            // 清除之前的定时器
+            if (controlsHideTimeout) {
+                clearTimeout(controlsHideTimeout);
+            }
+
+            // 2秒后隐藏控件
+            controlsHideTimeout = setTimeout(() => {
+                playerContainer.classList.remove('controls-visible');
+            }, 2000);
+        }
+
+        function setupAutoHideControls() {
+            if (!playerContainer) return;
+
+            // 鼠标移动时显示控件
+            playerContainer.addEventListener('mousemove', showControls);
+            playerContainer.addEventListener('click', showControls);
+
+            // 监听全屏变化
+            document.addEventListener('fullscreenchange', handleFullscreenChange);
+            document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+        }
+
+        function handleFullscreenChange() {
+            if (!playerContainer) return;
+
+            if (document.fullscreenElement || document.webkitFullscreenElement) {
+                // 进入全屏，显示控件并开始自动隐藏
+                showControls();
+            } else {
+                // 退出全屏，清除定时器但保持鼠标悬停功能
+                if (controlsHideTimeout) {
+                    clearTimeout(controlsHideTimeout);
+                }
+                playerContainer.classList.remove('controls-visible');
+            }
+        }
+
+        // 初始化自动隐藏功能
+        setupAutoHideControls();
+
         // Start initialization
         initialize();
     });

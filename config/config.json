@@ -3,14 +3,14 @@
   "cloud115": {
     "alist": {
       "base_url": "",
-      "enabled": true,
+      "enabled": false,
       "password": "",
       "root_path": "/115",
       "timeout": 30,
       "url_cache_seconds": 300,
       "username": ""
     },
-    "auth_mode": "auto",
+    "auth_mode": "driver",
     "default_folder_id": "",
     "driver": {
       "api_urls": [
@@ -73,7 +73,7 @@
         "mkv",
         "webm"
       ],
-      "use_hwaccel": true,
+      "use_hwaccel": false,
       "video_bitrate": "5000k",
       "video_encoder": "h264_qsv",
       "video_encoder_sw": "libx264",
@@ -103,7 +103,7 @@
     "device_id": "buspre-web-player-01",
     "device_name": "Web Browser",
     "password": "",
-    "server_url": "",
+    "server_url": ",
     "transcoding": {
       "container": "ts",
       "enable_auto_transcoding": true,

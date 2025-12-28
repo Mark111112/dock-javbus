@@ -12,6 +12,12 @@
     .file-table th {
         white-space: nowrap;
     }
+    .file-table td {
+        padding: 0.5rem 0.75rem;
+    }
+    .file-table th {
+        padding: 0.75rem;
+    }
     .file-row {
         cursor: pointer;
         transition: background-color 0.2s;
@@ -95,6 +101,61 @@
             border-right: 0;
         }
     }
+    /* 操作列样式 */
+    .actions-cell {
+        white-space: nowrap;
+    }
+    .actions-cell .btn {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.875rem;
+    }
+    .actions-cell .btn-outline-danger {
+        --bs-btn-color: #dc3545;
+        --bs-btn-border-color: #dc3545;
+        --bs-btn-hover-bg: #dc3545;
+        --bs-btn-hover-border-color: #dc3545;
+    }
+    .actions-cell .btn-outline-primary {
+        --bs-btn-color: #0d6efd;
+        --bs-btn-border-color: #0d6efd;
+        --bs-btn-hover-bg: #0d6efd;
+        --bs-btn-hover-border-color: #0d6efd;
+    }
+    /* 文件夹选择样式 */
+    .folder-item {
+        cursor: pointer;
+        padding: 10px 12px;
+        border-radius: 6px;
+        transition: background 0.2s;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .folder-item:hover {
+        background: #f0f0f0;
+    }
+    .folder-item.selected {
+        background: #0d6efd;
+        color: white;
+    }
+    .folder-item.selected .folder-icon {
+        color: white;
+    }
+    .folder-icon {
+        color: #ffc107;
+        font-size: 1.1em;
+    }
+    .folder-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 8px;
+    }
+    .breadcrumb a {
+        text-decoration: none;
+    }
+    .breadcrumb a:hover {
+        text-decoration: underline;
+    }
 </style>
 {% endblock %}
 
@@ -110,6 +171,9 @@
                     <span id="loginStatusBadge" class="badge bg-secondary me-2">
                         <i class="bi bi-hourglass-split"></i> 检查中
                     </span>
+                    <a href="{{ url_for('cloud115_offline_downloads') }}" class="btn btn-outline-success me-2">
+                        <i class="bi bi-download"></i> 离线下载
+                    </a>
                     <a href="{{ url_for('config_page') }}#tab-cloud115" class="btn btn-outline-primary" target="_blank">
                         <i class="bi bi-key"></i> 登录管理
                     </a>
@@ -128,19 +192,20 @@
                         <table class="table table-hover align-middle file-table">
                             <thead>
                                 <tr>
-                                    <th scope="col" style="width: 60px;">#</th>
-                                    <th scope="col" class="sortable-header" data-sort="name">
+                                    <th scope="col" style="width: 45px;">#</th>
+                                    <th scope="col" class="sortable-header" data-sort="name" style="width: auto;">
                                         名称
                                         <i class="bi bi-arrow-down-up sort-icon"></i>
                                     </th>
-                                    <th scope="col" class="sortable-header" data-sort="size" style="width: 140px;">
+                                    <th scope="col" class="sortable-header" data-sort="size" style="width: 100px;">
                                         大小
                                         <i class="bi bi-arrow-down-up sort-icon"></i>
                                     </th>
-                                    <th scope="col" class="sortable-header" data-sort="time" style="width: 180px;">
+                                    <th scope="col" class="sortable-header" data-sort="time" style="width: 190px;">
                                         修改时间
                                         <i class="bi bi-arrow-down-up sort-icon"></i>
                                     </th>
+                                    <th scope="col" style="width: 110px;">操作</th>
                                 </tr>
                             </thead>
                             <tbody id="fileTableBody"></tbody>
@@ -185,6 +250,41 @@
                 <div class="position-absolute bottom-0 start-50 translate-middle-x mb-2" style="z-index: 10;">
                     <span class="badge bg-dark" id="imageCounter" style="opacity: 0.8;"></span>
                 </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 目录选择模态框（用于移动文件） -->
+<div class="modal fade" id="moveFolderModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-scrollable modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">选择目标目录</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <!-- 当前路径 -->
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <div class="flex-grow-1">
+                        <nav aria-label="breadcrumb">
+                            <ol class="breadcrumb mb-0" id="moveBreadcrumb">
+                                <li class="breadcrumb-item"><a href="#" class="text-primary" data-folder-id="0">根目录</a></li>
+                            </ol>
+                        </nav>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="moveRefreshBtn">
+                        <i class="bi bi-arrow-clockwise"></i> 刷新
+                    </button>
+                </div>
+                <!-- 目录列表 -->
+                <div id="moveFolderTree" style="max-height: 400px; overflow-y: auto;"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" id="confirmMoveBtn" disabled>
+                    <i class="bi bi-check-lg me-1"></i>移动到此
+                </button>
             </div>
         </div>
     </div>
@@ -477,45 +577,67 @@
                     file.upt ?? file.update_time ?? file.te ?? file.t ??
                     file.user_utime ?? file.utime ?? file.mtime ?? file.last_update_time ?? file.time
                 );
+                const fileId = String(file.fid ?? file.cid ?? file.id ?? '');
+                const pickcode = getPickcode(file);
 
                 const item = document.createElement('div');
                 item.className = 'list-group-item';
 
                 const leading = document.createElement('div');
-                leading.className = 'file-leading';
+                leading.className = 'file-leading flex-grow-1';
                 const icon = document.createElement('i');
-                icon.className = folder ? 'bi bi-folder-fill text-warning' : `bi ${getFileIcon(fileName)} text-secondary`;
+                icon.className = folder ? 'bi bi-folder-fill text-warning me-2' : `bi ${getFileIcon(fileName)} text-secondary me-2`;
                 const textWrap = document.createElement('div');
                 textWrap.style.minWidth = '0';
                 const title = document.createElement('div');
                 title.className = 'file-title text-truncate';
                 title.textContent = fileName;
                 const meta = document.createElement('div');
-                meta.className = 'file-meta';
+                meta.className = 'file-meta text-muted small';
                 meta.textContent = folder ? `${timeText}` : `${sizeText} · ${timeText}`;
                 textWrap.appendChild(title);
                 textWrap.appendChild(meta);
                 leading.appendChild(icon);
                 leading.appendChild(textWrap);
 
-                const trailing = document.createElement('div');
-                trailing.className = 'file-trailing';
-                trailing.innerHTML = '<i class="bi bi-chevron-right"></i>';
+                // 操作按钮组
+                const actionsDiv = document.createElement('div');
+                actionsDiv.className = 'd-flex gap-1 align-items-center';
+
+                // 删除按钮
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'btn btn-sm btn-outline-danger';
+                deleteBtn.title = folder ? '删除文件夹' : '删除文件';
+                deleteBtn.innerHTML = '<i class="bi bi-trash"></i>';
+                deleteBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    deleteFile(fileId, fileName, folder);
+                });
+                actionsDiv.appendChild(deleteBtn);
+
+                // 下载按钮（仅文件）
+                if (!folder && pickcode) {
+                    const downloadBtn = document.createElement('button');
+                    downloadBtn.className = 'btn btn-sm btn-outline-primary';
+                    downloadBtn.title = '下载文件';
+                    downloadBtn.innerHTML = '<i class="bi bi-download"></i>';
+                    downloadBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        downloadFile(pickcode, fileName);
+                    });
+                    actionsDiv.appendChild(downloadBtn);
+                }
 
                 item.appendChild(leading);
-                item.appendChild(trailing);
+                item.appendChild(actionsDiv);
 
                 item.addEventListener('click', () => {
                     if (folder) {
-                        const folderId = String(file.fid ?? file.cid ?? file.id ?? '0');
-                        openFolder(folderId, fileName);
+                        openFolder(fileId, fileName);
                     } else if (video) {
-                        const pickcode = getPickcode(file);
-                        const fileId = getFileId(file);
                         openPlayer({ pickcode, fileId, name: fileName, fullPath: buildFullPath(fileName) });
                     } else if (image) {
                         const imageUrl = file.uo || file.u || '';
-                        const pickcode = getPickcode(file);
                         openImage(imageUrl, pickcode, fileName);
                     }
                 });
@@ -531,6 +653,8 @@
             const video = !folder && isVideoFile(file);
             const image = !folder && isImageFile(file);
             const fileName = file.fn || file.file_name || file.name || '未命名';
+            const fileId = String(file.fid ?? file.cid ?? file.id ?? '');
+            const pickcode = getPickcode(file);
             const row = document.createElement('tr');
             row.className = 'file-row';
 
@@ -559,18 +683,55 @@
             );
             row.appendChild(timeTd);
 
+            // 操作列
+            const actionsTd = document.createElement('td');
+            actionsTd.className = 'actions-cell';
+
+            // 删除按钮
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'btn btn-sm btn-outline-danger me-1';
+            deleteBtn.title = folder ? '删除文件夹' : '删除文件';
+            deleteBtn.innerHTML = '<i class="bi bi-trash"></i>';
+            deleteBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                deleteFile(fileId, fileName, folder);
+            });
+            actionsTd.appendChild(deleteBtn);
+
+            // 移动按钮
+            const moveBtn = document.createElement('button');
+            moveBtn.className = 'btn btn-sm btn-outline-secondary me-1';
+            moveBtn.title = '移动到...';
+            moveBtn.innerHTML = '<i class="bi bi-folder-symlink"></i>';
+            moveBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                openMoveModal(fileId, fileName, folder);
+            });
+            actionsTd.appendChild(moveBtn);
+
+            // 下载按钮（仅文件）
+            if (!folder && pickcode) {
+                const downloadBtn = document.createElement('button');
+                downloadBtn.className = 'btn btn-sm btn-outline-primary';
+                downloadBtn.title = '下载文件';
+                downloadBtn.innerHTML = '<i class="bi bi-download"></i>';
+                downloadBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    downloadFile(pickcode, fileName);
+                });
+                actionsTd.appendChild(downloadBtn);
+            }
+
+            row.appendChild(actionsTd);
+
             // 添加点击事件
             row.addEventListener('click', () => {
                 if (folder) {
-                    const folderId = String(file.fid ?? file.cid ?? file.id ?? '0');
-                    openFolder(folderId, fileName);
+                    openFolder(fileId, fileName);
                 } else if (video) {
-                    const pickcode = getPickcode(file);
-                    const fileId = getFileId(file);
                     openPlayer({ pickcode, fileId, name: fileName, fullPath: buildFullPath(fileName) });
                 } else if (image) {
                     const imageUrl = file.uo || file.u || '';
-                    const pickcode = getPickcode(file);
                     openImage(imageUrl, pickcode, fileName);
                 }
             });
@@ -718,6 +879,239 @@
             showError(error.message || '加载文件失败');
         }
     }
+
+    // 删除文件或文件夹
+    async function deleteFile(fileId, fileName, isFolder) {
+        const itemType = isFolder ? '文件夹' : '文件';
+        const confirmMsg = isFolder
+            ? `确定要删除文件夹"${fileName}"吗？\n\n注意：删除文件夹将同时删除其中的所有内容，此操作不可恢复！`
+            : `确定要删除文件"${fileName}"吗？\n\n此操作不可恢复！`;
+
+        if (!confirm(confirmMsg)) {
+            return;
+        }
+
+        try {
+            const response = await axios.post('/api/cloud115/delete', {
+                file_id: fileId
+            });
+
+            if (response.data.success) {
+                // 删除成功，刷新当前目录
+                await loadFiles(currentCid);
+            } else {
+                alert(`删除失败: ${response.data.message || '未知错误'}`);
+            }
+        } catch (error) {
+            console.error('删除失败:', error);
+            const errorMsg = error.response?.data?.message || error.message || '删除失败';
+            alert(`删除失败: ${errorMsg}`);
+        }
+    }
+
+    // 下载文件
+    function downloadFile(pickcode, fileName) {
+        // 使用服务器代理下载，处理115的认证cookie
+        const params = new URLSearchParams({
+            pickcode: pickcode,
+            file_name: fileName
+        });
+
+        // 创建隐藏的iframe来触发下载（避免弹窗被阻止）
+        const iframe = document.createElement('iframe');
+        iframe.style.display = 'none';
+        iframe.src = `/api/cloud115/download_file?${params.toString()}`;
+        document.body.appendChild(iframe);
+
+        // 5秒后移除iframe
+        setTimeout(() => {
+            document.body.removeChild(iframe);
+        }, 5000);
+    }
+
+    // 移动相关变量
+    let selectedMoveFolderId = '0';
+    let selectedMoveFolderName = '根目录';
+    let currentMoveModalFolderId = '0';
+    let moveBreadcrumbPath = [{id: '0', name: '根目录'}];
+    let fileToMove = null; // {fileId, fileName, isFolder}
+
+    // 打开移动模态框
+    function openMoveModal(fileId, fileName, isFolder) {
+        fileToMove = {fileId, fileName, isFolder};
+        selectedMoveFolderId = '0';
+        selectedMoveFolderName = '根目录';
+        currentMoveModalFolderId = '0';
+        moveBreadcrumbPath = [{id: '0', name: '根目录'}];
+
+        // 更新面包屑
+        updateMoveBreadcrumb();
+        // 加载目录
+        loadMoveModalFolder('0');
+
+        // 禁用确认按钮
+        document.getElementById('confirmMoveBtn').disabled = false;
+
+        // 显示模态框
+        const modal = new bootstrap.Modal(document.getElementById('moveFolderModal'));
+        modal.show();
+    }
+
+    // 加载移动模态框的目录
+    function loadMoveModalFolder(folderId) {
+        const folderTree = document.getElementById('moveFolderTree');
+        folderTree.innerHTML = '<div class="text-center py-4"><div class="spinner-border" role="status"></div></div>';
+
+        const path = folderId === '0' ? '/' : folderId;
+        axios.get(`/api/cloud115/list?path=${encodeURIComponent(path)}`)
+            .then(response => {
+                if (response.data.success && response.data.data && response.data.data.files) {
+                    renderMoveModalFolders(response.data.data.files);
+                } else {
+                    folderTree.innerHTML = '<div class="text-center text-muted py-4">此目录为空</div>';
+                }
+            })
+            .catch(error => {
+                console.error('加载目录失败:', error);
+                folderTree.innerHTML = '<div class="text-center text-danger py-4">加载失败，请重试</div>';
+            });
+    }
+
+    // 渲染移动模态框的目录列表
+    function renderMoveModalFolders(files) {
+        const folderTree = document.getElementById('moveFolderTree');
+        const folders = files.filter(f => f.type === 'folder');
+
+        if (folders.length === 0) {
+            folderTree.innerHTML = '<div class="text-center text-muted py-4">此目录没有子文件夹</div>';
+            return;
+        }
+
+        let html = '<div class="folder-grid">';
+        folders.forEach(folder => {
+            html += `
+                <div class="folder-item" data-id="${folder.file_id}" data-name="${folder.file_name}">
+                    <i class="bi bi-folder-fill folder-icon"></i>
+                    <span class="folder-name">${folder.file_name}</span>
+                </div>
+            `;
+        });
+        html += '</div>';
+        folderTree.innerHTML = html;
+
+        // 为每个文件夹项单独绑定点击事件
+        folderTree.querySelectorAll('.folder-item').forEach(item => {
+            let clickTimer = null;
+
+            item.addEventListener('click', function() {
+                // 清除之前的定时器
+                if (clickTimer) clearTimeout(clickTimer);
+
+                // 移除其他选中状态
+                folderTree.querySelectorAll('.folder-item').forEach(f => f.classList.remove('selected'));
+                this.classList.add('selected');
+
+                const fileId = this.getAttribute('data-id');
+                const fileName = this.getAttribute('data-name');
+
+                // 设置延迟检测双击
+                clickTimer = setTimeout(() => {
+                    // 单击：仅选中该目录作为移动目标
+                    selectedMoveFolderId = fileId;
+                    selectedMoveFolderName = fileName;
+                }, 300);
+            });
+
+            item.addEventListener('dblclick', function() {
+                if (clickTimer) clearTimeout(clickTimer);
+
+                const fileId = this.getAttribute('data-id');
+                const fileName = this.getAttribute('data-name');
+
+                // 双击：进入目录
+                enterMoveFolder(fileId, fileName);
+            });
+        });
+    }
+
+    function enterMoveFolder(folderId, folderName) {
+        currentMoveModalFolderId = folderId;
+        selectedMoveFolderId = folderId;
+        selectedMoveFolderName = folderName;
+        moveBreadcrumbPath.push({id: folderId, name: folderName});
+        updateMoveBreadcrumb();
+        loadMoveModalFolder(folderId);
+    }
+
+    // 更新移动模态框的面包屑
+    function updateMoveBreadcrumb() {
+        const breadcrumb = document.getElementById('moveBreadcrumb');
+        let html = '';
+        moveBreadcrumbPath.forEach((crumb, index) => {
+            if (index === moveBreadcrumbPath.length - 1) {
+                html += `<li class="breadcrumb-item active">${crumb.name}</li>`;
+            } else {
+                html += `<li class="breadcrumb-item"><a href="#" class="text-primary" data-folder-id="${crumb.id}">${crumb.name}</a></li>`;
+            }
+        });
+        breadcrumb.innerHTML = html;
+
+        // 绑定面包屑点击事件
+        breadcrumb.querySelectorAll('a').forEach(link => {
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                const folderId = e.target.getAttribute('data-folder-id');
+                const index = moveBreadcrumbPath.findIndex(c => c.id === folderId);
+                if (index !== -1) {
+                    moveBreadcrumbPath = moveBreadcrumbPath.slice(0, index + 1);
+                    currentMoveModalFolderId = folderId;
+                    selectedMoveFolderId = folderId;
+                    selectedMoveFolderName = moveBreadcrumbPath[index].name;
+                    updateMoveBreadcrumb();
+                    loadMoveModalFolder(folderId);
+                }
+            });
+        });
+    }
+
+    // 确认移动
+    async function confirmMove() {
+        if (!fileToMove || !selectedMoveFolderId) {
+            return;
+        }
+
+        const {fileId, fileName, isFolder} = fileToMove;
+        const itemType = isFolder ? '文件夹' : '文件';
+
+        console.log('移动参数:', { fileId, target_cid: selectedMoveFolderId, fileName });
+
+        try {
+            const response = await axios.post('/api/cloud115/move', {
+                file_id: fileId,
+                target_cid: selectedMoveFolderId
+            });
+
+            if (response.data.success) {
+                // 移动成功，关闭模态框并刷新当前目录
+                const modal = bootstrap.Modal.getInstance(document.getElementById('moveFolderModal'));
+                modal.hide();
+                await loadFiles(currentCid);
+            } else {
+                alert(`移动失败: ${response.data.message || '未知错误'}`);
+            }
+        } catch (error) {
+            console.error('移动失败:', error);
+            const errorMsg = error.response?.data?.message || error.message || '移动失败';
+            alert(`移动失败: ${errorMsg}`);
+        }
+    }
+
+    // 绑定移动模态框事件
+    document.getElementById('moveRefreshBtn').addEventListener('click', () => {
+        loadMoveModalFolder(currentMoveModalFolderId);
+    });
+
+    document.getElementById('confirmMoveBtn').addEventListener('click', confirmMove);
 
     // 检查登录状态
     async function checkLoginStatus() {
