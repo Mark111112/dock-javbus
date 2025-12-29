@@ -103,7 +103,7 @@
     "device_id": "buspre-web-player-01",
     "device_name": "Web Browser",
     "password": "",
-    "server_url": ",
+    "server_url": "",
     "transcoding": {
       "container": "ts",
       "enable_auto_transcoding": true,
