@@ -1,0 +1,144 @@
+{
+  "base_url": "https://www.javbus.com",
+  "cloud115": {
+    "alist": {
+      "base_url": "",
+      "enabled": false,
+      "password": "",
+      "root_path": "/115",
+      "timeout": 30,
+      "url_cache_seconds": 300,
+      "username": ""
+    },
+    "auth_mode": "driver",
+    "default_folder_id": "",
+    "driver": {
+      "api_urls": [
+        "https://webapi.115.com/files",
+        "http://web.api.115.com/files"
+      ],
+      "cookie": "",
+      "cookie_file": "data/cloud115_cookie.txt",
+      "enabled": true,
+      "login_check_interval": 300,
+      "timeout": 15,
+      "user_agent": "Mozilla/5.0 115Browser/27.0.5.7"
+    },
+    "library_settings": {
+      "category": "other",
+      "default_delay_seconds": 5,
+      "min_file_size_mb": 200
+    },
+    "request_timeout": 15,
+    "token_file": "data/cloud115_token.json",
+    "transcode": {
+      "audio_bitrate": "192k",
+      "audio_channels": 2,
+      "audio_encoder": "aac",
+      "audio_sample_rate": 44100,
+      "auto_start": true,
+      "bufsize": "12000k",
+      "cleanup_idle_minutes": 30,
+      "enabled": true,
+      "gop_size": 60,
+      "hls_flags": "append_list+omit_endlist",
+      "hls_list_size": 0,
+      "hls_mode": "streaming",
+      "max_concurrent_tasks": 2,
+      "maxrate": "6000k",
+      "probe_enabled": true,
+      "probe_timeout": 60,
+      "qsv_device": "/dev/dri/renderD128",
+      "qsv_preset": "7",
+      "ready_timeout_seconds": 30,
+      "segment_duration": 2,
+      "trigger_on_codecs": [
+        "hevc",
+        "h265",
+        "hevc_qsv",
+        "vp9"
+      ],
+      "trigger_on_extensions": [
+        "wmv",
+        "avi",
+        "asf",
+        "rmvb",
+        "rm",
+        "flv",
+        "ts",
+        "m2ts",
+        "mpeg",
+        "mpg",
+        "mov",
+        "mkv",
+        "webm"
+      ],
+      "use_hwaccel": false,
+      "video_bitrate": "5000k",
+      "video_encoder": "h264_qsv",
+      "video_encoder_sw": "libx264",
+      "work_dir": "data/transcode",
+      "x264_preset": ""
+    }
+  },
+  "javbus": {
+    "allow_external_fallback": false,
+    "external_api_url": "",
+    "internal": {
+      "allow_external_fallback": false,
+      "cache_ttl_seconds": 3600,
+      "enabled": true,
+      "max_concurrency": 4,
+      "page_size": 30,
+      "timeout": 10
+    },
+    "mode": "internal",
+    "page_size": 30,
+    "timeout": 10
+  },
+  "jellyfin": {
+    "api_key": "",
+    "client_id": "buspre-web-player",
+    "client_name": "BusPre",
+    "device_id": "buspre-web-player-01",
+    "device_name": "Web Browser",
+    "password": "",
+    "server_url": ",
+    "transcoding": {
+      "container": "ts",
+      "enable_auto_transcoding": true,
+      "max_streaming_bitrate": 20000000,
+      "preferred_audio_codec": "aac",
+      "preferred_video_codec": "h264"
+    },
+    "username": ""
+  },
+  "transcription": {
+    "api_base_url": "http://192.168.1.133:8001/v1",
+    "api_key": "cant-be-empty",
+    "chunk_secs": 3,
+    "compression_ratio_threshold": 0,
+    "enabled": true,
+    "language": "ja",
+    "model": "RoachLin/kotoba-whisper-v2.2-faster",
+    "overlap_secs": 0.5,
+    "prefix_chars": 0,
+    "provider": "fwhisper",
+    "segmenter": "vad",
+    "timeout": 15,
+    "vad_energy_threshold": 0.0004,
+    "vad_frame_secs": 0.02,
+    "vad_max_window_secs": 6,
+    "vad_min_silence_secs": 0.25,
+    "vad_min_speech_secs": 0.3,
+    "vad_overlap_secs": 0.35
+  },
+  "translation": {
+    "api_token": "",
+    "api_url": "http://192.168.1.133:11434/api/generate",
+    "model": "crosery/sakura-14b-qwen2.5-v1.0-q6k:latest",
+    "source_lang": "日语",
+    "target_lang": "中文"
+  },
+  "watch_url_prefix": "https://missav.ai"
+}

@@ -1,0 +1,1200 @@
+{% extends "base.html" %}
+{% block title %}115 Explorer{% endblock %}
+
+{% block head %}
+<style>
+    .breadcrumb {
+        background-color: #f8f9fa;
+        padding: 10px 15px;
+        border-radius: 5px;
+        margin-bottom: 1rem;
+    }
+    .file-table th {
+        white-space: nowrap;
+    }
+    .file-table td {
+        padding: 0.5rem 0.75rem;
+    }
+    .file-table th {
+        padding: 0.75rem;
+    }
+    .file-row {
+        cursor: pointer;
+        transition: background-color 0.2s;
+    }
+    .file-row:hover {
+        background-color: rgba(0, 123, 255, 0.05);
+    }
+    .file-name {
+        word-break: break-all;
+    }
+    .state-message {
+        margin-top: 1rem;
+    }
+    .sortable-header {
+        cursor: pointer;
+        user-select: none;
+        position: relative;
+        padding-right: 20px !important;
+    }
+    .sortable-header:hover {
+        background-color: rgba(0, 0, 0, 0.05);
+    }
+    .sortable-header .sort-icon {
+        position: absolute;
+        right: 8px;
+        top: 50%;
+        transform: translateY(-50%);
+        opacity: 0.3;
+        transition: opacity 0.2s;
+    }
+    .sortable-header.active .sort-icon {
+        opacity: 1;
+    }
+    .image-preview-modal .modal-dialog {
+        max-width: 90vw;
+    }
+    .image-preview-modal img {
+        max-width: 100%;
+        max-height: 80vh;
+        object-fit: contain;
+    }
+    /* 移动端列表样式 */
+    #mobileList .list-group-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: .75rem;
+        padding: .85rem .9rem;
+    }
+    #mobileList .file-meta {
+        font-size: .85rem;
+        color: #6c757d;
+    }
+    #mobileList .file-title {
+        font-size: 1rem;
+        line-height: 1.3;
+        word-break: break-all;
+    }
+    #mobileList .file-leading {
+        display: flex;
+        align-items: center;
+        gap: .5rem;
+        min-width: 0;
+        flex: 1 1 auto;
+    }
+    #mobileList .file-trailing {
+        color: #adb5bd;
+    }
+    /* 移动端去掉外层卡片边框与内边距，仅保留条目分隔线 */
+    @media (max-width: 575.98px) {
+        .container .card {
+            border: 0;
+            box-shadow: none;
+            background: transparent;
+        }
+        .container .card .card-body {
+            padding: 0;
+        }
+        #mobileList .list-group-item {
+            border-left: 0;
+            border-right: 0;
+        }
+    }
+    /* 操作列样式 */
+    .actions-cell {
+        white-space: nowrap;
+    }
+    .actions-cell .btn {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.875rem;
+    }
+    .actions-cell .btn-outline-danger {
+        --bs-btn-color: #dc3545;
+        --bs-btn-border-color: #dc3545;
+        --bs-btn-hover-bg: #dc3545;
+        --bs-btn-hover-border-color: #dc3545;
+    }
+    .actions-cell .btn-outline-primary {
+        --bs-btn-color: #0d6efd;
+        --bs-btn-border-color: #0d6efd;
+        --bs-btn-hover-bg: #0d6efd;
+        --bs-btn-hover-border-color: #0d6efd;
+    }
+    /* 文件夹选择样式 */
+    .folder-item {
+        cursor: pointer;
+        padding: 10px 12px;
+        border-radius: 6px;
+        transition: background 0.2s;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .folder-item:hover {
+        background: #f0f0f0;
+    }
+    .folder-item.selected {
+        background: #0d6efd;
+        color: white;
+    }
+    .folder-item.selected .folder-icon {
+        color: white;
+    }
+    .folder-icon {
+        color: #ffc107;
+        font-size: 1.1em;
+    }
+    .folder-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 8px;
+    }
+    .breadcrumb a {
+        text-decoration: none;
+    }
+    .breadcrumb a:hover {
+        text-decoration: underline;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h2 class="mb-0">
+                <i class="bi bi-cloud"></i> 115网盘浏览器
+            </h2>
+                <div>
+                    <span id="loginStatusBadge" class="badge bg-secondary me-2">
+                        <i class="bi bi-hourglass-split"></i> 检查中
+                    </span>
+                    <a href="{{ url_for('cloud115_offline_downloads') }}" class="btn btn-outline-success me-2">
+                        <i class="bi bi-download"></i> 离线下载
+                    </a>
+                    <a href="{{ url_for('config_page') }}#tab-cloud115" class="btn btn-outline-primary" target="_blank">
+                        <i class="bi bi-key"></i> 登录管理
+                    </a>
+                </div>
+            </div>
+
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb" id="breadcrumb">
+                    <li class="breadcrumb-item active">根目录</li>
+                </ol>
+            </nav>
+
+            <div class="card">
+                <div class="card-body">
+                    <div class="table-responsive d-none d-sm-block">
+                        <table class="table table-hover align-middle file-table">
+                            <thead>
+                                <tr>
+                                    <th scope="col" style="width: 45px;">#</th>
+                                    <th scope="col" class="sortable-header" data-sort="name" style="width: auto;">
+                                        名称
+                                        <i class="bi bi-arrow-down-up sort-icon"></i>
+                                    </th>
+                                    <th scope="col" class="sortable-header" data-sort="size" style="width: 100px;">
+                                        大小
+                                        <i class="bi bi-arrow-down-up sort-icon"></i>
+                                    </th>
+                                    <th scope="col" class="sortable-header" data-sort="time" style="width: 190px;">
+                                        修改时间
+                                        <i class="bi bi-arrow-down-up sort-icon"></i>
+                                    </th>
+                                    <th scope="col" style="width: 110px;">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="fileTableBody"></tbody>
+                        </table>
+                    </div>
+                    <div id="mobileList" class="list-group d-block d-sm-none"></div>
+                    <div id="emptyState" class="alert alert-info text-center d-none state-message">
+                        <i class="bi bi-info-circle"></i> 此文件夹为空
+                    </div>
+                    <div id="errorState" class="alert alert-danger text-center d-none state-message"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 图片预览模态框 -->
+<div class="modal fade image-preview-modal" id="imagePreviewModal" tabindex="-1" aria-labelledby="imagePreviewModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="imagePreviewModalLabel">图片预览</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body text-center position-relative">
+                <!-- 上一张按钮 -->
+                <button type="button" class="btn btn-dark position-absolute top-50 start-0 translate-middle-y ms-2" 
+                        id="prevImageBtn" style="z-index: 10; opacity: 0.7;" title="上一张 (←)">
+                    <i class="bi bi-chevron-left"></i>
+                </button>
+                
+                <!-- 图片 -->
+                <img id="previewImage" src="" alt="Preview" class="img-fluid" style="max-height: 70vh;">
+                
+                <!-- 下一张按钮 -->
+                <button type="button" class="btn btn-dark position-absolute top-50 end-0 translate-middle-y me-2" 
+                        id="nextImageBtn" style="z-index: 10; opacity: 0.7;" title="下一张 (→)">
+                    <i class="bi bi-chevron-right"></i>
+                </button>
+                
+                <!-- 图片计数 -->
+                <div class="position-absolute bottom-0 start-50 translate-middle-x mb-2" style="z-index: 10;">
+                    <span class="badge bg-dark" id="imageCounter" style="opacity: 0.8;"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 目录选择模态框（用于移动文件） -->
+<div class="modal fade" id="moveFolderModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-scrollable modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">选择目标目录</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <!-- 当前路径 -->
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <div class="flex-grow-1">
+                        <nav aria-label="breadcrumb">
+                            <ol class="breadcrumb mb-0" id="moveBreadcrumb">
+                                <li class="breadcrumb-item"><a href="#" class="text-primary" data-folder-id="0">根目录</a></li>
+                            </ol>
+                        </nav>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="moveRefreshBtn">
+                        <i class="bi bi-arrow-clockwise"></i> 刷新
+                    </button>
+                </div>
+                <!-- 目录列表 -->
+                <div id="moveFolderTree" style="max-height: 400px; overflow-y: auto;"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" id="confirmMoveBtn" disabled>
+                    <i class="bi bi-check-lg me-1"></i>移动到此
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const filesApiUrl = "{{ url_for('explorer_api_files') }}";
+    const playerUrlBase = "{{ url_for('cloud115_player_direct') }}";
+
+    const breadcrumbEl = document.getElementById('breadcrumb');
+    const fileTableBody = document.getElementById('fileTableBody');
+    const mobileList = document.getElementById('mobileList');
+    const emptyState = document.getElementById('emptyState');
+    const errorState = document.getElementById('errorState');
+
+    let currentPath = [];
+    let currentCid = '0';
+    let currentFiles = [];
+    let sortConfig = { key: null, direction: 'asc' };
+    
+    // 图片导航相关变量
+    let imageFiles = [];  // 当前文件夹中的所有图片文件
+    let currentImageIndex = -1;  // 当前显示的图片索引
+    let imagePreviewModalInstance = null;  // 模态框实例
+
+    const VIDEO_EXTENSIONS = [
+        'mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'ts', 'm2ts', 'mpg', 'mpeg',
+        'mp3', 'aac', 'wav', 'flac', 'ogg',
+        'webm', 'm4v', '3gp', 'rm', 'rmvb'
+    ];
+
+    const IMAGE_EXTENSIONS = [
+        'jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg', 'ico', 'tiff', 'tif'
+    ];
+
+    function formatFileSize(bytes) {
+        const size = Number(bytes);
+        if (!size || Number.isNaN(size)) return '-';
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const exponent = Math.min(Math.floor(Math.log(size) / Math.log(1024)), units.length - 1);
+        const result = size / Math.pow(1024, exponent);
+        return `${result.toFixed(exponent === 0 ? 0 : 2)} ${units[exponent]}`;
+    }
+
+    function formatTimestamp(value) {
+        const timestamp = Number(value);
+        if (!timestamp || Number.isNaN(timestamp)) return '-';
+        return new Date(timestamp * 1000).toLocaleString('zh-CN');
+    }
+
+    function getFileIcon(filename) {
+        const ext = (filename.split('.').pop() || '').toLowerCase();
+        const iconMap = {
+            'mp4': 'bi-film',
+            'mkv': 'bi-film',
+            'avi': 'bi-film',
+            'mov': 'bi-film',
+            'wmv': 'bi-film',
+            'flv': 'bi-film',
+            'ts': 'bi-film',
+            'm2ts': 'bi-film',
+            'mpg': 'bi-film',
+            'mpeg': 'bi-film',
+            'webm': 'bi-film',
+            'mp3': 'bi-music-note',
+            'aac': 'bi-music-note',
+            'wav': 'bi-music-note',
+            'flac': 'bi-music-note',
+            'ogg': 'bi-music-note',
+            'jpg': 'bi-image',
+            'jpeg': 'bi-image',
+            'png': 'bi-image',
+            'gif': 'bi-image',
+            'bmp': 'bi-image',
+            'pdf': 'bi-filetype-pdf',
+            'doc': 'bi-filetype-doc',
+            'docx': 'bi-filetype-docx',
+            'xls': 'bi-file-earmark-spreadsheet',
+            'xlsx': 'bi-file-earmark-spreadsheet',
+            'ppt': 'bi-file-earmark-slides',
+            'pptx': 'bi-file-earmark-slides',
+            'txt': 'bi-filetype-txt',
+            'zip': 'bi-file-zip',
+            'rar': 'bi-file-zip',
+            '7z': 'bi-file-zip'
+        };
+        return iconMap[ext] || 'bi-file-earmark';
+    }
+
+    function isFolder(file) {
+        const flag = String(file?.fc ?? '');
+        return flag === '0';
+    }
+
+    function isVideoFile(file) {
+        if (!file) return false;
+        const videoFlag = String(file.isv ?? file.is_video ?? '').toLowerCase();
+        if (videoFlag === '1' || videoFlag === 'true') {
+            return true;
+        }
+        const extCandidate = String(file.ico ?? file.ext ?? '').toLowerCase().replace('.', '');
+        if (extCandidate && VIDEO_EXTENSIONS.includes(extCandidate)) {
+            return true;
+        }
+        const name = String(file.fn ?? file.file_name ?? file.name ?? '').toLowerCase();
+        return VIDEO_EXTENSIONS.some(ext => name.endsWith(`.${ext}`));
+    }
+
+    function isImageFile(file) {
+        if (!file) return false;
+        const extCandidate = String(file.ico ?? file.ext ?? '').toLowerCase().replace('.', '');
+        if (extCandidate && IMAGE_EXTENSIONS.includes(extCandidate)) {
+            return true;
+        }
+        const name = String(file.fn ?? file.file_name ?? file.name ?? '').toLowerCase();
+        return IMAGE_EXTENSIONS.some(ext => name.endsWith(`.${ext}`));
+    }
+
+    function getPickcode(file) {
+        return String(file?.pc || file?.pick_code || file?.pickcode || file?.p || '').trim();
+    }
+
+    function getFileId(file) {
+        return String(file?.fid || file?.file_id || file?.id || '').trim();
+    }
+
+    function buildFullPath(fileName) {
+        const segments = currentPath
+            .map(item => item.name)
+            .filter(name => name && name !== '根目录' && name !== '根目錄');
+        if (fileName) {
+            segments.push(fileName);
+        }
+        return segments.join('/');
+    }
+
+    function updateBreadcrumb() {
+        if (!breadcrumbEl) return;
+        breadcrumbEl.innerHTML = '';
+
+        const rootLi = document.createElement('li');
+        rootLi.className = currentPath.length === 0 ? 'breadcrumb-item active' : 'breadcrumb-item';
+        if (currentPath.length === 0) {
+            rootLi.textContent = '根目录';
+        } else {
+            const link = document.createElement('a');
+            link.href = '#';
+            link.textContent = '根目录';
+            link.addEventListener('click', event => {
+                event.preventDefault();
+                navigateToRoot();
+            });
+            rootLi.appendChild(link);
+        }
+        breadcrumbEl.appendChild(rootLi);
+
+        currentPath.forEach((item, index) => {
+            const li = document.createElement('li');
+            li.className = 'breadcrumb-item';
+            const isLast = index === currentPath.length - 1;
+            if (isLast) {
+                li.classList.add('active');
+                li.textContent = item.name || '未命名文件夹';
+            } else {
+                const link = document.createElement('a');
+                link.href = '#';
+                link.textContent = item.name || '未命名文件夹';
+                link.addEventListener('click', event => {
+                    event.preventDefault();
+                    navigateToPath(index);
+                });
+                li.appendChild(link);
+            }
+            breadcrumbEl.appendChild(li);
+        });
+    }
+
+    function showLoading() {
+        emptyState.classList.add('d-none');
+        errorState.classList.add('d-none');
+        fileTableBody.innerHTML = '';
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = 5;
+        cell.className = 'text-center py-4 text-muted';
+        cell.innerHTML = '<div class="spinner-border text-primary me-2" role="status"></div> 加载中...';
+        row.appendChild(cell);
+        fileTableBody.appendChild(row);
+    }
+
+    function showError(message) {
+        fileTableBody.innerHTML = '';
+        emptyState.classList.add('d-none');
+        errorState.textContent = message || '加载失败，请稍后重试';
+        errorState.classList.remove('d-none');
+    }
+
+    function sortFiles(files, key, direction) {
+        const sorted = [...files];
+        sorted.sort((a, b) => {
+            const aFolder = isFolder(a);
+            const bFolder = isFolder(b);
+            
+            // 文件夹始终排在前面
+            if (aFolder !== bFolder) {
+                return aFolder ? -1 : 1;
+            }
+
+            let aValue, bValue;
+            if (key === 'name') {
+                aValue = (a.fn || a.file_name || a.name || '').toLowerCase();
+                bValue = (b.fn || b.file_name || b.name || '').toLowerCase();
+            } else if (key === 'size') {
+                aValue = Number(a.fs ?? a.s ?? a.size ?? a.file_size ?? 0);
+                bValue = Number(b.fs ?? b.s ?? b.size ?? b.file_size ?? 0);
+            } else if (key === 'time') {
+                aValue = Number(
+                    a.upt ?? a.update_time ?? a.te ?? a.t ??
+                    a.user_utime ?? a.utime ?? a.mtime ?? a.last_update_time ?? a.time ?? 0
+                );
+                bValue = Number(
+                    b.upt ?? b.update_time ?? b.te ?? b.t ??
+                    b.user_utime ?? b.utime ?? b.mtime ?? b.last_update_time ?? b.time ?? 0
+                );
+            }
+
+            if (aValue < bValue) return direction === 'asc' ? -1 : 1;
+            if (aValue > bValue) return direction === 'asc' ? 1 : -1;
+            return 0;
+        });
+        return sorted;
+    }
+
+    function updateSortIcons(activeKey, direction) {
+        document.querySelectorAll('.sortable-header').forEach(header => {
+            const sortKey = header.getAttribute('data-sort');
+            const icon = header.querySelector('.sort-icon');
+            if (sortKey === activeKey) {
+                header.classList.add('active');
+                icon.className = direction === 'asc' ? 'bi bi-arrow-up sort-icon' : 'bi bi-arrow-down sort-icon';
+            } else {
+                header.classList.remove('active');
+                icon.className = 'bi bi-arrow-down-up sort-icon';
+            }
+        });
+    }
+
+    function isMobileView() {
+        return window.matchMedia('(max-width: 575.98px)').matches;
+    }
+
+    function renderFiles(files, skipSort = false) {
+        fileTableBody.innerHTML = '';
+        mobileList.innerHTML = '';
+        emptyState.classList.add('d-none');
+        errorState.classList.add('d-none');
+
+        if (!Array.isArray(files) || files.length === 0) {
+            emptyState.classList.remove('d-none');
+            return;
+        }
+
+        currentFiles = files;
+
+        // 应用排序
+        let displayFiles = files;
+        if (!skipSort && sortConfig.key) {
+            displayFiles = sortFiles(files, sortConfig.key, sortConfig.direction);
+        } else if (skipSort) {
+            // 默认排序：文件夹在前
+            displayFiles = [...files].sort((a, b) => {
+                const aFolder = isFolder(a);
+                const bFolder = isFolder(b);
+                if (aFolder === bFolder) return 0;
+                return aFolder ? -1 : 1;
+            });
+        }
+
+        // 移动端视图
+        if (isMobileView()) {
+            displayFiles.forEach((file) => {
+                const folder = isFolder(file);
+                const video = !folder && isVideoFile(file);
+                const image = !folder && isImageFile(file);
+                const fileName = file.fn || file.file_name || file.name || '未命名';
+                const sizeText = folder ? '-' : formatFileSize(file.fs ?? file.s ?? file.size ?? file.file_size);
+                const timeText = formatTimestamp(
+                    file.upt ?? file.update_time ?? file.te ?? file.t ??
+                    file.user_utime ?? file.utime ?? file.mtime ?? file.last_update_time ?? file.time
+                );
+                const fileId = String(file.fid ?? file.cid ?? file.id ?? '');
+                const pickcode = getPickcode(file);
+
+                const item = document.createElement('div');
+                item.className = 'list-group-item';
+
+                const leading = document.createElement('div');
+                leading.className = 'file-leading flex-grow-1';
+                const icon = document.createElement('i');
+                icon.className = folder ? 'bi bi-folder-fill text-warning me-2' : `bi ${getFileIcon(fileName)} text-secondary me-2`;
+                const textWrap = document.createElement('div');
+                textWrap.style.minWidth = '0';
+                const title = document.createElement('div');
+                title.className = 'file-title text-truncate';
+                title.textContent = fileName;
+                const meta = document.createElement('div');
+                meta.className = 'file-meta text-muted small';
+                meta.textContent = folder ? `${timeText}` : `${sizeText} · ${timeText}`;
+                textWrap.appendChild(title);
+                textWrap.appendChild(meta);
+                leading.appendChild(icon);
+                leading.appendChild(textWrap);
+
+                // 操作按钮组
+                const actionsDiv = document.createElement('div');
+                actionsDiv.className = 'd-flex gap-1 align-items-center';
+
+                // 删除按钮
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'btn btn-sm btn-outline-danger';
+                deleteBtn.title = folder ? '删除文件夹' : '删除文件';
+                deleteBtn.innerHTML = '<i class="bi bi-trash"></i>';
+                deleteBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    deleteFile(fileId, fileName, folder);
+                });
+                actionsDiv.appendChild(deleteBtn);
+
+                // 下载按钮（仅文件）
+                if (!folder && pickcode) {
+                    const downloadBtn = document.createElement('button');
+                    downloadBtn.className = 'btn btn-sm btn-outline-primary';
+                    downloadBtn.title = '下载文件';
+                    downloadBtn.innerHTML = '<i class="bi bi-download"></i>';
+                    downloadBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        downloadFile(pickcode, fileName);
+                    });
+                    actionsDiv.appendChild(downloadBtn);
+                }
+
+                item.appendChild(leading);
+                item.appendChild(actionsDiv);
+
+                item.addEventListener('click', () => {
+                    if (folder) {
+                        openFolder(fileId, fileName);
+                    } else if (video) {
+                        openPlayer({ pickcode, fileId, name: fileName, fullPath: buildFullPath(fileName) });
+                    } else if (image) {
+                        const imageUrl = file.uo || file.u || '';
+                        openImage(imageUrl, pickcode, fileName);
+                    }
+                });
+
+                mobileList.appendChild(item);
+            });
+            return;
+        }
+
+        // 桌面端表格
+        displayFiles.forEach((file, index) => {
+            const folder = isFolder(file);
+            const video = !folder && isVideoFile(file);
+            const image = !folder && isImageFile(file);
+            const fileName = file.fn || file.file_name || file.name || '未命名';
+            const fileId = String(file.fid ?? file.cid ?? file.id ?? '');
+            const pickcode = getPickcode(file);
+            const row = document.createElement('tr');
+            row.className = 'file-row';
+
+            const indexTd = document.createElement('td');
+            indexTd.textContent = index + 1;
+            row.appendChild(indexTd);
+
+            const nameTd = document.createElement('td');
+            const icon = document.createElement('i');
+            icon.className = folder ? 'bi bi-folder-fill text-warning me-2' : `bi ${getFileIcon(fileName)} text-secondary me-2`;
+            nameTd.appendChild(icon);
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'file-name';
+            nameSpan.textContent = fileName;
+            nameTd.appendChild(nameSpan);
+            row.appendChild(nameTd);
+
+            const sizeTd = document.createElement('td');
+            sizeTd.textContent = folder ? '-' : formatFileSize(file.fs ?? file.s ?? file.size ?? file.file_size);
+            row.appendChild(sizeTd);
+
+            const timeTd = document.createElement('td');
+            timeTd.textContent = formatTimestamp(
+                file.upt ?? file.update_time ?? file.te ?? file.t ??
+                file.user_utime ?? file.utime ?? file.mtime ?? file.last_update_time ?? file.time
+            );
+            row.appendChild(timeTd);
+
+            // 操作列
+            const actionsTd = document.createElement('td');
+            actionsTd.className = 'actions-cell';
+
+            // 删除按钮
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'btn btn-sm btn-outline-danger me-1';
+            deleteBtn.title = folder ? '删除文件夹' : '删除文件';
+            deleteBtn.innerHTML = '<i class="bi bi-trash"></i>';
+            deleteBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                deleteFile(fileId, fileName, folder);
+            });
+            actionsTd.appendChild(deleteBtn);
+
+            // 移动按钮
+            const moveBtn = document.createElement('button');
+            moveBtn.className = 'btn btn-sm btn-outline-secondary me-1';
+            moveBtn.title = '移动到...';
+            moveBtn.innerHTML = '<i class="bi bi-folder-symlink"></i>';
+            moveBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                openMoveModal(fileId, fileName, folder);
+            });
+            actionsTd.appendChild(moveBtn);
+
+            // 下载按钮（仅文件）
+            if (!folder && pickcode) {
+                const downloadBtn = document.createElement('button');
+                downloadBtn.className = 'btn btn-sm btn-outline-primary';
+                downloadBtn.title = '下载文件';
+                downloadBtn.innerHTML = '<i class="bi bi-download"></i>';
+                downloadBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    downloadFile(pickcode, fileName);
+                });
+                actionsTd.appendChild(downloadBtn);
+            }
+
+            row.appendChild(actionsTd);
+
+            // 添加点击事件
+            row.addEventListener('click', () => {
+                if (folder) {
+                    openFolder(fileId, fileName);
+                } else if (video) {
+                    openPlayer({ pickcode, fileId, name: fileName, fullPath: buildFullPath(fileName) });
+                } else if (image) {
+                    const imageUrl = file.uo || file.u || '';
+                    openImage(imageUrl, pickcode, fileName);
+                }
+            });
+
+            fileTableBody.appendChild(row);
+        });
+    }
+
+    function openPlayer({ pickcode, fileId, name, fullPath }) {
+        if (!pickcode) {
+            alert('该文件缺少pickcode，无法播放');
+            return;
+        }
+        const params = new URLSearchParams();
+        params.set('pickcode', pickcode);
+        if (fileId) {
+            params.set('file_id', fileId);
+        }
+        if (name) {
+            params.set('name', name);
+        }
+        if (fullPath) {
+            params.set('path', fullPath);
+        }
+        window.location.href = `${playerUrlBase}?${params.toString()}`;
+    }
+
+    function openImage(imageUrl, pickcode, fileName) {
+        // 构建当前文件夹中的所有图片文件列表
+        imageFiles = currentFiles.filter(file => !isFolder(file) && isImageFile(file));
+        
+        // 找到当前图片的索引
+        currentImageIndex = imageFiles.findIndex(file => {
+            const filePickcode = getPickcode(file);
+            const fileUrl = file.uo || file.u || '';
+            return filePickcode === pickcode || fileUrl === imageUrl;
+        });
+        
+        if (currentImageIndex === -1 && imageFiles.length > 0) {
+            currentImageIndex = 0;
+        }
+        
+        // 显示图片
+        showImageAtIndex(currentImageIndex);
+    }
+    
+    function showImageAtIndex(index) {
+        if (index < 0 || index >= imageFiles.length) {
+            return;
+        }
+        
+        currentImageIndex = index;
+        const file = imageFiles[index];
+        const fileName = file.fn || file.file_name || file.name || '未命名';
+        const imageUrl = file.uo || file.u || '';
+        const pickcode = getPickcode(file);
+        
+        // 优先使用 uo 字段（原图URL/大图），如果没有则使用 pickcode 构建下载URL
+        let finalImageUrl = imageUrl;
+        if (!finalImageUrl && pickcode) {
+            finalImageUrl = `https://webapi.115.com/files/download?pickcode=${pickcode}`;
+        }
+        
+        if (!finalImageUrl) {
+            alert('该图片缺少URL和pickcode，无法预览');
+            return;
+        }
+        
+        const modalEl = document.getElementById('imagePreviewModal');
+        const modalTitle = document.getElementById('imagePreviewModalLabel');
+        const previewImage = document.getElementById('previewImage');
+        const imageCounter = document.getElementById('imageCounter');
+        const prevBtn = document.getElementById('prevImageBtn');
+        const nextBtn = document.getElementById('nextImageBtn');
+        
+        modalTitle.textContent = fileName;
+        previewImage.src = finalImageUrl;
+        previewImage.alt = fileName;
+        
+        // 更新计数器
+        imageCounter.textContent = `${currentImageIndex + 1} / ${imageFiles.length}`;
+        
+        // 更新按钮状态
+        prevBtn.disabled = currentImageIndex === 0;
+        nextBtn.disabled = currentImageIndex === imageFiles.length - 1;
+        prevBtn.style.opacity = currentImageIndex === 0 ? '0.3' : '0.7';
+        nextBtn.style.opacity = currentImageIndex === imageFiles.length - 1 ? '0.3' : '0.7';
+        
+        // 显示模态框
+        if (!imagePreviewModalInstance) {
+            imagePreviewModalInstance = new bootstrap.Modal(modalEl);
+            imagePreviewModalInstance.show();
+        } else if (!modalEl.classList.contains('show')) {
+            imagePreviewModalInstance.show();
+        }
+    }
+    
+    function showPreviousImage() {
+        if (currentImageIndex > 0) {
+            showImageAtIndex(currentImageIndex - 1);
+        }
+    }
+    
+    function showNextImage() {
+        if (currentImageIndex < imageFiles.length - 1) {
+            showImageAtIndex(currentImageIndex + 1);
+        }
+    }
+
+    function navigateToRoot() {
+        currentPath = [];
+        currentCid = '0';
+        updateBreadcrumb();
+        loadFiles(currentCid);
+    }
+
+    function navigateToPath(index) {
+        currentPath = currentPath.slice(0, index + 1);
+        const target = currentPath[index];
+        currentCid = target?.cid ?? '0';
+        updateBreadcrumb();
+        loadFiles(currentCid);
+    }
+
+    function openFolder(cid, name) {
+        const sanitizedCid = String(cid || '0');
+        const folderName = name || '未命名文件夹';
+        currentPath.push({ cid: sanitizedCid, name: folderName });
+        currentCid = sanitizedCid;
+        updateBreadcrumb();
+        loadFiles(sanitizedCid);
+    }
+
+    async function loadFiles(cid) {
+        showLoading();
+        try {
+            const response = await axios.get(filesApiUrl, { params: { cid } });
+            const payload = response.data || {};
+            if (Number(payload.state) !== 1) {
+                throw new Error(payload.message || '获取文件列表失败');
+            }
+            renderFiles(payload.data || [], true); // skipSort=true，使用默认排序
+        } catch (error) {
+            console.error('加载文件失败:', error);
+            showError(error.message || '加载文件失败');
+        }
+    }
+
+    // 删除文件或文件夹
+    async function deleteFile(fileId, fileName, isFolder) {
+        const itemType = isFolder ? '文件夹' : '文件';
+        const confirmMsg = isFolder
+            ? `确定要删除文件夹"${fileName}"吗？\n\n注意：删除文件夹将同时删除其中的所有内容，此操作不可恢复！`
+            : `确定要删除文件"${fileName}"吗？\n\n此操作不可恢复！`;
+
+        if (!confirm(confirmMsg)) {
+            return;
+        }
+
+        try {
+            const response = await axios.post('/api/cloud115/delete', {
+                file_id: fileId
+            });
+
+            if (response.data.success) {
+                // 删除成功，刷新当前目录
+                await loadFiles(currentCid);
+            } else {
+                alert(`删除失败: ${response.data.message || '未知错误'}`);
+            }
+        } catch (error) {
+            console.error('删除失败:', error);
+            const errorMsg = error.response?.data?.message || error.message || '删除失败';
+            alert(`删除失败: ${errorMsg}`);
+        }
+    }
+
+    // 下载文件
+    function downloadFile(pickcode, fileName) {
+        // 使用服务器代理下载，处理115的认证cookie
+        const params = new URLSearchParams({
+            pickcode: pickcode,
+            file_name: fileName
+        });
+
+        // 创建隐藏的iframe来触发下载（避免弹窗被阻止）
+        const iframe = document.createElement('iframe');
+        iframe.style.display = 'none';
+        iframe.src = `/api/cloud115/download_file?${params.toString()}`;
+        document.body.appendChild(iframe);
+
+        // 5秒后移除iframe
+        setTimeout(() => {
+            document.body.removeChild(iframe);
+        }, 5000);
+    }
+
+    // 移动相关变量
+    let selectedMoveFolderId = '0';
+    let selectedMoveFolderName = '根目录';
+    let currentMoveModalFolderId = '0';
+    let moveBreadcrumbPath = [{id: '0', name: '根目录'}];
+    let fileToMove = null; // {fileId, fileName, isFolder}
+
+    // 打开移动模态框
+    function openMoveModal(fileId, fileName, isFolder) {
+        fileToMove = {fileId, fileName, isFolder};
+        selectedMoveFolderId = '0';
+        selectedMoveFolderName = '根目录';
+        currentMoveModalFolderId = '0';
+        moveBreadcrumbPath = [{id: '0', name: '根目录'}];
+
+        // 更新面包屑
+        updateMoveBreadcrumb();
+        // 加载目录
+        loadMoveModalFolder('0');
+
+        // 禁用确认按钮
+        document.getElementById('confirmMoveBtn').disabled = false;
+
+        // 显示模态框
+        const modal = new bootstrap.Modal(document.getElementById('moveFolderModal'));
+        modal.show();
+    }
+
+    // 加载移动模态框的目录
+    function loadMoveModalFolder(folderId) {
+        const folderTree = document.getElementById('moveFolderTree');
+        folderTree.innerHTML = '<div class="text-center py-4"><div class="spinner-border" role="status"></div></div>';
+
+        const path = folderId === '0' ? '/' : folderId;
+        axios.get(`/api/cloud115/list?path=${encodeURIComponent(path)}`)
+            .then(response => {
+                if (response.data.success && response.data.data && response.data.data.files) {
+                    renderMoveModalFolders(response.data.data.files);
+                } else {
+                    folderTree.innerHTML = '<div class="text-center text-muted py-4">此目录为空</div>';
+                }
+            })
+            .catch(error => {
+                console.error('加载目录失败:', error);
+                folderTree.innerHTML = '<div class="text-center text-danger py-4">加载失败，请重试</div>';
+            });
+    }
+
+    // 渲染移动模态框的目录列表
+    function renderMoveModalFolders(files) {
+        const folderTree = document.getElementById('moveFolderTree');
+        const folders = files.filter(f => f.type === 'folder');
+
+        if (folders.length === 0) {
+            folderTree.innerHTML = '<div class="text-center text-muted py-4">此目录没有子文件夹</div>';
+            return;
+        }
+
+        let html = '<div class="folder-grid">';
+        folders.forEach(folder => {
+            html += `
+                <div class="folder-item" data-id="${folder.file_id}" data-name="${folder.file_name}">
+                    <i class="bi bi-folder-fill folder-icon"></i>
+                    <span class="folder-name">${folder.file_name}</span>
+                </div>
+            `;
+        });
+        html += '</div>';
+        folderTree.innerHTML = html;
+
+        // 为每个文件夹项单独绑定点击事件
+        folderTree.querySelectorAll('.folder-item').forEach(item => {
+            let clickTimer = null;
+
+            item.addEventListener('click', function() {
+                // 清除之前的定时器
+                if (clickTimer) clearTimeout(clickTimer);
+
+                // 移除其他选中状态
+                folderTree.querySelectorAll('.folder-item').forEach(f => f.classList.remove('selected'));
+                this.classList.add('selected');
+
+                const fileId = this.getAttribute('data-id');
+                const fileName = this.getAttribute('data-name');
+
+                // 设置延迟检测双击
+                clickTimer = setTimeout(() => {
+                    // 单击：仅选中该目录作为移动目标
+                    selectedMoveFolderId = fileId;
+                    selectedMoveFolderName = fileName;
+                }, 300);
+            });
+
+            item.addEventListener('dblclick', function() {
+                if (clickTimer) clearTimeout(clickTimer);
+
+                const fileId = this.getAttribute('data-id');
+                const fileName = this.getAttribute('data-name');
+
+                // 双击：进入目录
+                enterMoveFolder(fileId, fileName);
+            });
+        });
+    }
+
+    function enterMoveFolder(folderId, folderName) {
+        currentMoveModalFolderId = folderId;
+        selectedMoveFolderId = folderId;
+        selectedMoveFolderName = folderName;
+        moveBreadcrumbPath.push({id: folderId, name: folderName});
+        updateMoveBreadcrumb();
+        loadMoveModalFolder(folderId);
+    }
+
+    // 更新移动模态框的面包屑
+    function updateMoveBreadcrumb() {
+        const breadcrumb = document.getElementById('moveBreadcrumb');
+        let html = '';
+        moveBreadcrumbPath.forEach((crumb, index) => {
+            if (index === moveBreadcrumbPath.length - 1) {
+                html += `<li class="breadcrumb-item active">${crumb.name}</li>`;
+            } else {
+                html += `<li class="breadcrumb-item"><a href="#" class="text-primary" data-folder-id="${crumb.id}">${crumb.name}</a></li>`;
+            }
+        });
+        breadcrumb.innerHTML = html;
+
+        // 绑定面包屑点击事件
+        breadcrumb.querySelectorAll('a').forEach(link => {
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                const folderId = e.target.getAttribute('data-folder-id');
+                const index = moveBreadcrumbPath.findIndex(c => c.id === folderId);
+                if (index !== -1) {
+                    moveBreadcrumbPath = moveBreadcrumbPath.slice(0, index + 1);
+                    currentMoveModalFolderId = folderId;
+                    selectedMoveFolderId = folderId;
+                    selectedMoveFolderName = moveBreadcrumbPath[index].name;
+                    updateMoveBreadcrumb();
+                    loadMoveModalFolder(folderId);
+                }
+            });
+        });
+    }
+
+    // 确认移动
+    async function confirmMove() {
+        if (!fileToMove || !selectedMoveFolderId) {
+            return;
+        }
+
+        const {fileId, fileName, isFolder} = fileToMove;
+        const itemType = isFolder ? '文件夹' : '文件';
+
+        console.log('移动参数:', { fileId, target_cid: selectedMoveFolderId, fileName });
+
+        try {
+            const response = await axios.post('/api/cloud115/move', {
+                file_id: fileId,
+                target_cid: selectedMoveFolderId
+            });
+
+            if (response.data.success) {
+                // 移动成功，关闭模态框并刷新当前目录
+                const modal = bootstrap.Modal.getInstance(document.getElementById('moveFolderModal'));
+                modal.hide();
+                await loadFiles(currentCid);
+            } else {
+                alert(`移动失败: ${response.data.message || '未知错误'}`);
+            }
+        } catch (error) {
+            console.error('移动失败:', error);
+            const errorMsg = error.response?.data?.message || error.message || '移动失败';
+            alert(`移动失败: ${errorMsg}`);
+        }
+    }
+
+    // 绑定移动模态框事件
+    document.getElementById('moveRefreshBtn').addEventListener('click', () => {
+        loadMoveModalFolder(currentMoveModalFolderId);
+    });
+
+    document.getElementById('confirmMoveBtn').addEventListener('click', confirmMove);
+
+    // 检查登录状态
+    async function checkLoginStatus() {
+        const badge = document.getElementById('loginStatusBadge');
+        try {
+            const response = await axios.get('/api/cloud115/check_auth_status');
+            const result = response.data;
+            if (result.state === 1 && result.data) {
+                const { logged_in, active_method } = result.data;
+                if (logged_in) {
+                    badge.className = 'badge bg-success me-2';
+                    badge.innerHTML = `<i class="bi bi-check-circle"></i> 已登录 (${active_method === 'driver' ? 'Cookie' : 'Token'})`;
+                } else {
+                    badge.className = 'badge bg-danger me-2';
+                    badge.innerHTML = '<i class="bi bi-x-circle"></i> 未登录';
+                }
+            }
+        } catch (error) {
+            console.error('检查登录状态失败:', error);
+            badge.className = 'badge bg-warning me-2';
+            badge.innerHTML = '<i class="bi bi-exclamation-triangle"></i> 状态未知';
+        }
+    }
+
+    // 添加排序事件监听
+    document.querySelectorAll('.sortable-header').forEach(header => {
+        header.addEventListener('click', () => {
+            const sortKey = header.getAttribute('data-sort');
+            
+            if (sortConfig.key === sortKey) {
+                // 切换排序方向
+                sortConfig.direction = sortConfig.direction === 'asc' ? 'desc' : 'asc';
+            } else {
+                // 新的排序键，默认升序
+                sortConfig.key = sortKey;
+                sortConfig.direction = 'asc';
+            }
+            
+            updateSortIcons(sortConfig.key, sortConfig.direction);
+            renderFiles(currentFiles, false);
+        });
+    });
+
+    // 页面加载时检查登录状态
+    // 图片导航按钮事件监听
+    document.getElementById('prevImageBtn').addEventListener('click', showPreviousImage);
+    document.getElementById('nextImageBtn').addEventListener('click', showNextImage);
+    
+    // 键盘事件监听（方向键）
+    document.addEventListener('keydown', function(event) {
+        const modalEl = document.getElementById('imagePreviewModal');
+        // 只在模态框显示时响应键盘事件
+        if (modalEl && modalEl.classList.contains('show')) {
+            if (event.key === 'ArrowLeft') {
+                event.preventDefault();
+                showPreviousImage();
+            } else if (event.key === 'ArrowRight') {
+                event.preventDefault();
+                showNextImage();
+            } else if (event.key === 'Escape') {
+                // Escape 键关闭模态框（Bootstrap 默认行为）
+            }
+        }
+    });
+    
+    // 模态框关闭时清理
+    document.getElementById('imagePreviewModal').addEventListener('hidden.bs.modal', function() {
+        imageFiles = [];
+        currentImageIndex = -1;
+    });
+    
+    checkLoginStatus();
+    updateBreadcrumb();
+    loadFiles(currentCid);
+    
+    // 视口变化时，根据设备类型重新渲染（切换表格/列表）
+    window.addEventListener('resize', () => {
+        if (Array.isArray(currentFiles) && currentFiles.length > 0) {
+            renderFiles(currentFiles, true);
+        }
+    });
+</script>
+{% endblock %}
+
+
+

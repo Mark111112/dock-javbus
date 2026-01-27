@@ -1,0 +1,667 @@
+{% extends 'base.html' %}
+
+{% block title %}115 离线下载管理{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h2><i class="fas fa-download me-2"></i>115 离线下载管理</h2>
+                <a href="{{ url_for('cloud115_library') }}" class="btn btn-outline-secondary">
+                    <i class="fas fa-arrow-left me-1"></i>返回115库
+                </a>
+            </h2>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- 左侧：添加离线下载表单 -->
+        <div class="col-lg-6">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="fas fa-plus-circle me-2"></i>添加离线下载任务</h5>
+                </div>
+                <div class="card-body">
+                    <form id="offlineDownloadForm">
+                        <!-- 磁力链接输入 -->
+                        <div class="mb-3">
+                            <label for="magnetLinks" class="form-label">
+                                <i class="fas fa-magnet me-1"></i>磁力链接
+                                <span class="text-muted">(每行一个)</span>
+                            </label>
+                            <textarea class="form-control font-monospace" id="magnetLinks" rows="6"
+                                placeholder="magnet:?xt=urn:btih:...&#10;magnet:?xt=urn:btih:..."
+                                required></textarea>
+                            <div class="form-text">支持输入多个磁力链接，每行一个。批量添加时建议不要超过10个。</div>
+                        </div>
+
+                        <!-- 保存目录选择 -->
+                        <div class="mb-3">
+                            <label for="saveFolder" class="form-label">
+                                <i class="fas fa-folder me-1"></i>保存目录
+                            </label>
+                            <div class="input-group">
+                                <input type="text" class="form-control" id="saveFolder" readonly
+                                    placeholder="点击选择目录，默认保存到根目录">
+                                <input type="hidden" id="saveFolderId" value="0">
+                                <button class="btn btn-outline-secondary" type="button" id="selectFolderBtn">
+                                    <i class="fas fa-folder-open"></i>选择
+                                </button>
+                            </div>
+                            <div class="form-text">未选择目录时将保存到115网盘根目录</div>
+                        </div>
+
+                        <!-- 提交按钮 -->
+                        <div class="d-grid gap-2 d-md-flex">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-download me-1"></i>添加下载任务
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary" id="clearFormBtn">
+                                <i class="fas fa-eraser me-1"></i>清空
+                            </button>
+                        </div>
+                    </form>
+
+                    <!-- 结果显示 -->
+                    <div id="resultContainer" class="mt-3 d-none">
+                        <h6 class="border-bottom pb-2">添加结果</h6>
+                        <div id="resultContent"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右侧：离线下载任务列表 -->
+        <div class="col-lg-6">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="fas fa-tasks me-2"></i>离线下载任务</h5>
+                    <button class="btn btn-sm btn-outline-primary" id="refreshTasksBtn">
+                        <i class="fas fa-sync-alt me-1"></i>刷新
+                    </button>
+                </div>
+                <div class="card-body">
+                    <div id="tasksContainer">
+                        <div class="text-center text-muted py-4">
+                            <i class="fas fa-spinner fa-spin fa-2x mb-2"></i>
+                            <p>加载任务列表中...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 最近添加记录 -->
+            <div class="card mt-4">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="fas fa-history me-2"></i>最近添加记录</h5>
+                    <button class="btn btn-sm btn-outline-secondary" id="clearRecentBtn">
+                        <i class="fas fa-trash-alt me-1"></i>清空
+                    </button>
+                </div>
+                <div class="card-body">
+                    <div id="recentAddsContainer">
+                        <div class="text-center text-muted">
+                            <p class="text-muted">暂无记录</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 目录选择模态框 -->
+<div class="modal fade" id="folderModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-scrollable modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">选择保存目录</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <!-- 当前路径 -->
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <div class="flex-grow-1">
+                        <nav aria-label="breadcrumb">
+                            <ol class="breadcrumb mb-0" id="breadcrumb">
+                                <li class="breadcrumb-item"><a href="#" class="text-primary" data-folder-id="0">根目录</a></li>
+                            </ol>
+                        </nav>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="modalRefreshBtn">
+                        <i class="fas fa-sync-alt"></i> 刷新
+                    </button>
+                </div>
+                <!-- 目录列表 -->
+                <div id="modalFolderTree" style="max-height: 400px; overflow-y: auto;"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" id="confirmFolderBtn" disabled>
+                    <i class="fas fa-check me-1"></i>确定
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .folder-item {
+        cursor: pointer;
+        padding: 10px 12px;
+        border-radius: 6px;
+        transition: background 0.2s;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .folder-item:hover {
+        background: #f0f0f0;
+    }
+    .folder-item.selected {
+        background: #0d6efd;
+        color: white;
+    }
+    .folder-item.selected .folder-icon {
+        color: white;
+    }
+    .folder-icon {
+        color: #ffc107;
+        font-size: 1.1em;
+    }
+    .folder-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 8px;
+    }
+    .task-item {
+        border-left: 3px solid #6c757d;
+        transition: border-color 0.3s;
+    }
+    .task-item.downloading { border-left-color: #ffc107; }
+    .task-item.completed { border-left-color: #28a745; }
+    .task-item.failed { border-left-color: #dc3545; }
+    .task-badges .badge {
+        margin-right: 4px;
+    }
+    .breadcrumb a {
+        text-decoration: none;
+    }
+    .breadcrumb a:hover {
+        text-decoration: underline;
+    }
+</style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    let selectedFolderId = '0';
+    let selectedFolderName = '';
+    let currentModalFolderId = '0';
+    let breadcrumbPath = [{id: '0', name: '根目录'}];
+    let recentAdds = JSON.parse(localStorage.getItem('cloud115_recent_adds') || '[]');
+
+    const magnetLinksInput = document.getElementById('magnetLinks');
+    const saveFolderInput = document.getElementById('saveFolder');
+    const saveFolderIdInput = document.getElementById('saveFolderId');
+    const resultContainer = document.getElementById('resultContainer');
+    const resultContent = document.getElementById('resultContent');
+    const tasksContainer = document.getElementById('tasksContainer');
+    const recentAddsContainer = document.getElementById('recentAddsContainer');
+
+    // 加载离线下载任务列表
+    function loadTasks() {
+        tasksContainer.innerHTML = '<div class="text-center"><div class="spinner-border spinner-border-sm" role="status"></div></div>';
+
+        fetch('/api/cloud115/offline_tasks')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.data && data.data.tasks) {
+                    renderTasks(data.data.tasks);
+                } else {
+                    tasksContainer.innerHTML = '<div class="text-center text-muted py-4"><p>暂无离线下载任务</p></div>';
+                }
+            })
+            .catch(error => {
+                console.error('加载任务列表失败:', error);
+                tasksContainer.innerHTML = '<div class="text-center text-danger py-4"><p>加载失败，请重试</p></div>';
+            });
+    }
+
+    function renderTasks(tasks) {
+        if (!tasks || tasks.length === 0) {
+            tasksContainer.innerHTML = '<div class="text-center text-muted py-4"><p>暂无离线下载任务</p></div>';
+            return;
+        }
+
+        let html = '<div class="list-group">';
+        tasks.forEach(task => {
+            let statusBadge = '<span class="badge bg-secondary">未知</span>';
+            let itemClass = 'task-item';
+
+            if (task.status === 'downloading' || task.status === 1) {
+                statusBadge = '<span class="badge bg-warning">下载中</span>';
+                itemClass += ' downloading';
+            } else if (task.status === 'finished' || task.status === 2 || task.status === 3) {
+                statusBadge = '<span class="badge bg-success">已完成</span>';
+                itemClass += ' completed';
+            } else if (task.status === 'failed' || task.status === 4) {
+                statusBadge = '<span class="badge bg-danger">失败</span>';
+                itemClass += ' failed';
+            }
+
+            const progress = task.percent || 0;
+            let progressHtml = '';
+            if (task.status === 'downloading' || task.status === 1) {
+                progressHtml = `<div class="progress mt-2" style="height: 6px;">
+                    <div class="progress-bar" style="width: ${progress}%"></div>
+                </div>`;
+            }
+
+            html += `
+                <div class="list-group-item ${itemClass}">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div class="flex-grow-1">
+                            <div class="task-badges mb-1">${statusBadge}</div>
+                            <div class="text-truncate" title="${task.url || task.name || ''}">
+                                <small>${task.url || task.name || '未知任务'}</small>
+                            </div>
+                            ${progressHtml}
+                        </div>
+                        <small class="text-muted">${task.file_size || ''}</small>
+                    </div>
+                </div>
+            `;
+        });
+        html += '</div>';
+        tasksContainer.innerHTML = html;
+    }
+
+    // 模态框目录操作
+    function loadModalFolder(folderId) {
+        const modalFolderTree = document.getElementById('modalFolderTree');
+        modalFolderTree.innerHTML = '<div class="text-center py-4"><div class="spinner-border" role="status"></div></div>';
+
+        fetch(`/api/cloud115/list?path=${encodeURIComponent(folderId === '0' ? '/' : folderId)}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.data && data.data.files) {
+                    renderModalFolders(data.data.files);
+                } else {
+                    modalFolderTree.innerHTML = '<div class="text-center text-muted py-4">此目录为空</div>';
+                }
+            })
+            .catch(error => {
+                console.error('加载目录失败:', error);
+                modalFolderTree.innerHTML = '<div class="text-center text-danger py-4">加载失败，请重试</div>';
+            });
+    }
+
+    function renderModalFolders(files) {
+        const modalFolderTree = document.getElementById('modalFolderTree');
+        const folders = files.filter(f => f.type === 'folder');
+
+        if (folders.length === 0) {
+            modalFolderTree.innerHTML = '<div class="text-center text-muted py-4">此目录没有子文件夹</div>';
+            return;
+        }
+
+        let html = '<div class="folder-grid">';
+        folders.forEach(folder => {
+            html += `
+                <div class="folder-item" data-id="${folder.file_id}" data-name="${folder.file_name}">
+                    <i class="fas fa-folder folder-icon"></i>
+                    <span class="folder-name">${folder.file_name}</span>
+                </div>
+            `;
+        });
+        html += '</div>';
+        modalFolderTree.innerHTML = html;
+
+        // 添加点击事件 - 双击进入目录，单击选中
+        modalFolderTree.querySelectorAll('.folder-item').forEach(item => {
+            let clickTimer = null;
+
+            item.addEventListener('click', function() {
+                // 清除之前的定时器
+                if (clickTimer) clearTimeout(clickTimer);
+
+                // 移除其他选中状态
+                modalFolderTree.querySelectorAll('.folder-item').forEach(f => f.classList.remove('selected'));
+                this.classList.add('selected');
+
+                // 启用确定按钮
+                document.getElementById('confirmFolderBtn').disabled = false;
+
+                // 设置延迟检测双击
+                const fileId = this.getAttribute('data-id');
+                const fileName = this.getAttribute('data-name');
+
+                clickTimer = setTimeout(() => {
+                    // 单击：仅选中
+                    selectedFolderId = fileId;
+                    selectedFolderName = fileName;
+                }, 300);
+            });
+
+            item.addEventListener('dblclick', function() {
+                if (clickTimer) clearTimeout(clickTimer);
+
+                const fileId = this.getAttribute('data-id');
+                const fileName = this.getAttribute('data-name');
+
+                // 双击：进入目录
+                enterFolder(fileId, fileName);
+            });
+        });
+    }
+
+    function enterFolder(folderId, folderName) {
+        currentModalFolderId = folderId;
+        breadcrumbPath.push({id: folderId, name: folderName});
+        updateBreadcrumb();
+        loadModalFolder(folderId);
+
+        // 禁用确定按钮，进入目录不是选择
+        document.getElementById('confirmFolderBtn').disabled = true;
+        modalFolderTree.querySelectorAll('.folder-item').forEach(f => f.classList.remove('selected'));
+    }
+
+    function updateBreadcrumb() {
+        const breadcrumb = document.getElementById('breadcrumb');
+        let html = '';
+
+        breadcrumbPath.forEach((item, index) => {
+            if (index === breadcrumbPath.length - 1) {
+                // 当前目录
+                html += `<li class="breadcrumb-item active" aria-current="page">${item.name}</li>`;
+            } else {
+                // 父目录
+                html += `<li class="breadcrumb-item"><a href="#" class="text-primary" data-index="${index}">${item.name}</a></li>`;
+            }
+        });
+
+        breadcrumb.innerHTML = html;
+
+        // 添加面包屑点击事件
+        breadcrumb.querySelectorAll('a[data-index]').forEach(link => {
+            link.addEventListener('click', function(e) {
+                e.preventDefault();
+                const index = parseInt(this.getAttribute('data-index'));
+                navigateToBreadcrumb(index);
+            });
+        });
+    }
+
+    function navigateToBreadcrumb(index) {
+        const target = breadcrumbPath[index];
+        breadcrumbPath = breadcrumbPath.slice(0, index + 1);
+        currentModalFolderId = target.id;
+        updateBreadcrumb();
+        loadModalFolder(target.id);
+
+        // 禁用确定按钮
+        document.getElementById('confirmFolderBtn').disabled = true;
+    }
+
+    // 打开目录选择模态框
+    document.getElementById('selectFolderBtn').addEventListener('click', function() {
+        // 从已保存的目录开始，或者从根目录开始
+        const startFolderId = saveFolderIdInput.value || '0';
+        currentModalFolderId = startFolderId;
+
+        // 重置面包屑路径（简单处理：从根目录到当前目录的路径需要重新构建）
+        breadcrumbPath = [{id: '0', name: '根目录'}];
+        if (startFolderId !== '0') {
+            breadcrumbPath.push({id: startFolderId, name: saveFolderInput.value || '目录'});
+        }
+
+        selectedFolderId = startFolderId;
+        selectedFolderName = saveFolderInput.value || '';
+
+        updateBreadcrumb();
+        loadModalFolder(startFolderId);
+
+        const modal = new bootstrap.Modal(document.getElementById('folderModal'));
+        modal.show();
+    });
+
+    // 模态框刷新按钮
+    document.getElementById('modalRefreshBtn').addEventListener('click', function() {
+        loadModalFolder(currentModalFolderId);
+    });
+
+    // 确认选择目录
+    document.getElementById('confirmFolderBtn').addEventListener('click', function() {
+        if (selectedFolderId) {
+            saveFolderIdInput.value = selectedFolderId;
+            saveFolderInput.value = selectedFolderId === '0' ? '根目录' : selectedFolderName;
+        }
+        bootstrap.Modal.getInstance(document.getElementById('folderModal')).hide();
+    });
+
+    // 表单提交
+    document.getElementById('offlineDownloadForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+
+        const links = magnetLinksInput.value.trim();
+        if (!links) {
+            alert('请输入至少一个磁力链接');
+            return;
+        }
+
+        const urls = links.split('\n').map(url => url.trim()).filter(url => url);
+        if (urls.length === 0) {
+            alert('请输入有效的磁力链接');
+            return;
+        }
+
+        const folderId = saveFolderIdInput.value || '0';
+
+        // 禁用表单
+        const submitBtn = this.querySelector('button[type="submit"]');
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>添加中...';
+
+        // 显示结果
+        resultContainer.classList.remove('d-none');
+        resultContent.innerHTML = '<div class="text-center"><div class="spinner-border" role="status"></div></div>';
+
+        // 批量添加
+        addOfflineDownloads(urls, folderId);
+    });
+
+    function addOfflineDownloads(urls, folderId) {
+        let successCount = 0;
+        let failCount = 0;
+        let results = [];
+
+        function addNext(index) {
+            if (index >= urls.length) {
+                // 全部完成
+                showResults(results, successCount, failCount);
+                // 刷新任务列表
+                loadTasks();
+                return;
+            }
+
+            const url = urls[index];
+
+            fetch('/api/cloud115/add_offline_download', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    urls: url,
+                    wp_path_id: folderId
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                results.push({
+                    url: url,
+                    success: data.success,
+                    message: data.message
+                });
+                if (data.success) successCount++;
+                else failCount++;
+
+                // 继续下一个
+                setTimeout(() => addNext(index + 1), 500);
+            })
+            .catch(error => {
+                results.push({
+                    url: url,
+                    success: false,
+                    message: error.message
+                });
+                failCount++;
+                setTimeout(() => addNext(index + 1), 500);
+            });
+        }
+
+        addNext(0);
+    }
+
+    function showResults(results, successCount, failCount) {
+        const submitBtn = document.querySelector('#offlineDownloadForm button[type="submit"]');
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<i class="fas fa-download me-1"></i>添加下载任务';
+
+        let html = `
+            <div class="alert ${successCount > 0 && failCount === 0 ? 'alert-success' : 'alert-warning'}">
+                <strong>添加完成！</strong> 成功: ${successCount}, 失败: ${failCount}
+            </div>
+            <div class="list-group">
+        `;
+
+        results.forEach((result, index) => {
+            const icon = result.success ? 'fa-check-circle text-success' : 'fa-times-circle text-danger';
+            const displayUrl = truncateUrl(result.url);
+            html += `
+                <div class="list-group-item">
+                    <i class="fas ${icon} me-2"></i>
+                    <small class="text-muted" title="${result.url}">${displayUrl}</small><br>
+                    <small class="${result.success ? 'text-success' : 'text-danger'}">${result.message}</small>
+                </div>
+            `;
+        });
+
+        html += '</div>';
+        resultContent.innerHTML = html;
+
+        // 保存成功的添加记录（保存完整URL）
+        results.forEach(result => {
+            if (result.success) {
+                addRecentRecord(result.url);
+            }
+        });
+    }
+
+    // 截断URL用于显示
+    function truncateUrl(url, maxLength = 60) {
+        if (url.length <= maxLength) return url;
+        return url.substring(0, maxLength) + '...';
+    }
+
+    // 最近添加记录相关函数
+    function addRecentRecord(url) {
+        const record = {
+            url: url,
+            folder: saveFolderInput.value || '根目录',
+            folderId: saveFolderIdInput.value || '0',
+            time: new Date().toISOString()
+        };
+
+        // 添加到开头，只保留最近20条
+        recentAdds.unshift(record);
+        if (recentAdds.length > 20) {
+            recentAdds = recentAdds.slice(0, 20);
+        }
+
+        // 保存到localStorage
+        localStorage.setItem('cloud115_recent_adds', JSON.stringify(recentAdds));
+
+        // 刷新显示
+        renderRecentAdds();
+    }
+
+    function renderRecentAdds() {
+        if (!recentAdds || recentAdds.length === 0) {
+            recentAddsContainer.innerHTML = '<div class="text-center text-muted"><p class="text-muted">暂无记录</p></div>';
+            return;
+        }
+
+        let html = '<div class="list-group list-group-flush">';
+        recentAdds.forEach((record, index) => {
+            const time = new Date(record.time);
+            const timeStr = time.toLocaleString('zh-CN', {
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+            const displayUrl = truncateUrl(record.url, 80);
+
+            html += `
+                <div class="list-group-item px-0">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div class="flex-grow-1" style="min-width: 0;">
+                            <small class="text-muted d-block">${timeStr}</small>
+                            <small class="text-truncate d-block font-monospace" title="${record.url}">${displayUrl}</small>
+                            <small class="text-muted"><i class="fas fa-folder me-1"></i>${record.folder}</small>
+                        </div>
+                        <button class="btn btn-sm btn-link text-muted p-0 ms-2" data-index="${index}" title="复制链接">
+                            <i class="fas fa-copy"></i>
+                        </button>
+                    </div>
+                </div>
+            `;
+        });
+        html += '</div>';
+        recentAddsContainer.innerHTML = html;
+
+        // 添加复制按钮事件（复制完整URL）
+        recentAddsContainer.querySelectorAll('[data-index]').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const index = parseInt(this.getAttribute('data-index'));
+                const url = recentAdds[index].url;
+                navigator.clipboard.writeText(url).then(() => {
+                    const icon = this.querySelector('i');
+                    icon.className = 'fas fa-check text-success';
+                    setTimeout(() => {
+                        icon.className = 'fas fa-copy';
+                    }, 1500);
+                });
+            });
+        });
+    }
+
+    function clearRecentAdds() {
+        recentAdds = [];
+        localStorage.removeItem('cloud115_recent_adds');
+        renderRecentAdds();
+    }
+
+    // 刷新任务按钮
+    document.getElementById('refreshTasksBtn').addEventListener('click', loadTasks);
+
+    // 清空表单按钮
+    document.getElementById('clearFormBtn').addEventListener('click', function() {
+        magnetLinksInput.value = '';
+        resultContainer.classList.add('d-none');
+    });
+
+    // 清空最近记录按钮
+    document.getElementById('clearRecentBtn').addEventListener('click', function() {
+        if (confirm('确定要清空所有最近添加记录吗？')) {
+            clearRecentAdds();
+        }
+    });
+
+    // 初始化
+    loadTasks();
+    renderRecentAdds();
+});
+</script>
+{% endblock %}

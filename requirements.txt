@@ -1,0 +1,21 @@
+# Core dependencies
+flask>=2.0.0
+werkzeug>=2.0.0
+requests>=2.25.0
+flask-cors>=3.0.0
+flask-sock>=0.6.0
+
+# Utilities
+chardet>=4.0.0
+websockets>=12.0
+numpy>=1.24.0
+
+# For Video ID Extraction
+regex>=2021.4.4
+
+pillow==9.4.0
+beautifulsoup4==4.11.2
+pymysql
+python-slugify
+curl_cffi 
+jellyfin-apiclient-python>=1.9.1 

@@ -1,0 +1,1948 @@
+{% extends "base.html" %}
+
+{% block title %}配置{% endblock %}
+
+{% block head %}
+<style>
+    .config-tab-content .section-card {
+        background-color: rgba(248, 249, 250, 0.85);
+        border: 1px solid rgba(222, 226, 230, 0.8);
+    }
+    #cloud115LoginSection .status-badge {
+        font-size: 0.95rem;
+        padding: 0.4rem 0.9rem;
+    }
+    #cloud115LoginSection .method-card {
+        border: 2px solid #dee2e6;
+        transition: all 0.3s;
+    }
+    #cloud115LoginSection .method-card.active {
+        border-color: var(--bs-primary);
+        background-color: rgba(13,110,253,0.08);
+    }
+    #cloud115LoginSection .method-card:hover {
+        box-shadow: 0 4px 8px rgba(0,0,0,0.08);
+    }
+    #cloud115LoginSection .qrcode-container {
+        text-align: center;
+        padding: 16px;
+    }
+    #cloud115LoginSection .cookie-input {
+        font-family: monospace;
+        font-size: 0.9rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12 mb-4">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="/">首页</a></li>
+                <li class="breadcrumb-item active">配置中心</li>
+            </ol>
+        </nav>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <h5 class="mb-0">应用配置</h5>
+                <div class="d-flex gap-2">
+                    <button type="button" class="btn btn-primary" id="save-config-btn">
+                        <i class="bi bi-save"></i> 保存配置
+                    </button>
+                    <button type="button" class="btn btn-outline-warning" id="restart-app-btn">
+                        <i class="bi bi-arrow-repeat"></i> 重启应用
+                    </button>
+                    <a href="/" class="btn btn-outline-secondary">返回首页</a>
+                </div>
+            </div>
+            <div class="card-body">
+                {% if error_message %}
+                <div class="alert alert-danger" role="alert">
+                    {{ error_message }}
+                </div>
+                {% endif %}
+                {% if success_message %}
+                <div class="alert alert-success" role="alert">
+                    {{ success_message }}
+                </div>
+                {% endif %}
+
+                <p class="text-muted small mb-4">
+                    配置分组改为 Tab 展示，鼠标悬停在标题上可查看说明。保存后配置立即生效。
+                </p>
+
+                <ul class="nav nav-tabs" id="configTabNav" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="tab-general-tab" data-bs-toggle="tab" data-bs-target="#tab-general" type="button" role="tab" aria-controls="tab-general" aria-selected="true">
+                            基础设置
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="tab-translation-tab" data-bs-toggle="tab" data-bs-target="#tab-translation" type="button" role="tab" aria-controls="tab-translation" aria-selected="false">
+                            翻译与字幕
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="tab-jellyfin-tab" data-bs-toggle="tab" data-bs-target="#tab-jellyfin" type="button" role="tab" aria-controls="tab-jellyfin" aria-selected="false">
+                            Jellyfin 播放
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="tab-cloud115-tab" data-bs-toggle="tab" data-bs-target="#tab-cloud115" type="button" role="tab" aria-controls="tab-cloud115" aria-selected="false">
+                            115 云盘
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="tab-maintenance-tab" data-bs-toggle="tab" data-bs-target="#tab-maintenance" type="button" role="tab" aria-controls="tab-maintenance" aria-selected="false">
+                            系统维护
+                        </button>
+                    </li>
+                </ul>
+
+                <div class="tab-content config-tab-content" id="configTabContent">
+                    <div class="tab-pane fade show active" id="tab-general" role="tabpanel" aria-labelledby="tab-general-tab">
+                        <div class="row g-4 pt-4">
+                            <div class="col-12 col-xl-4">
+                                <div class="p-3 rounded-3 section-card h-100">
+                                    <h6 class="fw-bold mb-3">基础设置</h6>
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="用于生成在线播放按钮的 URL 前缀，可填写 MissAV、Jable 等第三方播放站点地址。">
+                                            在线播放链接前缀
+                                        </label>
+                                        <input type="text" class="form-control config-input" data-config-path="watch_url_prefix" placeholder="https://missav.ai">
+                                    </div>
+                                    <div>
+                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="抓取 JavBus 数据时使用的主站地址，可替换为可访问的镜像站。">
+                                            JavBus 主站地址
+                                        </label>
+                                        <input type="text" class="form-control config-input" data-config-path="base_url" placeholder="https://www.javbus.com">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-12 col-xl-8">
+                                <div class="p-3 rounded-3 section-card">
+                                    <h6 class="fw-bold mb-3">JavBus 数据源</h6>
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="选择影片数据来源。Internal 为本地解析模式，External 为调用外部 API。">
+                                            数据模式
+                                        </label>
+                                        <div class="btn-group w-100" role="group" aria-label="JavBus 数据模式">
+                                            <input type="radio" class="btn-check config-input" name="javbus-mode" id="javbus-mode-internal" data-config-path="javbus.mode" value="internal" autocomplete="off">
+                                            <label class="btn btn-outline-primary" for="javbus-mode-internal">Internal</label>
+
+                                            <input type="radio" class="btn-check config-input" name="javbus-mode" id="javbus-mode-external" data-config-path="javbus.mode" value="external" autocomplete="off">
+                                            <label class="btn btn-outline-primary" for="javbus-mode-external">External</label>
+                                        </div>
+                                        <small class="text-muted d-block mt-2">切换为 External 后即可填写外部 API 地址，并启用相关配置。</small>
+                                    </div>
+
+                                    <div class="mb-3 position-relative" data-require-mode-container>
+                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="外部 JavBus API 地址，例如自建的 javbus-api 服务。">
+                                            外部 API 地址
+                                        </label>
+                                        <input type="text" class="form-control config-input" data-config-path="javbus.external_api_url" placeholder="http://127.0.0.1:8922/api" data-require-mode="external">
+                                        <small class="form-text text-muted">此项仅在 External 模式可编辑，若需要调用外部 API，请先切换模式。</small>
+                                    </div>
+
+                                    <div class="row g-3">
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="与 JavBus 服务交互的网络超时时间（秒）。">
+                                                请求超时（秒）
+                                            </label>
+                                            <input type="number" min="1" class="form-control config-input" data-config-path="javbus.timeout">
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="每页返回的影片数量，适用于外部 API 或内部解析分页。">
+                                                每页条数
+                                            </label>
+                                            <input type="number" min="1" class="form-control config-input" data-config-path="javbus.page_size">
+                                        </div>
+                                    </div>
+
+                                    <div class="mt-4" data-mode-section="internal">
+                                        <div class="p-3 bg-white rounded-3 border">
+                                            <h6 class="fw-semibold mb-3">内部模式</h6>
+                                            <div class="mb-3">
+                                                <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="控制是否启用本地抓取逻辑。关闭后将总是使用外部 API。">
+                                                    启用内部解析
+                                                </label>
+                                                <div class="btn-group w-100" role="group" aria-label="内部解析开关">
+                                                    <input type="radio" class="btn-check config-input" name="javbus-internal-enabled" id="javbus-internal-enabled-true" data-config-path="javbus.internal.enabled" data-type="boolean" value="true" autocomplete="off">
+                                                    <label class="btn btn-outline-success" for="javbus-internal-enabled-true">开启</label>
+
+                                                    <input type="radio" class="btn-check config-input" name="javbus-internal-enabled" id="javbus-internal-enabled-false" data-config-path="javbus.internal.enabled" data-type="boolean" value="false" autocomplete="off">
+                                                    <label class="btn btn-outline-danger" for="javbus-internal-enabled-false">关闭</label>
+                                                </div>
+                                            </div>
+
+                                            <div class="row g-3">
+                                                <div class="col-md-6">
+                                                    <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="内部抓取任务并发数量，数值越高越快但同时也更占用资源。">
+                                                        最大并发数
+                                                    </label>
+                                                    <input type="number" min="1" class="form-control config-input" data-config-path="javbus.internal.max_concurrency">
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="内部抓取单个请求的超时时间（秒）。">
+                                                        单次请求超时（秒）
+                                                    </label>
+                                                    <input type="number" min="1" class="form-control config-input" data-config-path="javbus.internal.timeout">
+                                                </div>
+                                            </div>
+
+                                            <div class="row g-3 mt-1">
+                                                <div class="col-md-6">
+                                                    <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="内部缓存有效时间，单位秒。缓存内的影片信息将直接复用，避免重复抓取。">
+                                                        缓存保留时长（秒）
+                                                    </label>
+                                                    <input type="number" min="0" class="form-control config-input" data-config-path="javbus.internal.cache_ttl_seconds">
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="内部模式单页解析数量，适当调低可减轻对目标站点压力。">
+                                                        内部分页大小
+                                                    </label>
+                                                    <input type="number" min="1" class="form-control config-input" data-config-path="javbus.internal.page_size">
+                                                </div>
+                                            </div>
+
+                                            <div class="mt-3">
+                                                <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="当内部模式遇到缺页或异常时是否允许自动回退到外部 API。">
+                                                    异常时回退外部 API
+                                                </label>
+                                                <div class="btn-group w-100" role="group" aria-label="内部回退外部 API">
+                                                    <input type="radio" class="btn-check config-input" name="javbus-internal-fallback" id="javbus-internal-fallback-true" data-config-path="javbus.internal.allow_external_fallback" data-type="boolean" value="true" autocomplete="off">
+                                                    <label class="btn btn-outline-success" for="javbus-internal-fallback-true">允许</label>
+
+                                                    <input type="radio" class="btn-check config-input" name="javbus-internal-fallback" id="javbus-internal-fallback-false" data-config-path="javbus.internal.allow_external_fallback" data-type="boolean" value="false" autocomplete="off">
+                                                    <label class="btn btn-outline-danger" for="javbus-internal-fallback-false">禁用</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="mt-3">
+                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="内部模式失效时是否允许自动切回外部 API。">
+                                            允许外部回退
+                                        </label>
+                                        <div class="btn-group w-100" role="group" aria-label="允许外部回退">
+                                            <input type="radio" class="btn-check config-input" name="javbus-allow-fallback" id="javbus-allow-fallback-true" data-config-path="javbus.allow_external_fallback" data-type="boolean" value="true" autocomplete="off">
+                                            <label class="btn btn-outline-success" for="javbus-allow-fallback-true">开启</label>
+
+                                            <input type="radio" class="btn-check config-input" name="javbus-allow-fallback" id="javbus-allow-fallback-false" data-config-path="javbus.allow_external_fallback" data-type="boolean" value="false" autocomplete="off">
+                                            <label class="btn btn-outline-danger" for="javbus-allow-fallback-false">关闭</label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="tab-pane fade" id="tab-translation" role="tabpanel" aria-labelledby="tab-translation-tab">
+                        <div class="row g-4 pt-4">
+                            <div class="col-12 col-xl-6">
+                                <div class="p-3 rounded-3 section-card h-100">
+                                    <h6 class="fw-bold mb-3">翻译服务</h6>
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="OpenAI 兼容的翻译接口地址，例如官方 OpenAI、SiliconFlow 或自建 Ollama。">
+                                            翻译 API 地址
+                                        </label>
+                                        <input type="text" class="form-control config-input" data-config-path="translation.api_url" placeholder="https://api.openai.com/v1/chat/completions">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="用于鉴权的 API Token，可留空以禁用翻译或由后端提供。">
+                                            API Token
+                                        </label>
+                                        <input type="text" class="form-control config-input" data-config-path="translation.api_token" placeholder="sk-xxx">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="翻译所使用的模型名称，需与所选 API 服务支持的模型一致。">
+                                            模型名称
+                                        </label>
+                                        <input type="text" class="form-control config-input" data-config-path="translation.model" placeholder="gpt-4o-mini">
+                                    </div>
+                                    <div class="row g-3">
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="需要翻译的原始语言。">
+                                                源语言
+                                            </label>
+                                            <input type="text" class="form-control config-input" data-config-path="translation.source_lang">
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="翻译后的目标语言。">
+                                                目标语言
+                                            </label>
+                                            <input type="text" class="form-control config-input" data-config-path="translation.target_lang">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-12 col-xl-6">
+                                <div class="p-3 rounded-3 section-card h-100">
+                                    <h6 class="fw-bold mb-3">语音转写 / 实时字幕</h6>
+                                    <div class="form-check form-switch mb-3">
+                                        <input class="form-check-input config-input"
+                                               type="checkbox"
+                                               id="transcription-enabled"
+                                               data-config-path="transcription.enabled">
+                                        <label class="form-check-label"
+                                               for="transcription-enabled"
+                                               data-bs-toggle="tooltip"
+                                               data-bs-placement="top"
+                                               title="启用语音转写和实时字幕功能">
+                                            启用语音转写
+                                        </label>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="选择 STT 服务提供商：Speaches 使用 OpenAI 兼容接口，Faster-Whisper 使用本地部署服务">
+                                            STT 服务提供商
+                                        </label>
+                                        <div class="btn-group w-100" role="group" aria-label="STT Provider">
+                                            <input type="radio" class="btn-check config-input" name="stt-provider" id="stt-provider-speaches" data-config-path="transcription.provider" value="speaches" autocomplete="off">
+                                            <label class="btn btn-outline-primary" for="stt-provider-speaches">Speaches</label>
+                                            <input type="radio" class="btn-check config-input" name="stt-provider" id="stt-provider-fwhisper" data-config-path="transcription.provider" value="fwhisper" autocomplete="off">
+                                            <label class="btn btn-outline-primary" for="stt-provider-fwhisper">Faster-Whisper</label>
+                                        </div>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold"
+                                               data-bs-toggle="tooltip"
+                                               data-bs-placement="top"
+                                               title="STT API 地址。Speaches 使用 /v1 端点，faster-whisper-service 使用 http://localhost:8001">
+                                            STT API 地址
+                                        </label>
+                                        <input type="text"
+                                               class="form-control config-input"
+                                               data-config-path="transcription.api_base_url"
+                                               placeholder="http://localhost:8001">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold"
+                                               data-bs-toggle="tooltip"
+                                               data-bs-placement="top"
+                                               title="STT API 密钥，Speaches 服务需要此字段">
+                                            API Key
+                                        </label>
+                                        <input type="text"
+                                               class="form-control config-input"
+                                               data-config-path="transcription.api_key"
+                                               placeholder="cant-be-empty">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold"
+                                               data-bs-toggle="tooltip"
+                                               data-bs-placement="top"
+                                               title="STT language，留空自动检测（如需指定可填 ja/en/zh）">
+                                            STT 语言（留空自动）
+                                        </label>
+                                        <input type="text"
+                                               class="form-control config-input"
+                                               data-config-path="transcription.language"
+                                               placeholder="ja / en / zh（留空自动）">
+                                    </div>
+                                    <div class="row g-3">
+                                        <div class="col-md-8">
+                                            <label class="form-label fw-semibold"
+                                                   data-bs-toggle="tooltip"
+                                                   data-bs-placement="top"
+                                                   title="Speaches 中已下载的 STT 模型名称">
+                                                STT 模型
+                                            </label>
+                                            <input type="text"
+                                                   class="form-control config-input"
+                                                   data-config-path="transcription.model"
+                                                   placeholder="Systran/faster-whisper-small">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold"
+                                                   data-bs-toggle="tooltip"
+                                                   data-bs-placement="top"
+                                                   title="每次转写请求的 HTTP 超时时间（秒）">
+                                                超时（秒）
+                                            </label>
+                                            <input type="number" min="1"
+                                                   class="form-control config-input"
+                                                   data-config-path="transcription.timeout">
+                                        </div>
+                                    </div>
+                                    <div class="row g-3 mt-2">
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold"
+                                                   data-bs-toggle="tooltip"
+                                                   data-bs-placement="top"
+                                                   title="分段策略：fixed=固定分片，vad=VAD+最大窗口（推荐）">
+                                                分段模式 (segmenter)
+                                            </label>
+                                            <select class="form-select config-input" data-config-path="transcription.segmenter">
+                                                <option value="vad">vad</option>
+                                                <option value="fixed">fixed</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold"
+                                                   data-bs-toggle="tooltip"
+                                                   data-bs-placement="top"
+                                                   title="VAD 最大窗口长度，超过即强制出段">
+                                                vad_max_window_secs
+                                            </label>
+                                            <input type="number" step="0.1" min="1"
+                                                   class="form-control config-input"
+                                                   data-config-path="transcription.vad_max_window_secs"
+                                                   placeholder="15.0">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold"
+                                                   data-bs-toggle="tooltip"
+                                                   data-bs-placement="top"
+                                                   title="VAD 段尾保留的重叠，用于衔接与去重">
+                                                vad_overlap_secs
+                                            </label>
+                                            <input type="number" step="0.05" min="0"
+                                                   class="form-control config-input"
+                                                   data-config-path="transcription.vad_overlap_secs"
+                                                   placeholder="0.35">
+                                        </div>
+                                    </div>
+                                    <div class="row g-3 mt-2">
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold"
+                                                   data-bs-toggle="tooltip"
+                                                   data-bs-placement="top"
+                                                   title="连续静音达到该时长判定断句">
+                                                vad_min_silence_secs
+                                            </label>
+                                            <input type="number" step="0.05" min="0.1"
+                                                   class="form-control config-input"
+                                                   data-config-path="transcription.vad_min_silence_secs"
+                                                   placeholder="0.4">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold"
+                                                   data-bs-toggle="tooltip"
+                                                   data-bs-placement="top"
+                                                   title="连续语音达到该时长判定开段">
+                                                vad_min_speech_secs
+                                            </label>
+                                            <input type="number" step="0.05" min="0.1"
+                                                   class="form-control config-input"
+                                                   data-config-path="transcription.vad_min_speech_secs"
+                                                   placeholder="0.6">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold"
+                                                   data-bs-toggle="tooltip"
+                                                   data-bs-placement="top"
+                                                   title="VAD 帧长（秒），越小越灵敏">
+                                                vad_frame_secs
+                                            </label>
+                                            <input type="number" step="0.01" min="0.01"
+                                                   class="form-control config-input"
+                                                   data-config-path="transcription.vad_frame_secs"
+                                                   placeholder="0.03">
+                                        </div>
+                                    </div>
+                                    <div class="row g-3 mt-2">
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold"
+                                                   data-bs-toggle="tooltip"
+                                                   data-bs-placement="top"
+                                                   title="VAD 能量阈值，越小越容易认为有语音">
+                                                vad_energy_threshold
+                                            </label>
+                                            <input type="number" step="0.0001" min="0.0001"
+                                                   class="form-control config-input"
+                                                   data-config-path="transcription.vad_energy_threshold"
+                                                   placeholder="0.001">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold"
+                                                   data-bs-toggle="tooltip"
+                                                   data-bs-placement="top"
+                                                   title="前缀长度，上一段末尾携带给下一段，减少断裂">
+                                                prefix_chars
+                                            </label>
+                                            <input type="number" step="1" min="0"
+                                                   class="form-control config-input"
+                                                   data-config-path="transcription.prefix_chars"
+                                                   placeholder="0">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold"
+                                                   data-bs-toggle="tooltip"
+                                                   data-bs-placement="top"
+                                                   title="重复抑制阈值，留空使用服务端默认">
+                                                compression_ratio_threshold
+                                            </label>
+                                            <input type="number" step="0.1" min="0"
+                                                   class="form-control config-input"
+                                                   data-config-path="transcription.compression_ratio_threshold"
+                                                   placeholder="0（留空默认）">
+                                        </div>
+                                    </div>
+                                    <div class="row g-3 mt-2">
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-semibold"
+                                                   data-bs-toggle="tooltip"
+                                                   data-bs-placement="top"
+                                                   title="固定分片 chunk_secs（仅在 segmenter=fixed 时使用）">
+                                                chunk_secs (fixed)
+                                            </label>
+                                            <input type="number" step="0.1" min="0.2"
+                                                   class="form-control config-input"
+                                                   data-config-path="transcription.chunk_secs"
+                                                   placeholder="4.0">
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-semibold"
+                                                   data-bs-toggle="tooltip"
+                                                   data-bs-placement="top"
+                                                   title="固定分片 overlap_secs（仅在 segmenter=fixed 时使用）">
+                                                overlap_secs (fixed)
+                                            </label>
+                                            <input type="number" step="0.1" min="0"
+                                                   class="form-control config-input"
+                                                   data-config-path="transcription.overlap_secs"
+                                                   placeholder="0.7">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="tab-pane fade" id="tab-jellyfin" role="tabpanel" aria-labelledby="tab-jellyfin-tab">
+                        <div class="pt-4">
+                            <div class="p-3 rounded-3 section-card">
+                                <h6 class="fw-bold mb-3">Jellyfin 连接</h6>
+                                <div class="mb-3">
+                                    <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="Jellyfin 服务器基础地址，需包含协议与端口。">
+                                        服务器地址
+                                    </label>
+                                    <input type="text" class="form-control config-input" data-config-path="jellyfin.server_url" placeholder="http://127.0.0.1:8096">
+                                </div>
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="用于登录 Jellyfin 的用户名。留空可以只使用 API Key。">
+                                            用户名
+                                        </label>
+                                        <input type="text" class="form-control config-input" data-config-path="jellyfin.username">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="对应用户名的登录密码。保存后会加密存储。">
+                                            密码
+                                        </label>
+                                        <input type="password" class="form-control config-input" data-config-path="jellyfin.password" autocomplete="new-password">
+                                    </div>
+                                </div>
+                                <div class="mb-3 mt-3">
+                                    <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="可选的 Jellyfin API Key，可在 Jellyfin 后台生成。">
+                                        API Key
+                                    </label>
+                                    <input type="text" class="form-control config-input" data-config-path="jellyfin.api_key">
+                                </div>
+
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="客户端名称，将显示在 Jellyfin 设备列表中。">
+                                            客户端名称
+                                        </label>
+                                        <input type="text" class="form-control config-input" data-config-path="jellyfin.client_name">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="客户端 ID，建议保持唯一，方便 Jellyfin 识别。">
+                                            客户端 ID
+                                        </label>
+                                        <input type="text" class="form-control config-input" data-config-path="jellyfin.client_id">
+                                    </div>
+                                </div>
+
+                                <div class="row g-3 mt-1">
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="设备名称，用于区分不同终端。">
+                                            设备名称
+                                        </label>
+                                        <input type="text" class="form-control config-input" data-config-path="jellyfin.device_name">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="设备 ID，建议保持稳定值以避免重复登录。">
+                                            设备 ID
+                                        </label>
+                                        <input type="text" class="form-control config-input" data-config-path="jellyfin.device_id">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="p-3 rounded-3 section-card mt-4">
+                                <h6 class="fw-bold mb-3">Jellyfin 播放转码策略</h6>
+                                <div class="mb-3">
+                                    <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="播放时遇到不兼容格式是否自动触发转码。">
+                                        自动转码
+                                    </label>
+                                    <div class="btn-group w-100" role="group" aria-label="自动转码">
+                                        <input type="radio" class="btn-check config-input" name="jellyfin-transcoding-enable" id="jellyfin-transcoding-enable-true" data-config-path="jellyfin.transcoding.enable_auto_transcoding" data-type="boolean" value="true" autocomplete="off">
+                                        <label class="btn btn-outline-success" for="jellyfin-transcoding-enable-true">开启</label>
+
+                                        <input type="radio" class="btn-check config-input" name="jellyfin-transcoding-enable" id="jellyfin-transcoding-enable-false" data-config-path="jellyfin.transcoding.enable_auto_transcoding" data-type="boolean" value="false" autocomplete="off">
+                                        <label class="btn btn-outline-danger" for="jellyfin-transcoding-enable-false">关闭</label>
+                                    </div>
+                                </div>
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="转码时允许的最大码率（bit/s）。">
+                                            最大码率
+                                        </label>
+                                        <input type="number" min="0" class="form-control config-input" data-config-path="jellyfin.transcoding.max_streaming_bitrate">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="优先选择的视频编码格式，例如 h264、hevc。">
+                                            视频编码
+                                        </label>
+                                        <input type="text" class="form-control config-input" data-config-path="jellyfin.transcoding.preferred_video_codec">
+                                    </div>
+                                </div>
+                                <div class="row g-3 mt-1">
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="优先选择的音频编码格式，例如 aac、ac3。">
+                                            音频编码
+                                        </label>
+                                        <input type="text" class="form-control config-input" data-config-path="jellyfin.transcoding.preferred_audio_codec">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="转码输出封装格式，例如 ts、mp4。">
+                                            输出容器
+                                        </label>
+                                        <input type="text" class="form-control config-input" data-config-path="jellyfin.transcoding.container">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="tab-pane fade" id="tab-cloud115" role="tabpanel" aria-labelledby="tab-cloud115-tab">
+                        <div class="row g-4 pt-4">
+                            <div class="col-xxl-7 d-flex flex-column gap-4">
+                                <div class="p-3 rounded-3 section-card">
+                                    <h6 class="fw-bold mb-3">115 云盘基础配置</h6>
+                                    <div class="row g-3">
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="默认上传或检索的 115 目录 ID，留空表示使用根目录。">
+                                                默认目录 ID
+                                            </label>
+                                            <input type="text" class="form-control config-input" data-config-path="cloud115.default_folder_id">
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="115 OpenAPI 请求超时时间（秒）。">
+                                                请求超时（秒）
+                                            </label>
+                                            <input type="number" min="1" class="form-control config-input" data-config-path="cloud115.request_timeout">
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="Access Token 的存储路径，通常无需修改。">
+                                                Token 文件
+                                            </label>
+                                            <input type="text" class="form-control config-input" data-config-path="cloud115.token_file">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="p-3 rounded-3 section-card">
+                                    <h6 class="fw-bold mb-3">库导入策略</h6>
+                                    <div class="row g-3">
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="导入到 Jellyfin 时所使用的分类标签，例如 movie、series、other。">
+                                                默认分类
+                                            </label>
+                                            <input type="text" class="form-control config-input" data-config-path="cloud115.library_settings.category">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="过滤小文件的下限，单位 MB，仅导入大于该值的文件。">
+                                                最小文件大小（MB）
+                                            </label>
+                                            <input type="number" min="0" class="form-control config-input" data-config-path="cloud115.library_settings.min_file_size_mb">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="触发导入任务前的延迟时间，单位秒，用于等待文件稳定。">
+                                                默认延迟（秒）
+                                            </label>
+                                            <input type="number" min="0" class="form-control config-input" data-config-path="cloud115.library_settings.default_delay_seconds">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="p-3 rounded-3 section-card">
+                                    <h6 class="fw-bold mb-3">Alist 网盘代理</h6>
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="是否通过 Alist 访问 115 文件链接，便于 Jellyfin 或其他播放器使用。">
+                                            启用 Alist
+                                        </label>
+                                        <div class="btn-group w-100" role="group" aria-label="Alist 开关">
+                                            <input type="radio" class="btn-check config-input" name="cloud115-alist-enabled" id="cloud115-alist-enabled-true" data-config-path="cloud115.alist.enabled" data-type="boolean" value="true" autocomplete="off">
+                                            <label class="btn btn-outline-success" for="cloud115-alist-enabled-true">开启</label>
+
+                                            <input type="radio" class="btn-check config-input" name="cloud115-alist-enabled" id="cloud115-alist-enabled-false" data-config-path="cloud115.alist.enabled" data-type="boolean" value="false" autocomplete="off">
+                                            <label class="btn btn-outline-danger" for="cloud115-alist-enabled-false">关闭</label>
+                                        </div>
+                                    </div>
+
+                                    <div class="row g-3">
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="Alist 服务地址，需包含协议与端口。">
+                                                Alist 地址
+                                            </label>
+                                            <input type="text" class="form-control config-input" data-config-path="cloud115.alist.base_url" placeholder="http://127.0.0.1:5244">
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="Alist 中映射 115 的根路径，一般保持 /115。">
+                                                根路径
+                                            </label>
+                                            <input type="text" class="form-control config-input" data-config-path="cloud115.alist.root_path">
+                                        </div>
+                                    </div>
+
+                                    <div class="row g-3 mt-1">
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="用于访问 Alist 的用户名。">
+                                                Alist 用户名
+                                            </label>
+                                            <input type="text" class="form-control config-input" data-config-path="cloud115.alist.username">
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="用于访问 Alist 的密码。">
+                                                Alist 密码
+                                            </label>
+                                            <input type="password" class="form-control config-input" data-config-path="cloud115.alist.password" autocomplete="new-password">
+                                        </div>
+                                    </div>
+
+                                    <div class="row g-3 mt-1">
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="Alist API 请求超时时间（秒）。">
+                                                Alist 超时（秒）
+                                            </label>
+                                            <input type="number" min="1" class="form-control config-input" data-config-path="cloud115.alist.timeout">
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="Alist 获取直链后的缓存时长，单位秒。">
+                                                链接缓存（秒）
+                                            </label>
+                                            <input type="number" min="0" class="form-control config-input" data-config-path="cloud115.alist.url_cache_seconds">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="p-3 rounded-3 section-card">
+                                    <h6 class="fw-bold mb-3">115 云盘转码配置</h6>
+                                    <div class="row g-3">
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="是否启用 115 云盘转码管线。">
+                                                转码开关
+                                            </label>
+                                            <div class="btn-group w-100" role="group">
+                                                <input type="radio" class="btn-check config-input" name="cloud115-transcode-enabled" id="cloud115-transcode-enabled-true" data-config-path="cloud115.transcode.enabled" data-type="boolean" value="true" autocomplete="off">
+                                                <label class="btn btn-outline-success" for="cloud115-transcode-enabled-true">启用</label>
+                                                <input type="radio" class="btn-check config-input" name="cloud115-transcode-enabled" id="cloud115-transcode-enabled-false" data-config-path="cloud115.transcode.enabled" data-type="boolean" value="false" autocomplete="off">
+                                                <label class="btn btn-outline-danger" for="cloud115-transcode-enabled-false">停用</label>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="符合触发条件时是否自动进入转码队列。">
+                                                自动启动任务
+                                            </label>
+                                            <div class="btn-group w-100" role="group">
+                                                <input type="radio" class="btn-check config-input" name="cloud115-transcode-auto-start" id="cloud115-transcode-auto-start-true" data-config-path="cloud115.transcode.auto_start" data-type="boolean" value="true" autocomplete="off">
+                                                <label class="btn btn-outline-success" for="cloud115-transcode-auto-start-true">自动启动</label>
+                                                <input type="radio" class="btn-check config-input" name="cloud115-transcode-auto-start" id="cloud115-transcode-auto-start-false" data-config-path="cloud115.transcode.auto_start" data-type="boolean" value="false" autocomplete="off">
+                                                <label class="btn btn-outline-danger" for="cloud115-transcode-auto-start-false">手动触发</label>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="row g-3 mt-1">
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="是否启用硬件加速编码（Intel QSV）。">
+                                                启用硬件加速
+                                            </label>
+                                            <div class="btn-group w-100" role="group">
+                                                <input type="radio" class="btn-check config-input" name="cloud115-transcode-hw" id="cloud115-transcode-hw-true" data-config-path="cloud115.transcode.use_hwaccel" data-type="boolean" value="true" autocomplete="off">
+                                                <label class="btn btn-outline-success" for="cloud115-transcode-hw-true">启用</label>
+                                                <input type="radio" class="btn-check config-input" name="cloud115-transcode-hw" id="cloud115-transcode-hw-false" data-config-path="cloud115.transcode.use_hwaccel" data-type="boolean" value="false" autocomplete="off">
+                                                <label class="btn btn-outline-danger" for="cloud115-transcode-hw-false">禁用</label>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="硬件编码设备路径（例如 Intel QSV）。">
+                                                QSV 设备路径
+                                            </label>
+                                            <input type="text" class="form-control config-input" data-config-path="cloud115.transcode.qsv_device" placeholder="/dev/dri/renderD128">
+                                        </div>
+                                    </div>
+
+                                    <div class="row g-3 mt-1">
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="硬件编码使用的预设级别（数值越低越快）。">
+                                                QSV 预设
+                                            </label>
+                                            <input type="text" class="form-control config-input" data-config-path="cloud115.transcode.qsv_preset">
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="硬件编码优先使用的视频编码器。">
+                                                视频编码器（硬件）
+                                            </label>
+                                            <input type="text" class="form-control config-input" data-config-path="cloud115.transcode.video_encoder" placeholder="h264_qsv">
+                                        </div>
+                                    </div>
+
+                                    <div class="row g-3 mt-1">
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="硬件不可用时的回退视频编码器。">
+                                                视频编码器（软件）
+                                            </label>
+                                            <input type="text" class="form-control config-input" data-config-path="cloud115.transcode.video_encoder_sw" placeholder="libx264">
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="音频编码器类型。">
+                                                音频编码器
+                                            </label>
+                                            <input type="text" class="form-control config-input" data-config-path="cloud115.transcode.audio_encoder" placeholder="aac">
+                                        </div>
+                                    </div>
+
+                                    <div class="row g-3 mt-1">
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="视频码率，例如 5000k。">
+                                                视频码率
+                                            </label>
+                                            <input type="text" class="form-control config-input" data-config-path="cloud115.transcode.video_bitrate">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="最大码率上限，避免瞬时突增。">
+                                                Maxrate
+                                            </label>
+                                            <input type="text" class="form-control config-input" data-config-path="cloud115.transcode.maxrate">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="码率缓冲区大小。">
+                                                Bufsize
+                                            </label>
+                                            <input type="text" class="form-control config-input" data-config-path="cloud115.transcode.bufsize">
+                                        </div>
+                                    </div>
+
+                                    <div class="row g-3 mt-1">
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="音频码率。">
+                                                音频码率
+                                            </label>
+                                            <input type="text" class="form-control config-input" data-config-path="cloud115.transcode.audio_bitrate">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="音频输出声道数。">
+                                                音频声道
+                                            </label>
+                                            <input type="number" min="1" class="form-control config-input" data-config-path="cloud115.transcode.audio_channels">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="音频采样率。">
+                                                采样率
+                                            </label>
+                                            <input type="number" min="8000" class="form-control config-input" data-config-path="cloud115.transcode.audio_sample_rate">
+                                        </div>
+                                    </div>
+
+                                    <div class="row g-3 mt-1">
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="HLS 分段时长（秒），建议使用 3 秒以获得最佳跳转体验。">
+                                                分片时长
+                                            </label>
+                                            <input type="number" min="1" class="form-control config-input" data-config-path="cloud115.transcode.segment_duration">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="V2: Seek 容忍窗口（秒）。在此范围内的跳转不会重启转码，默认 24 秒。">
+                                                Seek 容忍（秒）
+                                            </label>
+                                            <input type="number" min="1" max="120" class="form-control config-input" data-config-path="cloud115.transcode.seek_tolerance_seconds" placeholder="24">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="允许同时运行的最大转码任务数。">
+                                                并发任务数
+                                            </label>
+                                            <input type="number" min="1" class="form-control config-input" data-config-path="cloud115.transcode.max_concurrent_tasks">
+                                        </div>
+                                    </div>
+
+                                    <div class="row g-3 mt-1">
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="准备阶段等待的最大秒数，超时则标记失败。">
+                                                就绪超时（秒）
+                                            </label>
+                                            <input type="number" min="1" class="form-control config-input" data-config-path="cloud115.transcode.ready_timeout_seconds">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="转码工作目录。">
+                                                工作目录
+                                            </label>
+                                            <input type="text" class="form-control config-input" data-config-path="cloud115.transcode.work_dir" placeholder="data/transcode">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="任务空闲多久后自动清理（分钟）。">
+                                                空闲清理（分钟）
+                                            </label>
+                                            <input type="number" min="0" class="form-control config-input" data-config-path="cloud115.transcode.cleanup_idle_minutes">
+                                        </div>
+                                    </div>
+
+                                    <div class="row g-3 mt-1">
+                                        <!-- V2: probe_enabled 始终启用，隐藏此选项 -->
+                                        <div class="col-md-4" style="display:none;">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="是否在转码前分析媒体信息。">
+                                                启用信息探测
+                                            </label>
+                                            <div class="btn-group w-100" role="group">
+                                                <input type="radio" class="btn-check config-input" name="cloud115-transcode-probe" id="cloud115-transcode-probe-true" data-config-path="cloud115.transcode.probe_enabled" data-type="boolean" value="true" autocomplete="off" checked>
+                                                <label class="btn btn-outline-success" for="cloud115-transcode-probe-true">启用</label>
+                                                <input type="radio" class="btn-check config-input" name="cloud115-transcode-probe" id="cloud115-transcode-probe-false" data-config-path="cloud115.transcode.probe_enabled" data-type="boolean" value="false" autocomplete="off">
+                                                <label class="btn btn-outline-danger" for="cloud115-transcode-probe-false">关闭</label>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="V2: 探测超时时间（秒），用于获取视频时长和媒体信息。">
+                                                探测超时（秒）
+                                            </label>
+                                            <input type="number" min="1" class="form-control config-input" data-config-path="cloud115.transcode.probe_timeout">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="GOP 大小，控制关键帧间隔。">
+                                                GOP Size
+                                            </label>
+                                            <input type="number" min="1" class="form-control config-input" data-config-path="cloud115.transcode.gop_size">
+                                        </div>
+                                    </div>
+
+                                    <div class="row g-3 mt-1">
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="x264 预设等级，用于软件编码。">
+                                                x264 预设
+                                            </label>
+                                            <input type="text" class="form-control config-input" data-config-path="cloud115.transcode.x264_preset">
+                                        </div>
+                                        <!-- V2: hls_flags 由内部自动处理，隐藏此字段 -->
+                                        <div class="col-md-6" style="display:none;">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="HLS 输出的 flags 组合（V2 自动处理）。">
+                                                HLS Flags
+                                            </label>
+                                            <input type="text" class="form-control config-input" data-config-path="cloud115.transcode.hls_flags">
+                                        </div>
+                                    </div>
+                                    <div class="row g-3 mt-1">
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="V2: HLS 模式。推荐使用 VOD 模式，服务端生成完整播放列表，支持精确跳转和完整进度条显示。">
+                                                HLS 模式
+                                            </label>
+                                            <select class="form-select config-input" data-config-path="cloud115.transcode.hls_mode">
+                                                <option value="streaming">Streaming（流式）</option>
+                                                <option value="vod">VOD（点播，推荐）</option>
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    <div class="mt-3">
+                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="填写后缀列表（每行一个），命中后会触发转码。">
+                                            触发后缀列表
+                                        </label>
+                                        <textarea class="form-control config-input" data-config-path="cloud115.transcode.trigger_on_extensions" data-type="string-list" rows="4" placeholder="wmv&#10;avi&#10;mkv"></textarea>
+                                        <small class="text-muted">每行一个扩展名，留空表示不按后缀限制。</small>
+                                    </div>
+
+                                    <div class="mt-3">
+                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="填写编码名列表（每行一个），命中后会触发转码。">
+                                            触发编码列表
+                                        </label>
+                                        <textarea class="form-control config-input" data-config-path="cloud115.transcode.trigger_on_codecs" data-type="string-list" rows="3" placeholder="hevc&#10;h265"></textarea>
+                                        <small class="text-muted">留空表示不按编码限制。</small>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="col-xxl-5">
+                                <div class="p-3 rounded-3 section-card" id="cloud115LoginSection">
+                                    <div class="d-flex justify-content-between align-items-center mb-3">
+                                        <h6 class="fw-bold mb-0"><i class="bi bi-cloud-arrow-up"></i> 115 登录管理</h6>
+                                        <button class="btn btn-sm btn-outline-secondary" onclick="checkLoginStatus()">
+                                            <i class="bi bi-arrow-clockwise"></i> 刷新状态
+                                        </button>
+                                    </div>
+
+                                    <div class="card shadow-sm status-card mb-4">
+                                        <div class="card-body">
+                                            <div class="d-flex justify-content-between align-items-center">
+                                                <div>
+                                                    <h6 class="card-title mb-2">当前登录状态</h6>
+                                                    <p class="card-text text-muted mb-0" id="statusDescription">正在检查...</p>
+                                                </div>
+                                                <div>
+                                                    <span class="badge status-badge bg-secondary" id="statusBadge">
+                                                        <i class="bi bi-hourglass-split"></i> 检查中
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <div class="mt-3 d-none" id="statusDetails">
+                                                <hr>
+                                                <div class="row">
+                                                    <div class="col-md-6">
+                                                        <strong>OpenAPI Token:</strong>
+                                                        <span id="openapi_status" class="ms-2"></span>
+                                                    </div>
+                                                    <div class="col-md-6 mt-2 mt-md-0">
+                                                        <strong>Driver Cookie:</strong>
+                                                        <span id="driver_status" class="ms-2"></span>
+                                                    </div>
+                                                </div>
+                                                <div class="row mt-2">
+                                                    <div class="col-12">
+                                                        <strong>认证模式:</strong>
+                                                        <span id="auth_mode" class="ms-2 badge bg-info"></span>
+                                                        <strong class="ms-3">当前通道:</strong>
+                                                        <span id="active_method" class="ms-2 badge bg-primary"></span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="row g-3">
+                                        <div class="col-md-6">
+                                            <div class="card method-card h-100" id="openapi-card">
+                                                <div class="card-header bg-primary text-white">
+                                                    <h6 class="mb-0"><i class="bi bi-qr-code"></i> 扫码登录 (OpenAPI)</h6>
+                                                </div>
+                                                <div class="card-body">
+                                                    <p class="card-text small text-muted">使用 115 官方 OpenAPI，通过 115 App 扫码完成授权。</p>
+                                                    <div class="qrcode-container d-none" id="qrcodeContainer">
+                                                        <div id="qrCodeCanvas" class="d-inline-block p-2 bg-white rounded shadow-sm"></div>
+                                                        <p class="text-muted mt-2 mb-2">请使用 115 App 扫描二维码</p>
+                                                        <div class="spinner-border text-primary" role="status" id="qrSpinner">
+                                                            <span class="visually-hidden">等待扫码...</span>
+                                                        </div>
+                                                    </div>
+                                                    <button class="btn btn-primary w-100 mb-2" onclick="startQRCodeLogin()" id="qrLoginBtn">
+                                                        <i class="bi bi-qr-code-scan"></i> 开始扫码登录
+                                                    </button>
+                                                    <button class="btn btn-danger w-100" onclick="logout115()" id="logoutBtn">
+                                                        <i class="bi bi-box-arrow-right"></i> 退出115登录
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div class="col-md-6">
+                                            <div class="card method-card h-100" id="driver-card">
+                                                <div class="card-header bg-success text-white">
+                                                    <h6 class="mb-0"><i class="bi bi-key"></i> Cookie 登录 (Driver)</h6>
+                                                </div>
+                                                <div class="card-body">
+                                                    <p class="card-text small text-muted">使用浏览器 Cookie 维护会话，失败时可自动回落到 OpenAPI。</p>
+                                                    <div class="mb-3">
+                                                        <label for="cookieInput" class="form-label">Cookie 字符串</label>
+                                                        <textarea class="form-control cookie-input" id="cookieInput" rows="4" placeholder="UID=xxx;CID=xxx;SEID=xxx;KID=xxx"></textarea>
+                                                        <small class="form-text text-muted">从浏览器开发者工具复制 UID/CID/SEID/KID。</small>
+                                                        <div id="cookieStatusMsg" class="mt-2 d-none"></div>
+                                                    </div>
+                                                    <div class="mb-3">
+                                                        <label for="cookieFileInput" class="form-label">Cookie 文件路径</label>
+                                                        <input type="text" class="form-control" id="cookieFileInput" placeholder="data/cloud115_cookie.txt">
+                                                        <small class="form-text text-muted">可选，填写后会同步写入文件，方便其他实例共享。</small>
+                                                    </div>
+                                                    <div class="mb-3">
+                                                        <label for="authModeSelect" class="form-label">认证模式</label>
+                                                        <select class="form-select" id="authModeSelect">
+                                                            <option value="driver">仅 Driver</option>
+                                                            <option value="auto" selected>自动切换</option>
+                                                            <option value="openapi">仅 OpenAPI</option>
+                                                        </select>
+                                                        <small class="form-text text-muted">独立于 Cookie 更新，可单独切换。</small>
+                                                    </div>
+                                                    <div class="d-grid gap-2">
+                                                        <button class="btn btn-success" onclick="updateCookie()">
+                                                            <i class="bi bi-upload"></i> 更新 Cookie
+                                                        </button>
+                                                        <button class="btn btn-outline-success" onclick="verifyCookie()">
+                                                            <i class="bi bi-check-circle"></i> 验证 Cookie
+                                                        </button>
+                                                        <button class="btn btn-info" onclick="updateAuthMode()">
+                                                            <i class="bi bi-arrow-left-right"></i> 切换认证模式
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="alert alert-info mt-4 mb-0">
+                                        <strong>提示：</strong> 推荐使用 <strong>自动切换</strong> 模式，系统会优先使用 Driver Cookie，失效时自动回退到 OpenAPI Token。
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="tab-pane fade" id="tab-maintenance" role="tabpanel" aria-labelledby="tab-maintenance-tab">
+                        <div class="pt-4">
+                            <div class="p-3 rounded-3 section-card border-danger">
+                                <h6 class="fw-bold text-danger mb-3">
+                                    <i class="bi bi-tools"></i> 系统维护选项
+                                </h6>
+                                <div class="alert alert-warning">
+                                    <i class="bi bi-exclamation-triangle"></i>
+                                    <strong>风险提示：</strong> 以下操作将永久删除数据，请谨慎执行。
+                                </div>
+                                <div class="d-flex flex-wrap gap-2">
+                                    <button type="button" class="btn btn-danger" id="clear-all-data-btn">
+                                        <i class="bi bi-trash"></i> 清除所有数据
+                                    </button>
+                                    <button type="button" class="btn btn-danger" id="clear-cached-images-btn">
+                                        <i class="bi bi-images"></i> 清除本地缓存图片
+                                    </button>
+                                    <button type="button" class="btn btn-danger" id="clear-logs-btn">
+                                        <i class="bi bi-file-earmark-text"></i> 清除日志
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-4 d-flex gap-2">
+                    <button type="button" class="btn btn-primary" id="save-config-btn-bottom">
+                        <i class="bi bi-save"></i> 保存配置
+                    </button>
+                    <a href="/" class="btn btn-secondary">取消</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<script>
+    const configData = {{ config_data | default({}) | tojson | safe }};
+
+    configData.javbus = configData.javbus || {};
+    configData.javbus.internal = configData.javbus.internal || {};
+    configData.translation = configData.translation || {};
+    configData.transcription = configData.transcription || {};
+    configData.cloud115 = configData.cloud115 || {};
+    configData.cloud115.driver = configData.cloud115.driver || {};
+    configData.cloud115.library_settings = configData.cloud115.library_settings || {};
+    configData.cloud115.alist = configData.cloud115.alist || {};
+    configData.cloud115.transcode = configData.cloud115.transcode || {};
+    configData.jellyfin = configData.jellyfin || {};
+    configData.jellyfin.transcoding = configData.jellyfin.transcoding || {};
+
+    if (!Array.isArray(configData.cloud115.transcode.trigger_on_extensions)) {
+        configData.cloud115.transcode.trigger_on_extensions = [];
+    }
+    if (!Array.isArray(configData.cloud115.transcode.trigger_on_codecs)) {
+        configData.cloud115.transcode.trigger_on_codecs = [];
+    }
+
+    if (!configData.javbus.mode) {
+        configData.javbus.mode = 'internal';
+    }
+    if (configData.javbus.page_size === undefined) {
+        configData.javbus.page_size = 30;
+    }
+    if (typeof configData.javbus.allow_external_fallback !== 'boolean') {
+        configData.javbus.allow_external_fallback = false;
+    }
+    if (typeof configData.javbus.internal.enabled !== 'boolean') {
+        configData.javbus.internal.enabled = true;
+    }
+    if (configData.javbus.internal.page_size === undefined) {
+        configData.javbus.internal.page_size = 30;
+    }
+    if (typeof configData.javbus.internal.allow_external_fallback !== 'boolean') {
+        configData.javbus.internal.allow_external_fallback = false;
+    }
+
+    const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    tooltipTriggerList.forEach(el => new bootstrap.Tooltip(el));
+
+    function getNestedValue(obj, path) {
+        return path.split('.').reduce((acc, key) => {
+            if (acc === undefined || acc === null) {
+                return undefined;
+            }
+            return acc[key];
+        }, obj);
+    }
+
+    function setNestedValue(obj, path, value) {
+        const keys = path.split('.');
+        let current = obj;
+        keys.forEach((key, index) => {
+            if (index === keys.length - 1) {
+                current[key] = value;
+            } else {
+                if (current[key] === undefined || current[key] === null || typeof current[key] !== 'object') {
+                    current[key] = {};
+                }
+                current = current[key];
+            }
+        });
+    }
+
+    function updateModeSections() {
+        const mode = getNestedValue(configData, 'javbus.mode') || 'internal';
+        document.querySelectorAll('[data-mode-section]').forEach(section => {
+            const target = section.dataset.modeSection;
+            section.classList.toggle('d-none', target !== mode);
+        });
+        document.querySelectorAll('[data-require-mode]').forEach(element => {
+            const requiredMode = element.dataset.requireMode || '';
+            const enabled = requiredMode === mode;
+            if (enabled) {
+                element.removeAttribute('disabled');
+            } else {
+                element.setAttribute('disabled', 'disabled');
+            }
+            const wrapper = element.closest('[data-require-mode-container]');
+            if (wrapper) {
+                wrapper.classList.toggle('opacity-50', !enabled);
+            }
+        });
+    }
+
+    function applyConfigToForm() {
+        document.querySelectorAll('[data-config-path]').forEach(element => {
+            const path = element.dataset.configPath;
+            const dataType = element.dataset.type || element.type;
+            const value = getNestedValue(configData, path);
+
+            if (element.type === 'radio') {
+                if (dataType === 'boolean') {
+                    const boolValue = typeof value === 'boolean' ? value : value === 'true';
+                    element.checked = (element.value === 'true' && boolValue) || (element.value === 'false' && !boolValue);
+                } else {
+                    element.checked = value === element.value;
+                }
+            } else if (element.type === 'checkbox') {
+                const boolValue = typeof value === 'boolean' ? value : value === 'true';
+                element.checked = !!boolValue;
+            } else if (element.tagName === 'TEXTAREA' && element.dataset.type === 'string-list') {
+                element.value = Array.isArray(value) ? value.join('\n') : '';
+            } else if (element.type === 'number') {
+                element.value = value !== undefined && value !== null ? value : '';
+            } else {
+                element.value = value !== undefined && value !== null ? value : '';
+            }
+        });
+        updateModeSections();
+    }
+
+    function handleElementUpdate(element) {
+        const path = element.dataset.configPath;
+        const dataType = element.dataset.type || element.type;
+        let value;
+
+        if (element.type === 'radio') {
+            if (!element.checked) {
+                return;
+            }
+            if (dataType === 'boolean') {
+                value = element.value === 'true';
+            } else {
+                value = element.value;
+            }
+        } else if (element.type === 'checkbox') {
+            value = element.checked;
+        } else if (element.dataset.type === 'string-list') {
+            value = element.value.split(/\r?\n/).map(line => line.trim()).filter(line => line.length > 0);
+        } else if (element.type === 'number') {
+            if (element.value === '') {
+                return;
+            }
+            const numericValue = Number(element.value);
+            if (Number.isNaN(numericValue)) {
+                return;
+            }
+            value = numericValue;
+        } else {
+            value = element.value;
+        }
+
+        setNestedValue(configData, path, value);
+
+        if (path === 'javbus.mode') {
+            updateModeSections();
+        }
+    }
+
+    function syncAllInputs() {
+        document.querySelectorAll('[data-config-path]').forEach(element => {
+            if (element.type === 'radio') {
+                if (element.checked) {
+                    handleElementUpdate(element);
+                }
+            } else {
+                handleElementUpdate(element);
+            }
+        });
+    }
+
+    applyConfigToForm();
+
+    document.querySelectorAll('[data-config-path]').forEach(element => {
+        if (element.type === 'radio') {
+            element.addEventListener('change', () => handleElementUpdate(element));
+        } else {
+            element.addEventListener('input', () => handleElementUpdate(element));
+            element.addEventListener('change', () => handleElementUpdate(element));
+        }
+    });
+
+    function saveConfig() {
+        syncAllInputs();
+        const payload = JSON.stringify(configData, null, 2);
+
+        fetch('/api/save_config', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ config: payload })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                alert('配置已保存成功！');
+            } else {
+                alert('保存失败：' + (data.message || '未知错误'));
+            }
+        })
+        .catch(error => {
+            alert('保存失败：' + error.message);
+        });
+    }
+
+    document.querySelectorAll('#save-config-btn, #save-config-btn-bottom').forEach(button => {
+        button.addEventListener('click', saveConfig);
+    });
+
+    document.getElementById('restart-app-btn').addEventListener('click', function() {
+        if (confirm('确定要重新启动应用吗？服务会短暂中断。')) {
+            fetch('/api/restart_application', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    alert('应用正在重启，页面将在 5 秒后返回首页。');
+                    setTimeout(() => {
+                        window.location.href = '/';
+                    }, 5000);
+                } else {
+                    alert('重启失败：' + (data.message || '未知错误'));
+                }
+            })
+            .catch(error => {
+                alert('重启失败：' + error.message);
+            });
+        }
+    });
+
+    document.getElementById('clear-all-data-btn').addEventListener('click', function() {
+        if (confirm('确定要清除所有数据库中的数据吗？此操作无法撤销。')) {
+            fetch('/api/clear_all_data', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    alert('所有数据已成功清除！');
+                } else {
+                    alert('错误：' + (data.message || '未知错误'));
+                }
+            })
+            .catch(error => {
+                alert('错误：' + error.message);
+            });
+        }
+    });
+
+    document.getElementById('clear-cached-images-btn').addEventListener('click', function() {
+        if (confirm('确定要清除所有本地缓存的图片吗？此操作无法撤销。')) {
+            fetch('/api/clear_cached_images', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    alert('所有缓存图片已成功清除！');
+                } else {
+                    alert('错误：' + (data.message || '未知错误'));
+                }
+            })
+            .catch(error => {
+                alert('错误：' + error.message);
+            });
+        }
+    });
+
+    document.getElementById('clear-logs-btn').addEventListener('click', function() {
+        if (confirm('确定要清除所有日志文件吗？此操作无法撤销。')) {
+            fetch('/api/clear_logs', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    alert('所有日志已成功清除！');
+                } else {
+                    alert('错误：' + (data.message || '未知错误'));
+                }
+            })
+            .catch(error => {
+                alert('错误：' + error.message);
+            });
+        }
+    });
+
+    (function initTabPersistence() {
+        const tabButtons = document.querySelectorAll('#configTabNav button[data-bs-toggle="tab"]');
+        if (!tabButtons.length) {
+            return;
+        }
+        const storageKey = 'config_active_tab';
+        const searchParams = new URLSearchParams(window.location.search);
+        let initialTarget = null;
+
+        if (window.location.hash && document.querySelector(window.location.hash)) {
+            initialTarget = window.location.hash;
+        } else if (searchParams.has('tab')) {
+            const candidate = `#tab-${searchParams.get('tab')}`;
+            if (document.querySelector(candidate)) {
+                initialTarget = candidate;
+            }
+        }
+
+        if (!initialTarget && window.localStorage) {
+            const savedTarget = window.localStorage.getItem(storageKey);
+            if (savedTarget && document.querySelector(savedTarget)) {
+                initialTarget = savedTarget;
+            }
+        }
+
+        if (initialTarget) {
+            const trigger = document.querySelector(`#configTabNav button[data-bs-target="${initialTarget}"]`);
+            const targetPane = document.querySelector(initialTarget);
+            if (trigger && targetPane) {
+                bootstrap.Tab.getOrCreateInstance(trigger).show();
+            }
+        }
+
+        tabButtons.forEach(button => {
+            button.addEventListener('shown.bs.tab', event => {
+                const targetSelector = event.target.getAttribute('data-bs-target');
+                if (window.localStorage) {
+                    window.localStorage.setItem(storageKey, targetSelector);
+                }
+                if (targetSelector) {
+                    const url = new URL(window.location.href);
+                    url.hash = targetSelector;
+                    url.searchParams.delete('tab');
+                    window.history.replaceState(null, '', url);
+                }
+            });
+        });
+    })();
+
+    let qrCheckInterval = null;
+    let pkceContext = {
+        codeVerifier: null,
+        deviceUid: null,
+        deviceTime: null,
+        deviceSign: null
+    };
+
+    function resetQRCodeUI() {
+        const container = document.getElementById('qrcodeContainer');
+        const spinner = document.getElementById('qrSpinner');
+        const canvasHolder = document.getElementById('qrCodeCanvas');
+        const qrLoginBtn = document.getElementById('qrLoginBtn');
+
+        if (qrCheckInterval) {
+            clearInterval(qrCheckInterval);
+            qrCheckInterval = null;
+        }
+
+        pkceContext = {
+            codeVerifier: null,
+            deviceUid: null,
+            deviceTime: null,
+            deviceSign: null
+        };
+
+        if (container) {
+            container.classList.add('d-none');
+        }
+        if (spinner) {
+            spinner.classList.remove('d-none');
+            spinner.innerHTML = '<span class="visually-hidden">等待扫码...</span>';
+        }
+        if (canvasHolder) {
+            canvasHolder.innerHTML = '';
+        }
+        if (qrLoginBtn) {
+            qrLoginBtn.innerHTML = '<i class="bi bi-qr-code-scan"></i> 开始扫码登录';
+            qrLoginBtn.onclick = startQRCodeLogin;
+            qrLoginBtn.disabled = false;
+        }
+    }
+
+    function renderQRCode(qrUrl) {
+        const container = document.getElementById('qrcodeContainer');
+        const canvasHolder = document.getElementById('qrCodeCanvas');
+        const spinner = document.getElementById('qrSpinner');
+
+        if (!container || !canvasHolder) {
+            return;
+        }
+
+        canvasHolder.innerHTML = '';
+        if (typeof QRCode !== 'undefined') {
+            try {
+                new QRCode(canvasHolder, {
+                    text: qrUrl,
+                    width: 200,
+                    height: 200
+                });
+            } catch (err) {
+                const img = document.createElement('img');
+                img.src = qrUrl;
+                img.alt = 'QR Code';
+                img.className = 'img-fluid border rounded';
+                canvasHolder.appendChild(img);
+            }
+        } else {
+            const img = document.createElement('img');
+            img.src = qrUrl;
+            img.alt = 'QR Code';
+            img.className = 'img-fluid border rounded';
+            canvasHolder.appendChild(img);
+        }
+
+        if (spinner) {
+            spinner.classList.remove('d-none');
+            spinner.innerHTML = '<span class="visually-hidden">等待扫码...</span>';
+        }
+        container.classList.remove('d-none');
+    }
+
+    function generateRandomString(length) {
+        const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+        let result = '';
+        const values = new Uint8Array(length);
+        window.crypto.getRandomValues(values);
+        for (let i = 0; i < length; i += 1) {
+            result += charset[values[i] % charset.length];
+        }
+        return result;
+    }
+
+    async function sha256_base64(text) {
+        const resp = await fetch(`/tools/sha256/${text}`);
+        const data = await resp.json();
+        if (data && data.success && data.result) {
+            return data.result;
+        }
+        return '';
+    }
+
+    async function generatePKCEParams() {
+        const codeVerifier = generateRandomString(64);
+        const codeChallenge = await sha256_base64(codeVerifier);
+        return { codeVerifier, codeChallenge, codeChallengeMethod: 'sha256' };
+    }
+
+    async function startQRCodeLogin() {
+        const qrLoginBtn = document.getElementById('qrLoginBtn');
+        if (!qrLoginBtn) {
+            return;
+        }
+        qrLoginBtn.disabled = true;
+        qrLoginBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> 获取二维码...';
+
+        try {
+            const pkce = await generatePKCEParams();
+            pkceContext.codeVerifier = pkce.codeVerifier;
+
+            const resp = await fetch('/api/cloud115/auth_device_code', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    code_challenge: pkce.codeChallenge,
+                    code_challenge_method: pkce.codeChallengeMethod
+                })
+            });
+            const data = await resp.json();
+            if (data.state !== 1 || !data.data) {
+                throw new Error(data.message || '获取设备码失败');
+            }
+
+            pkceContext.deviceUid = data.data.uid;
+            pkceContext.deviceTime = data.data.time;
+            pkceContext.deviceSign = data.data.sign;
+
+            renderQRCode(data.data.qrcode);
+
+            qrLoginBtn.innerHTML = '<i class="bi bi-x-circle"></i> 取消扫码';
+            qrLoginBtn.onclick = cancelQRCodeLogin;
+            qrLoginBtn.disabled = false;
+
+            if (qrCheckInterval) {
+                clearInterval(qrCheckInterval);
+            }
+            qrCheckInterval = setInterval(async () => {
+                try {
+                    if (!pkceContext.deviceUid || !pkceContext.deviceTime || !pkceContext.deviceSign) {
+                        cancelQRCodeLogin();
+                        return;
+                    }
+                    const statusResp = await fetch(`/api/cloud115/poll_auth_status?uid=${pkceContext.deviceUid}&time=${pkceContext.deviceTime}&sign=${pkceContext.deviceSign}`);
+                    const status = await statusResp.json();
+                    if (status.state === 1 && status.data) {
+                        const progress = status.data.status;
+                        if (progress === 2) {
+                            const spinner = document.getElementById('qrSpinner');
+                            if (spinner) {
+                                spinner.innerHTML = '<div class="spinner-border text-success" role="status"><span class="visually-hidden">登录中...</span></div>';
+                            }
+                            clearInterval(qrCheckInterval);
+                            qrCheckInterval = null;
+
+                            const tokenResp = await fetch('/api/cloud115/device_code_to_token', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ uid: pkceContext.deviceUid, code_verifier: pkceContext.codeVerifier })
+                            });
+                            const tokenResult = await tokenResp.json();
+                            if (tokenResult.state === 1) {
+                                alert('✓ 登录成功！');
+                                cancelQRCodeLogin();
+                                checkLoginStatus();
+                            } else {
+                                throw new Error(tokenResult.message || '获取 Token 失败');
+                            }
+                        } else if (progress === -1 || progress === -2) {
+                            clearInterval(qrCheckInterval);
+                            qrCheckInterval = null;
+                            alert('二维码已过期，请重新获取');
+                            cancelQRCodeLogin();
+                        }
+                    }
+                } catch (pollError) {
+                    console.error('检查扫码状态失败:', pollError);
+                }
+            }, 2000);
+        } catch (error) {
+            console.error('二维码登录失败:', error);
+            alert('获取二维码失败: ' + error.message);
+            resetQRCodeUI();
+        }
+    }
+
+    function cancelQRCodeLogin() {
+        resetQRCodeUI();
+    }
+
+    async function checkLoginStatus() {
+        const statusBadge = document.getElementById('statusBadge');
+        const statusDescription = document.getElementById('statusDescription');
+        const statusDetails = document.getElementById('statusDetails');
+        const openapiCard = document.getElementById('openapi-card');
+        const driverCard = document.getElementById('driver-card');
+
+        if (!statusBadge || !statusDescription) {
+            return;
+        }
+
+        statusBadge.innerHTML = '<i class="bi bi-hourglass-split"></i> 检查中';
+        statusBadge.className = 'badge status-badge bg-secondary';
+        statusDescription.textContent = '正在检查...';
+        if (statusDetails) {
+            statusDetails.classList.add('d-none');
+        }
+        if (openapiCard) {
+            openapiCard.classList.remove('active');
+        }
+        if (driverCard) {
+            driverCard.classList.remove('active');
+        }
+
+        try {
+            const response = await fetch('/api/cloud115/check_auth_status');
+            const result = await response.json();
+
+            if (result.state === 1 && result.data) {
+                const { logged_in, active_method, auth_status } = result.data;
+
+                if (logged_in) {
+                    statusBadge.innerHTML = '<i class="bi bi-check-circle"></i> 已登录';
+                    statusBadge.className = 'badge status-badge bg-success';
+                    statusDescription.textContent = `通过 ${active_method === 'driver' ? 'Cookie' : 'Token'} 认证`;
+                } else {
+                    statusBadge.innerHTML = '<i class="bi bi-x-circle"></i> 未登录';
+                    statusBadge.className = 'badge status-badge bg-danger';
+                    statusDescription.textContent = '请选择登录方式进行登录';
+                }
+
+                const openapiStatus = document.getElementById('openapi_status');
+                const driverStatus = document.getElementById('driver_status');
+                const authMode = document.getElementById('auth_mode');
+                const activeMethod = document.getElementById('active_method');
+
+                if (openapiStatus) {
+                    openapiStatus.innerHTML = auth_status?.openapi?.logged_in
+                        ? '<span class="badge bg-success">✓ 有效</span>'
+                        : '<span class="badge bg-secondary">✗ 未登录</span>';
+                }
+                if (driverStatus) {
+                    driverStatus.innerHTML = auth_status?.driver?.logged_in
+                        ? '<span class="badge bg-success">✓ 有效</span>'
+                        : '<span class="badge bg-secondary">✗ 未登录</span>';
+                }
+                if (authMode) {
+                    authMode.textContent = auth_status?.current_mode || '--';
+                }
+                if (activeMethod) {
+                    activeMethod.textContent = active_method || '--';
+                }
+                if (statusDetails) {
+                    statusDetails.classList.remove('d-none');
+                }
+                if (openapiCard) {
+                    openapiCard.classList.toggle('active', active_method === 'openapi');
+                }
+                if (driverCard) {
+                    driverCard.classList.toggle('active', active_method === 'driver');
+                }
+            } else {
+                throw new Error(result.message || '检查失败');
+            }
+        } catch (error) {
+            console.error('检查登录状态失败:', error);
+            statusBadge.innerHTML = '<i class="bi bi-exclamation-triangle"></i> 错误';
+            statusBadge.className = 'badge status-badge bg-warning';
+            statusDescription.textContent = '检查登录状态失败';
+        }
+    }
+
+    async function loadCurrentCookie() {
+        const cookieInput = document.getElementById('cookieInput');
+        const authModeSelect = document.getElementById('authModeSelect');
+        const cookieFileInput = document.getElementById('cookieFileInput');
+
+        if (!cookieInput || !authModeSelect) {
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/cloud115/get_current_cookie');
+            const result = await response.json();
+
+            if (result.state === 1 && result.data) {
+                if (result.data.cookie) {
+                    cookieInput.value = result.data.cookie;
+                    cookieInput.placeholder = '当前生效的 Cookie';
+                } else {
+                    cookieInput.value = '';
+                    cookieInput.placeholder = 'UID=xxx;CID=xxx;SEID=xxx;KID=xxx';
+                }
+                if (cookieFileInput && typeof result.data.cookie_file === 'string') {
+                    cookieFileInput.value = result.data.cookie_file;
+                }
+                if (result.data.auth_mode) {
+                    authModeSelect.value = result.data.auth_mode;
+                }
+            }
+        } catch (error) {
+            console.error('加载当前 Cookie 失败:', error);
+        }
+    }
+
+    async function verifyCookie() {
+        const cookieInput = document.getElementById('cookieInput');
+        const statusMsg = document.getElementById('cookieStatusMsg');
+
+        if (!cookieInput || !statusMsg) {
+            return;
+        }
+
+        const cookie = cookieInput.value.trim();
+        if (!cookie) {
+            alert('请先输入 Cookie');
+            return;
+        }
+
+        statusMsg.className = 'alert alert-info mt-2';
+        statusMsg.innerHTML = '<i class="bi bi-hourglass-split"></i> 正在验证 Cookie...';
+        statusMsg.classList.remove('d-none');
+
+        try {
+            const response = await fetch('/api/cloud115/verify_cookie', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cookie })
+            });
+            const result = await response.json();
+
+            if (result.state === 1 && result.data && result.data.valid) {
+                statusMsg.className = 'alert alert-success mt-2';
+                statusMsg.innerHTML = '<i class="bi bi-check-circle"></i> ✓ Cookie 有效！';
+            } else {
+                statusMsg.className = 'alert alert-danger mt-2';
+                statusMsg.innerHTML = '<i class="bi bi-x-circle"></i> ✗ Cookie 无效: ' + (result.message || '未知错误');
+            }
+
+            setTimeout(() => {
+                statusMsg.classList.add('d-none');
+            }, 5000);
+        } catch (error) {
+            console.error('验证 Cookie 失败:', error);
+            statusMsg.className = 'alert alert-danger mt-2';
+            statusMsg.innerHTML = '<i class="bi bi-x-circle"></i> ✗ 验证失败: ' + error.message;
+        }
+    }
+
+    async function updateCookie() {
+        const cookieInput = document.getElementById('cookieInput');
+        const cookieFileInput = document.getElementById('cookieFileInput');
+        const authModeSelect = document.getElementById('authModeSelect');
+
+        if (!cookieInput || !authModeSelect) {
+            return;
+        }
+
+        const cookie = cookieInput.value.trim();
+        const cookieFile = cookieFileInput ? cookieFileInput.value.trim() : '';
+        const authMode = authModeSelect.value;
+
+        if (!cookie && !cookieFile) {
+            alert('请至少填写 Cookie 或 Cookie 文件路径');
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/cloud115/update_cookie', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cookie, auth_mode: authMode, cookie_file: cookieFile })
+            });
+            const result = await response.json();
+
+            if (result.state === 1) {
+                alert('✓ Cookie 更新成功！');
+                loadCurrentCookie();
+                checkLoginStatus();
+            } else {
+                alert('✗ 更新失败: ' + result.message);
+            }
+        } catch (error) {
+            console.error('更新 Cookie 失败:', error);
+            alert('更新失败: ' + error.message);
+        }
+    }
+
+    async function updateAuthMode() {
+        const authModeSelect = document.getElementById('authModeSelect');
+        if (!authModeSelect) {
+            return;
+        }
+
+        const authMode = authModeSelect.value;
+        try {
+            const response = await fetch('/api/cloud115/update_auth_mode', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ auth_mode: authMode })
+            });
+            const result = await response.json();
+
+            if (result.state === 1) {
+                alert('✓ 认证模式已切换为: ' + authMode);
+                checkLoginStatus();
+            } else {
+                alert('✗ 切换失败: ' + result.message);
+            }
+        } catch (error) {
+            console.error('切换认证模式失败:', error);
+            alert('切换失败: ' + error.message);
+        }
+    }
+
+    async function logout115() {
+        if (!confirm('确定要退出115登录吗？这将清除所有登录凭据。')) {
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/cloud115/logout', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            const result = await response.json();
+
+            if (result.state === 1) {
+                alert('✓ 已成功退出登录');
+                resetQRCodeUI();
+                checkLoginStatus();
+            } else {
+                alert('✗ 退出失败: ' + result.message);
+            }
+        } catch (error) {
+            console.error('退出登录失败:', error);
+            alert('退出失败: ' + error.message);
+        }
+    }
+
+    window.startQRCodeLogin = startQRCodeLogin;
+    window.cancelQRCodeLogin = cancelQRCodeLogin;
+    window.checkLoginStatus = checkLoginStatus;
+    window.verifyCookie = verifyCookie;
+    window.updateCookie = updateCookie;
+    window.updateAuthMode = updateAuthMode;
+    window.logout115 = logout115;
+
+    if (document.getElementById('cloud115LoginSection')) {
+        checkLoginStatus();
+        loadCurrentCookie();
+    }
+
+    const cloud115TabTrigger = document.getElementById('tab-cloud115-tab');
+    if (cloud115TabTrigger) {
+        cloud115TabTrigger.addEventListener('shown.bs.tab', () => {
+            checkLoginStatus();
+            loadCurrentCookie();
+        });
+    }
+</script>
+{% endblock %}

@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+
+{% block title %}Error{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card border-danger">
+            <div class="card-header bg-danger text-white">
+                <h4 class="mb-0">Error</h4>
+            </div>
+            <div class="card-body">
+                <h5 class="card-title">{{ error_title|default('An error occurred') }}</h5>
+                <p class="card-text">{{ error_message }}</p>
+                
+                {% if error_details %}
+                <div class="alert alert-secondary mt-3">
+                    <p><strong>Error Details:</strong></p>
+                    <pre class="mb-0">{{ error_details }}</pre>
+                </div>
+                {% endif %}
+                
+                <div class="mt-4">
+                    <a href="/" class="btn btn-primary">Return to Home Page</a>
+                    <button onclick="window.history.back()" class="btn btn-secondary ms-2">Go Back</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 

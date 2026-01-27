@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page_title | default("选择Jellyfin文件") }}{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row">
+        <div class="col-md-12 mb-4">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="/">Home</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('jellyfin_library') }}">Jellyfin 库</a></li>
+                    {% if movie_id %}
+                    <li class="breadcrumb-item"><a href="{{ url_for('movie_detail', movie_id=movie_id) }}">{{ movie_id }}</a></li>
+                    {% endif %}
+                    <li class="breadcrumb-item active">选择文件</li>
+                </ol>
+            </nav>
+        </div>
+    </div>
+    
+    <div class="row">
+        <div class="col-md-8">
+            <div class="card mb-4">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">选择要播放的文件</h5>
+                    {% if movie_id %}
+                    <a href="{{ url_for('movie_detail', movie_id=movie_id) }}" class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-arrow-left"></i> 返回影片详情
+                    </a>
+                    {% endif %}
+                </div>
+                <div class="card-body">
+                    <div class="list-group">
+                        {% for file in files %}
+                        <a href="{{ url_for('jellyfin_file_player', file_id=file.id) }}" class="list-group-item list-group-item-action">
+                            <div class="d-flex w-100 justify-content-between align-items-center">
+                                <div>
+                                    <h6 class="mb-1">
+                                        <i class="bi bi-file-play me-2" style="color: #0ca5e9;"></i>
+                                        {% if file.path %}
+                                        {% set filename = file.path.split('/')[-1] %}
+                                        {{ filename }}
+                                        {% else %}
+                                        {{ file.title }}
+                                        {% endif %}
+                                    </h6>
+                                    <small class="text-muted text-truncate d-block" style="max-width: 100%;" title="{{ file.path }}">
+                                        {{ file.path }}
+                                    </small>
+                                </div>
+                                <span class="badge bg-primary rounded-pill">播放</span>
+                            </div>
+                        </a>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4">
+            {% if movie_info %}
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0">影片信息</h5>
+                </div>
+                <div class="card-body">
+                    {% if movie_info.img %}
+                    <img src="{{ movie_info.img }}" class="img-fluid mb-3" alt="{{ movie_info.title }}">
+                    {% endif %}
+                    
+                    <h5>{{ movie_info.title }}</h5>
+                    <p class="mb-1"><strong>ID:</strong> {{ movie_id }}</p>
+                    
+                    {% if movie_info.date %}
+                    <p class="mb-1"><strong>发行日期:</strong> {{ movie_info.date }}</p>
+                    {% endif %}
+                    
+                    {% if movie_info.stars and movie_info.stars|length > 0 %}
+                    <p class="mb-1">
+                        <strong>演员:</strong>
+                        {% for star in movie_info.stars %}
+                        <a href="{{ url_for('actor_detail', actor_id=star.id) }}" class="text-decoration-none">{{ star.name }}</a>{% if not loop.last %}, {% endif %}
+                        {% endfor %}
+                    </p>
+                    {% endif %}
+                    
+                    {% if movie_info.genre and movie_info.genre|length > 0 %}
+                    <div class="mt-2">
+                        <strong>类别:</strong>
+                        <div>
+                            {% for genre in movie_info.genre %}
+                            <span class="badge bg-secondary me-1 mb-1">{{ genre }}</span>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% else %}
+            <div class="card mb-4">
+                <div class="card-body">
+                    <p class="mb-0">未找到影片信息</p>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %} 

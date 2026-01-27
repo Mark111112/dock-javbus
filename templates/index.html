@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+
+{% block title %}Home{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-body">
+                <h1 class="card-title mb-4">Welcome to Bus Movie Database</h1>
+                <p class="card-text">
+                    Search for movies by keyword or browse all movies.
+                </p>
+                
+                <div class="d-flex justify-content-end mb-3">
+                    <a href="/config" class="btn btn-outline-secondary">
+                        <i class="bi bi-gear"></i> 配置
+                    </a>
+                </div>
+                
+                <div class="row mt-4">
+                    <div class="col-md-6 mx-auto">
+                        <div class="card mb-3">
+                            <div class="card-header">
+                                <h5>关键字搜索</h5>
+                            </div>
+                            <div class="card-body">
+                                <form action="/search_keyword" method="get" id="searchForm">
+                                    <div class="row mb-3">
+                                        <div class="col-md-7">
+                                            <div class="input-group mb-2">
+                                                <input type="text" name="keyword" id="keywordInput" class="form-control" placeholder="输入关键词或留空显示全部影片">
+                                                <button type="submit" class="btn btn-primary">Search</button>
+                                            </div>
+                                            <div class="d-flex justify-content-start mt-2">
+                                                <div class="form-check me-3">
+                                                    <input class="form-check-input" type="checkbox" id="magnetAll" name="magnet" value="all">
+                                                    <label class="form-check-label" for="magnetAll">包括无磁力影片</label>
+                                                </div>
+                                                <div class="form-check">
+                                                    <input class="form-check-input" type="checkbox" id="uncensoredType" name="type" value="uncensored">
+                                                    <label class="form-check-label" for="uncensoredType">无码影片</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-5">
+                                            <small class="text-muted mb-2 d-block">高级筛选 (留空则不启用):</small>
+                                            <div class="row g-2">
+                                                <div class="col-6">
+                                                    <div class="form-floating">
+                                                        <input type="text" class="form-control form-control-sm filter-value" id="starInput" name="filterValue_star" placeholder="演员ID">
+                                                        <label for="starInput" class="small">演员</label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-6">
+                                                    <div class="form-floating">
+                                                        <input type="text" class="form-control form-control-sm filter-value" id="genreInput" name="filterValue_genre" placeholder="类别ID">
+                                                        <label for="genreInput" class="small">类别</label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-6">
+                                                    <div class="form-floating">
+                                                        <input type="text" class="form-control form-control-sm filter-value" id="directorInput" name="filterValue_director" placeholder="导演ID">
+                                                        <label for="directorInput" class="small">导演</label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-6">
+                                                    <div class="form-floating">
+                                                        <input type="text" class="form-control form-control-sm filter-value" id="studioInput" name="filterValue_studio" placeholder="制作商ID">
+                                                        <label for="studioInput" class="small">制作商</label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-6">
+                                                    <div class="form-floating">
+                                                        <input type="text" class="form-control form-control-sm filter-value" id="labelInput" name="filterValue_label" placeholder="发行商ID">
+                                                        <label for="labelInput" class="small">发行商</label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-6">
+                                                    <div class="form-floating">
+                                                        <input type="text" class="form-control form-control-sm filter-value" id="seriesInput" name="filterValue_series" placeholder="系列ID">
+                                                        <label for="seriesInput" class="small">系列</label>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if recent_movies %}
+<div class="row mt-4">
+    <div class="col-12">
+        <h2>Recent Searches</h2>
+        <div class="row">
+            {% for movie in recent_movies %}
+            <div class="col-md-3 mb-4">
+                <div class="card movie-card">
+                    <img src="/images/covers/{{ movie.id }}.jpg" class="card-img-top movie-poster" alt="{{ movie.id }}">
+                    <div class="card-body">
+                        <h5 class="card-title">{{ movie.id }}</h5>
+                        <p class="card-text text-truncate">{{ movie.title }}</p>
+                        {% if movie.translated_title %}
+                        <p class="card-text text-truncate text-info"><small>{{ movie.translated_title }}</small></p>
+                        {% endif %}
+                        <a href="/movie/{{ movie.id }}" class="btn btn-primary stretched-link">View Details</a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Get references to form elements
+        const searchForm = document.getElementById('searchForm');
+        const keywordInput = document.getElementById('keywordInput');
+        const filterInputs = document.querySelectorAll('.filter-value');
+        
+        // Add event listeners to filter inputs
+        filterInputs.forEach(input => {
+            input.addEventListener('input', function() {
+                // If any filter has a value, disable keyword input
+                const hasFilterValue = Array.from(filterInputs).some(inp => inp.value.trim() !== '');
+                if (hasFilterValue) {
+                    keywordInput.disabled = true;
+                    keywordInput.placeholder = "使用筛选条件时不能同时使用关键词搜索";
+                    keywordInput.value = '';
+                } else {
+                    keywordInput.disabled = false;
+                    keywordInput.placeholder = "输入关键词或留空显示全部影片";
+                }
+            });
+        });
+        
+        // Handle form submission
+        searchForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(searchForm);
+            const params = new URLSearchParams();
+            
+            // Add keyword parameter if it has a value
+            const keyword = formData.get('keyword');
+            if (keyword) {
+                params.append('keyword', keyword);
+            }
+            
+            // Add magnet parameter if checkbox is checked
+            if (document.getElementById('magnetAll').checked) {
+                params.append('magnet', 'all');
+            }
+            
+            // Add type parameter if checkbox is checked
+            if (document.getElementById('uncensoredType').checked) {
+                params.append('type', 'uncensored');
+            }
+            
+            // Add filter parameters if any has a value
+            let activeFilterType = null;
+            let activeFilterValue = null;
+            
+            filterInputs.forEach(input => {
+                if (input.value.trim() !== '') {
+                    // Extract filter type from input name (e.g., filterValue_star -> star)
+                    const filterType = input.name.split('_')[1];
+                    activeFilterType = filterType;
+                    activeFilterValue = input.value.trim();
+                }
+            });
+            
+            if (activeFilterType && activeFilterValue) {
+                params.append('filterType', activeFilterType);
+                params.append('filterValue', activeFilterValue);
+            }
+            
+            // Redirect to search page with parameters
+            window.location.href = '/search_keyword?' + params.toString();
+        });
+    });
+</script>
+{% endblock %} 

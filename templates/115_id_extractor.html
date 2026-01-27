@@ -1,0 +1,174 @@
+{% extends 'base.html' %}
+
+{% block title %}Cloud115 Video ID Extractor{% endblock %}
+
+{% block head %}
+<style>
+    .dictionary-editor {
+        margin-bottom: 20px;
+    }
+    .dictionary-editor .form-control {
+        min-height: 200px;
+        font-family: monospace;
+    }
+    .results-table {
+        margin-top: 20px;
+    }
+    .results-table th, .results-table td {
+        vertical-align: middle;
+    }
+    .preview-changes {
+        margin-top: 15px;
+        margin-bottom: 30px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h1>Cloud115 Video ID Extractor</h1>
+        <a href="{{ url_for('cloud115_library') }}" class="btn btn-secondary">
+            <i class="fas fa-arrow-left"></i> Back to Library
+        </a>
+    </div>
+    
+    <div class="row">
+        <div class="col-md-12">
+            <div class="alert alert-info">
+                <i class="fas fa-info-circle-fill"></i> This tool extracts standardized video IDs from Cloud115 file titles and updates the library. Use the filtering dictionary to remove unwanted strings before ID extraction.
+            </div>
+            
+            <!-- Dictionary Editor -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0">Filter Dictionary Editor</h5>
+                </div>
+                <div class="card-body">
+                    <p class="card-text">Edit the filter dictionary to remove unwanted strings from filenames before ID extraction. Each line represents a string to be removed.</p>
+                    
+                    <form id="dictionaryForm" method="post" action="{{ url_for('save_cloud115_dictionary') }}">
+                        <div class="dictionary-editor">
+                            <textarea class="form-control" name="dictionary" id="dictionary" rows="10">{{ dictionary|join('\n') }}</textarea>
+                        </div>
+                        <div class="d-flex justify-content-between">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-save"></i> Save Dictionary
+                            </button>
+                            <div>
+                                <button type="button" class="btn btn-secondary" id="resetBtn">
+                                    <i class="fas fa-arrow-counterclockwise"></i> Reset
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            
+            <!-- Extraction Controls -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0">Extract Video IDs</h5>
+                </div>
+                <div class="card-body">
+                    <form id="extractForm" method="post" action="{{ url_for('extract_cloud115_ids') }}">
+                        <div class="mb-3">
+                            <label for="category" class="form-label">Category</label>
+                            <select class="form-select" id="category" name="category">
+                                <option value="">All Categories</option>
+                                {% for category in categories %}
+                                <option value="{{ category }}">{{ category|capitalize }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="previewOnly" name="preview_only" value="1" {% if preview_only %}checked{% endif %}>
+                                <label class="form-check-label" for="previewOnly">
+                                    Preview changes only (don't update database)
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="onlyMissing" name="only_missing" value="1" {% if selected_only_missing %}checked{% endif %}>
+                                <label class="form-check-label" for="onlyMissing">
+                                    Only extract video IDs for files without an existing video ID
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <button type="submit" class="btn btn-success">
+                            <i class="fas fa-magic"></i> Extract Video IDs
+                        </button>
+                    </form>
+                </div>
+            </div>
+            
+            <!-- Results Display -->
+            {% if results %}
+            <div class="preview-changes">
+                <h3>Extraction Results</h3>
+                <p>Found {{ results|length }} files with valid video IDs.</p>
+                
+                {% if preview_only %}
+                <div class="alert alert-warning">
+                    <i class="fas fa-eye-fill"></i> <strong>Preview Mode:</strong> Changes have not been applied to the database.
+                    <form action="{{ url_for('extract_cloud115_ids') }}" method="post" class="mt-2">
+                        <input type="hidden" name="category" value="{{ selected_category }}">
+                        <input type="hidden" name="preview_only" value="0">
+                        <input type="hidden" name="only_missing" value="{% if selected_only_missing %}1{% else %}0{% endif %}">
+                        <button type="submit" class="btn btn-warning">Apply These Changes</button>
+                    </form>
+                </div>
+                {% else %}
+                <div class="alert alert-success">
+                    <i class="fas fa-check-circle-fill"></i> <strong>Success:</strong> Updated {{ updated_count }} files in the database.
+                </div>
+                {% endif %}
+                
+                <div class="table-responsive results-table">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Video ID</th>
+                                <th>Original Title</th>
+                                <th>Updated Title</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for result in results %}
+                            <tr>
+                                <td>{{ loop.index }}</td>
+                                <td><code>{{ result.video_id }}</code></td>
+                                <td>{{ result.original_title }}</td>
+                                <td>{{ result.title }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Handle dictionary reset
+        const resetBtn = document.getElementById('resetBtn');
+        const dictionaryTextarea = document.getElementById('dictionary');
+        const originalDictionary = `{{ dictionary|join('\n') }}`;
+        
+        resetBtn.addEventListener('click', function() {
+            dictionaryTextarea.value = originalDictionary;
+        });
+    });
+</script>
+{% endblock %} 

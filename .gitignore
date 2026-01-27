@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+115/
+nextbus/
+external/
+
+# Faster Whisper Service
+faster_whisper_service/
+
+# Environment variables
+.env
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Downloaded images
+buspic/
+
+# Data directory
+data/
+
+# Logs
+logs/
+*.log
+cmd.txt
+
+# IDE files
+.claude/
+.idea/
+.vscode/
+.playwright-mcp/
+.output/
+*.swp
+*.swo 
+AGENTS.md
+claude.md
+docker-compose.gpu.yml
+nul

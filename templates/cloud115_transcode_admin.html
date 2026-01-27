@@ -1,0 +1,150 @@
+{% extends 'base.html' %}
+
+{% block title %}115 转码任务管理{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+	<div class="d-flex justify-content-between align-items-center mb-3">
+		<h3>115 转码任务管理</h3>
+		<div>
+			<button id="refreshBtn" class="btn btn-sm btn-primary">刷新</button>
+		</div>
+	</div>
+	<div class="card">
+		<div class="card-body">
+			<div class="table-responsive">
+				<table class="table table-sm table-hover align-middle">
+					<thead>
+						<tr>
+							<th>Task ID</th>
+							<th>状态</th>
+							<th>文件名</th>
+							<th>开始时间</th>
+							<th>最近更新</th>
+							<th>时长(秒)</th>
+							<th>PID</th>
+							<th>操作</th>
+						</tr>
+					</thead>
+					<tbody id="tasksBody">
+						<tr><td colspan="8" class="text-center text-muted">加载中...</td></tr>
+					</tbody>
+				</table>
+			</div>
+			<div id="adminAlert" class="alert mt-3" style="display:none;"></div>
+		</div>
+	</div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+	const tasksBody = document.getElementById('tasksBody');
+	const adminAlert = document.getElementById('adminAlert');
+	const refreshBtn = document.getElementById('refreshBtn');
+
+	function fmt(ts) {
+		if (!ts) return '-';
+		const d = new Date(ts * 1000);
+		return d.toLocaleString();
+	}
+	function setAlert(type, msg) {
+		if (!adminAlert) return;
+		adminAlert.className = `alert alert-${type}`;
+		adminAlert.innerHTML = msg;
+		adminAlert.style.display = 'block';
+	}
+	function clearAlert() {
+		if (!adminAlert) return;
+		adminAlert.style.display = 'none';
+		adminAlert.innerHTML = '';
+	}
+	function renderRows(tasks) {
+		if (!tasks || !tasks.length) {
+			tasksBody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">暂无任务</td></tr>';
+			return;
+		}
+		const rows = tasks.map(t => {
+			const tid = (t && (t.id || t.task_id)) ? (t.id || t.task_id) : '';
+			const pid = (t && (t.pid || (t.process && t.process.pid))) ? (t.pid || t.process.pid) : '-';
+			const status = t.status || '-';
+			const canStop = ['queued','starting','running','ready'].includes((status||'').toLowerCase());
+			return `
+				<tr>
+					<td><code>${tid}</code></td>
+					<td>${status}</td>
+					<td title="${t.file_name || ''}" style="max-width:320px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${t.file_name || ''}</td>
+					<td>${fmt(t.created_at)}</td>
+					<td>${fmt(t.updated_at)}</td>
+					<td>${t.duration != null ? Number(t.duration).toFixed(2) : '-'}</td>
+					<td>${pid || '-'}</td>
+					<td>
+						<div class="btn-group btn-group-sm">
+							<button class="btn btn-outline-warning" data-action="stop" data-id="${tid}" ${canStop ? '' : 'disabled'}>停止</button>
+							<button class="btn btn-outline-danger" data-action="delete" data-id="${tid}">删除</button>
+						</div>
+					</td>
+				</tr>
+			`;
+		}).join('');
+		tasksBody.innerHTML = rows;
+	}
+	function loadTasks() {
+		clearAlert();
+		fetch('/api/cloud115/transcode/tasks')
+			.then(r => r.json())
+			.then(data => {
+				if (!data.success) throw new Error(data.message || '加载失败');
+				renderRows(data.tasks || []);
+			})
+			.catch(err => {
+				setAlert('danger', '加载失败：' + err.message);
+				tasksBody.innerHTML = '<tr><td colspan="8" class="text-center text-danger">加载失败</td></tr>';
+			});
+	}
+	function stopTask(taskId) {
+		clearAlert();
+		fetch(`/api/cloud115/transcode/stop/${taskId}`, { method: 'POST' })
+			.then(r => r.json())
+			.then(data => {
+				if (!data.success) throw new Error(data.message || '停止失败');
+				setAlert('success', '任务已请求停止');
+				loadTasks();
+			})
+			.catch(err => setAlert('danger', '停止失败：' + err.message));
+	}
+	function deleteTask(taskId) {
+		clearAlert();
+		fetch(`/api/cloud115/transcode/delete/${taskId}`, { method: 'POST' })
+			.then(r => r.json())
+			.then(data => {
+				if (!data.success) throw new Error(data.message || '删除失败');
+				setAlert('success', '任务已删除');
+				loadTasks();
+			})
+			.catch(err => setAlert('danger', '删除失败：' + err.message));
+	}
+	tasksBody.addEventListener('click', function(e) {
+		const btn = e.target.closest('button');
+		if (!btn) return;
+		const action = btn.getAttribute('data-action');
+		const taskId = (btn.getAttribute('data-id') || '').trim();
+		if (!taskId) return;
+		if (action === 'stop') {
+			stopTask(taskId);
+		} else if (action === 'delete') {
+			if (confirm('确定要删除该任务吗？这将移除任务目录。')) {
+				deleteTask(taskId);
+			}
+		}
+	});
+	if (refreshBtn) {
+		refreshBtn.addEventListener('click', loadTasks);
+	}
+	loadTasks();
+	setInterval(loadTasks, 5000);
+});
+</script>
+{% endblock %}
+

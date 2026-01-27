@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+
+{% block title %}{{ actor.name }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12 mb-4">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="/">Home</a></li>
+                <li class="breadcrumb-item active">Actor: {{ actor.name }}</li>
+            </ol>
+        </nav>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-3 text-center">
+        <div class="card">
+            <div class="card-body">
+                <img src="/images/actor/{{ actor.id }}.jpg" class="img-fluid rounded-circle mb-3" style="max-width: 200px;" alt="{{ actor.name }}">
+                <h4>{{ actor.name }}</h4>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-9">
+        <div class="card">
+            <div class="card-header">
+                <h5>Actor Information</h5>
+            </div>
+            <div class="card-body">
+                <table class="table">
+                    <tbody>
+                        {% if actor.birthdate %}
+                        <tr>
+                            <th scope="row">Birthdate</th>
+                            <td>{{ actor.birthdate }}</td>
+                        </tr>
+                        {% endif %}
+                        {% if actor.age %}
+                        <tr>
+                            <th scope="row">Age</th>
+                            <td>{{ actor.age }}</td>
+                        </tr>
+                        {% endif %}
+                        {% if actor.height %}
+                        <tr>
+                            <th scope="row">Height</th>
+                            <td>{{ actor.height }}</td>
+                        </tr>
+                        {% endif %}
+                        {% if actor.measurements %}
+                        <tr>
+                            <th scope="row">Measurements</th>
+                            <td>{{ actor.measurements }}</td>
+                        </tr>
+                        {% endif %}
+                        {% if actor.birthplace %}
+                        <tr>
+                            <th scope="row">Birthplace</th>
+                            <td>{{ actor.birthplace }}</td>
+                        </tr>
+                        {% endif %}
+                        {% if actor.hobby %}
+                        <tr>
+                            <th scope="row">Hobby</th>
+                            <td>{{ actor.hobby }}</td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <h5>Movies featuring {{ actor.name }}</h5>
+            </div>
+            <div class="card-body">
+                {% if actor_movies and actor_movies|length > 0 %}
+                <div class="row">
+                    {% for movie in actor_movies %}
+                    <div class="col-md-3 mb-4">
+                        <div class="card movie-card">
+                            <img src="/images/covers/{{ movie.id }}.jpg" class="card-img-top movie-poster" alt="{{ movie.id }}">
+                            <div class="card-body">
+                                <h5 class="card-title">{{ movie.id }}</h5>
+                                <p class="card-text text-truncate">{{ movie.title }}</p>
+                                <a href="/movie/{{ movie.id }}" class="btn btn-primary stretched-link">View Details</a>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="alert alert-info">
+                    No movies found for this actor.
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 

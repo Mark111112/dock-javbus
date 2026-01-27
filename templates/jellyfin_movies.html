@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page_title | default("Jellyfin 影片") }}{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="d-flex justify-content-between align-items-center my-3">
+        <h1>{{ library_name if library_name else "Jellyfin 影片" }}</h1>
+        <div>
+            <a href="{{ url_for('jellyfin_library') }}" class="btn btn-outline-primary">
+                <i class="fas fa-arrow-left"></i> 返回库列表
+            </a>
+        </div>
+    </div>
+    
+    <!-- Search form -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" action="{{ url_for('jellyfin_movies') }}" class="row g-3">
+                {% if library_id %}
+                <input type="hidden" name="library_id" value="{{ library_id }}">
+                {% endif %}
+                
+                <div class="col-md-8">
+                    <div class="input-group">
+                        <input type="text" class="form-control" name="search" placeholder="搜索标题或视频ID..." value="{{ search }}">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-search"></i> 搜索
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="col-md-4 text-end">
+                    {% if search %}
+                    <a href="{{ url_for('jellyfin_movies', library_id=library_id) }}" class="btn btn-outline-secondary">
+                        <i class="fas fa-times"></i> 清除搜索
+                    </a>
+                    {% endif %}
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- Movies grid -->
+    {% if movies %}
+    <div class="row row-cols-2 row-cols-md-3 row-cols-lg-4 row-cols-xl-5 g-3 mb-4">
+        {% for movie in movies %}
+        <div class="col">
+            <div class="card h-100">
+                {% if movie.cover_image %}
+                <a href="{{ url_for('jellyfin_player', item_id=movie.item_id) }}">
+                    <img src="{{ movie.cover_image }}" class="card-img-top movie-poster" alt="{{ movie.title }}">
+                </a>
+                {% else %}
+                <a href="{{ url_for('jellyfin_player', item_id=movie.item_id) }}">
+                    <div class="card-img-top movie-poster d-flex align-items-center justify-content-center bg-light text-center">
+                        <span class="text-muted">无封面</span>
+                    </div>
+                </a>
+                {% endif %}
+                
+                <div class="card-body">
+                    <h5 class="card-title">
+                        {% if movie.video_id %}
+                        <span class="badge bg-success">{{ movie.video_id }}</span>
+                        {% endif %}
+                        <a href="{{ url_for('jellyfin_player', item_id=movie.item_id) }}" class="text-decoration-none text-dark">
+                            {{ movie.title }}
+                        </a>
+                    </h5>
+                    
+                    <div class="small text-muted mb-2">
+                        {% if movie.date %}
+                        <span><i class="fas fa-calendar-alt"></i> {{ movie.date }}</span>
+                        {% endif %}
+                    </div>
+                    
+                    {% if movie.actors and movie.actors|length > 0 %}
+                    <div class="small text-muted">
+                        <i class="fas fa-user-alt"></i> 
+                        {% for actor in movie.actors %}
+                            {% if loop.index <= 2 %}
+                                {{ actor }}{% if not loop.last %}, {% endif %}
+                            {% elif loop.index == 3 %}
+                                ...
+                            {% endif %}
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                </div>
+                
+                <div class="card-footer">
+                    <div class="btn-group btn-group-sm w-100" role="group">
+                        <a href="{{ url_for('jellyfin_player', item_id=movie.item_id) }}" class="btn btn-primary" title="播放">
+                            <i class="fas fa-play"></i> 播放
+                        </a>
+                        {% if movie.video_id %}
+                        <a href="{{ url_for('movie_detail', movie_id=movie.video_id) }}" class="btn btn-info" title="详情">
+                            <i class="fas fa-info-circle"></i> 详情
+                        </a>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    
+    <!-- Pagination -->
+    {% if total_pages > 1 %}
+    <nav aria-label="Page navigation">
+        <ul class="pagination justify-content-center">
+            <li class="page-item {{ 'disabled' if page == 1 else '' }}">
+                <a class="page-link" href="{{ url_for('jellyfin_movies', library_id=library_id, page=page-1, search=search) }}" aria-label="Previous">
+                    <span aria-hidden="true">&laquo;</span>
+                </a>
+            </li>
+            
+            {% set start_page = [page - 2, 1] | max %}
+            {% set end_page = [start_page + 4, total_pages] | min %}
+            {% if end_page - start_page < 4 %}
+                {% set start_page = [end_page - 4, 1] | max %}
+            {% endif %}
+            
+            {% for p in range(start_page, end_page + 1) %}
+            <li class="page-item {{ 'active' if p == page else '' }}">
+                <a class="page-link" href="{{ url_for('jellyfin_movies', library_id=library_id, page=p, search=search) }}">{{ p }}</a>
+            </li>
+            {% endfor %}
+            
+            <li class="page-item {{ 'disabled' if page == total_pages else '' }}">
+                <a class="page-link" href="{{ url_for('jellyfin_movies', library_id=library_id, page=page+1, search=search) }}" aria-label="Next">
+                    <span aria-hidden="true">&raquo;</span>
+                </a>
+            </li>
+        </ul>
+    </nav>
+    {% endif %}
+    {% else %}
+    <div class="alert alert-info">
+        没有找到影片。
+        {% if search %}
+        <a href="{{ url_for('jellyfin_movies', library_id=library_id) }}" class="alert-link">清除搜索</a> 查看所有影片。
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block styles %}
+<style>
+    .movie-poster {
+        height: 280px;
+        object-fit: cover;
+    }
+</style>
+{% endblock %} 

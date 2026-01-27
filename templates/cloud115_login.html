@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>115云盘登录管理</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            padding: 20px;
+        }
+        .login-container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .status-card {
+            margin-bottom: 20px;
+        }
+        .status-badge {
+            font-size: 1rem;
+            padding: 0.5rem 1rem;
+        }
+        .method-card {
+            border: 2px solid #dee2e6;
+            transition: all 0.3s;
+        }
+        .method-card.active {
+            border-color: #0d6efd;
+            background-color: #e7f1ff;
+        }
+        .method-card:hover {
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        .qrcode-container {
+            text-align: center;
+            padding: 20px;
+        }
+        #qrCodeImage {
+            max-width: 300px;
+            margin: 20px auto;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+        }
+        .cookie-input {
+            font-family: monospace;
+            font-size: 0.9rem;
+        }
+        .guide-section {
+            background-color: #fff;
+            border-left: 4px solid #0d6efd;
+            padding: 15px;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2><i class="bi bi-cloud-arrow-up"></i> 115云盘登录管理</h2>
+            <button class="btn btn-outline-secondary" onclick="window.location.href='/'">
+                <i class="bi bi-house"></i> 返回首页
+            </button>
+        </div>
+
+        <!-- 登录状态卡片 -->
+        <div class="card status-card">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="card-title mb-2">当前登录状态</h5>
+                        <p class="card-text text-muted mb-0" id="statusDescription">正在检查...</p>
+                    </div>
+                    <div>
+                        <span class="badge status-badge" id="statusBadge">
+                            <i class="bi bi-hourglass-split"></i> 检查中
+                        </span>
+                    </div>
+                </div>
+                <div class="mt-3" id="statusDetails" style="display: none;">
+                    <hr>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <strong>OpenAPI Token:</strong>
+                            <span id="openapi_status" class="ms-2"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <strong>Driver Cookie:</strong>
+                            <span id="driver_status" class="ms-2"></span>
+                        </div>
+                    </div>
+                    <div class="row mt-2">
+                        <div class="col-12">
+                            <strong>认证模式:</strong>
+                            <span id="auth_mode" class="ms-2 badge bg-info"></span>
+                            <strong class="ms-3">活动方法:</strong>
+                            <span id="active_method" class="ms-2 badge bg-primary"></span>
+                        </div>
+                    </div>
+                </div>
+                <div class="mt-3">
+                    <button class="btn btn-sm btn-outline-primary" onclick="checkLoginStatus()">
+                        <i class="bi bi-arrow-clockwise"></i> 刷新状态
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 登录方式选择 -->
+        <div class="row">
+            <!-- OpenAPI 登录（二维码） -->
+            <div class="col-md-6 mb-3">
+                <div class="card method-card h-100" id="openapi-card">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0"><i class="bi bi-qr-code"></i> 方式一：扫码登录 (OpenAPI)</h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="card-text">使用 115 官方 OpenAPI，通过扫描二维码登录</p>
+                        <div class="qrcode-container" id="qrcodeContainer" style="display: none;">
+                            <img id="qrCodeImage" src="" alt="QR Code">
+                            <p class="text-muted">请使用 115 App 扫描二维码</p>
+                            <div class="spinner-border text-primary" role="status" id="qrSpinner">
+                                <span class="visually-hidden">等待扫码...</span>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary w-100 mb-2" onclick="startQRCodeLogin()" id="qrLoginBtn">
+                            <i class="bi bi-qr-code-scan"></i> 开始扫码登录
+                        </button>
+                        <button class="btn btn-danger w-100" onclick="logout115()" id="logoutBtn">
+                            <i class="bi bi-box-arrow-right"></i> 退出115登录
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Driver 登录（Cookie） -->
+            <div class="col-md-6 mb-3">
+                <div class="card method-card h-100" id="driver-card">
+                    <div class="card-header bg-success text-white">
+                        <h5 class="mb-0"><i class="bi bi-key"></i> 方式二：Cookie 登录 (Driver)</h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="card-text">使用浏览器 Cookie，避免 OpenAPI 限流</p>
+                        <div class="mb-3">
+                            <label for="cookieInput" class="form-label">Cookie 字符串:</label>
+                            <textarea class="form-control cookie-input" id="cookieInput" rows="4" 
+                                      placeholder="UID=xxx;CID=xxx;SEID=xxx;KID=xxx"></textarea>
+                            <small class="form-text text-muted">从浏览器开发者工具中复制 Cookie</small>
+                            <div id="cookieStatusMsg" class="mt-2" style="display: none;"></div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="cookieFileInput" class="form-label">Cookie 文件路径:</label>
+                            <input type="text" class="form-control" id="cookieFileInput" placeholder="data/cloud115_cookie.txt">
+                            <small class="form-text text-muted">可选，留空则不写入文件。用于与其他实例共享 Cookie。</small>
+                        </div>
+                        <div class="mb-3">
+                            <div class="d-grid gap-2">
+                                <button class="btn btn-success" onclick="updateCookie()">
+                                    <i class="bi bi-upload"></i> 更新 Cookie
+                                </button>
+                                <button class="btn btn-outline-success" onclick="verifyCookie()">
+                                    <i class="bi bi-check-circle"></i> 验证 Cookie 有效性
+                                </button>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="authModeSelect" class="form-label">认证模式:</label>
+                            <select class="form-select" id="authModeSelect">
+                                <option value="driver">仅 Driver</option>
+                                <option value="auto" selected>自动切换</option>
+                                <option value="openapi">仅 OpenAPI</option>
+                            </select>
+                            <small class="form-text text-muted">独立于 Cookie 更新，可单独切换</small>
+                        </div>
+                        <button class="btn btn-info w-100" onclick="updateAuthMode()">
+                            <i class="bi bi-arrow-left-right"></i> 切换认证模式
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 使用指南 -->
+        <div class="guide-section">
+            <h5><i class="bi bi-info-circle"></i> 如何获取 Cookie？</h5>
+            <ol>
+                <li>使用 Chrome/Edge 浏览器访问 <a href="https://115.com" target="_blank">115.com</a> 并登录</li>
+                <li>按 F12 打开开发者工具</li>
+                <li>切换到 <strong>Application</strong> 选项卡</li>
+                <li>左侧菜单选择 <strong>Cookies</strong> → <strong>https://115.com</strong></li>
+                <li>找到并复制这 4 个 Cookie 的值：<code>UID</code>, <code>CID</code>, <code>SEID</code>, <code>KID</code></li>
+                <li>按格式拼接：<code>UID=xxx;CID=xxx;SEID=xxx;KID=xxx</code></li>
+                <li>粘贴到上方输入框并点击"更新 Cookie"</li>
+            </ol>
+            <div class="alert alert-info mb-0">
+                <strong>推荐：</strong>使用 "自动切换" 模式，系统会优先使用 Driver Cookie，失败时自动回退到 OpenAPI Token
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+    <script>
+        // 页面加载时检查登录状态和加载当前cookie
+        document.addEventListener('DOMContentLoaded', function() {
+            checkLoginStatus();
+            loadCurrentCookie();
+        });
+
+        // 检查登录状态
+        async function checkLoginStatus() {
+            const statusBadge = document.getElementById('statusBadge');
+            const statusDescription = document.getElementById('statusDescription');
+            const statusDetails = document.getElementById('statusDetails');
+            
+            statusBadge.innerHTML = '<i class="bi bi-hourglass-split"></i> 检查中';
+            statusBadge.className = 'badge status-badge bg-secondary';
+            
+            try {
+                const response = await fetch('/api/cloud115/check_auth_status');
+                const result = await response.json();
+                
+                if (result.state === 1 && result.data) {
+                    const { logged_in, active_method, auth_status } = result.data;
+                    
+                    if (logged_in) {
+                        statusBadge.innerHTML = '<i class="bi bi-check-circle"></i> 已登录';
+                        statusBadge.className = 'badge status-badge bg-success';
+                        statusDescription.textContent = `通过 ${active_method === 'driver' ? 'Cookie' : 'Token'} 认证`;
+                    } else {
+                        statusBadge.innerHTML = '<i class="bi bi-x-circle"></i> 未登录';
+                        statusBadge.className = 'badge status-badge bg-danger';
+                        statusDescription.textContent = '请选择登录方式进行登录';
+                    }
+                    
+                    // 显示详细状态
+                    document.getElementById('openapi_status').innerHTML = auth_status.openapi.logged_in 
+                        ? '<span class="badge bg-success">✓ 有效</span>' 
+                        : '<span class="badge bg-secondary">✗ 未登录</span>';
+                    document.getElementById('driver_status').innerHTML = auth_status.driver.logged_in 
+                        ? '<span class="badge bg-success">✓ 有效</span>' 
+                        : '<span class="badge bg-secondary">✗ 未登录</span>';
+                    document.getElementById('auth_mode').textContent = auth_status.current_mode;
+                    document.getElementById('active_method').textContent = active_method;
+                    statusDetails.style.display = 'block';
+                    
+                    // 高亮活动的登录方式
+                    document.getElementById('openapi-card').classList.toggle('active', active_method === 'openapi');
+                    document.getElementById('driver-card').classList.toggle('active', active_method === 'driver');
+                } else {
+                    throw new Error(result.message || '检查失败');
+                }
+            } catch (error) {
+                console.error('检查登录状态失败:', error);
+                statusBadge.innerHTML = '<i class="bi bi-exclamation-triangle"></i> 错误';
+                statusBadge.className = 'badge status-badge bg-warning';
+                statusDescription.textContent = '检查登录状态失败';
+            }
+        }
+
+        // 开始二维码登录
+        let qrCheckInterval = null;
+        let codeVerifier = null;
+        let deviceUid = null;
+        let deviceTime = null;
+        let deviceSign = null;
+
+        // 生成随机字符串（code_verifier）
+        function generateRandomString(length) {
+            const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+            let result = '';
+            const values = new Uint8Array(length);
+            window.crypto.getRandomValues(values);
+            for (let i = 0; i < length; i++) {
+                result += charset[values[i] % charset.length];
+            }
+            return result;
+        }
+
+        async function sha256_base64(text){
+            const resp = await fetch(`/tools/sha256/${text}`);
+            const data = await resp.json();
+            if (data && data.success && data.result) return data.result;
+            return '';
+        }
+
+        async function generatePKCEParams(){
+            codeVerifier = generateRandomString(64);
+            const codeChallenge = await sha256_base64(codeVerifier);
+            return { codeVerifier, codeChallenge, codeChallengeMethod: 'sha256' };
+        }
+
+        async function startQRCodeLogin() {
+            const qrContainer = document.getElementById('qrcodeContainer');
+            const qrImage = document.getElementById('qrCodeImage');
+            const qrLoginBtn = document.getElementById('qrLoginBtn');
+            const qrSpinner = document.getElementById('qrSpinner');
+            
+            qrLoginBtn.disabled = true;
+            qrLoginBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> 获取二维码...';
+            
+            try {
+                // 1) 生成 PKCE 参数并请求设备码
+                const pkce = await generatePKCEParams();
+                const resp = await fetch('/api/cloud115/auth_device_code', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        code_challenge: pkce.codeChallenge,
+                        code_challenge_method: pkce.codeChallengeMethod
+                    })
+                });
+                const data = await resp.json();
+                if (data.state !== 1 || !data.data) throw new Error(data.message || '获取设备码失败');
+                
+                deviceUid = data.data.uid;
+                deviceTime = data.data.time;
+                deviceSign = data.data.sign;
+                const qrUrl = data.data.qrcode;
+                
+                // 2) 显示二维码
+                // 先清空容器
+                qrImage.src = '';
+                try {
+                    if (typeof QRCode !== 'undefined') {
+                        // 用库绘制
+                        // 清理历史二维码
+                        const parent = qrImage.parentElement;
+                        parent.innerHTML = '<div id="qrCodeCanvas"></div><p class="text-muted">请使用 115 App 扫描二维码</p><div class="spinner-border text-primary" role="status" id="qrSpinner"><span class="visually-hidden">等待扫码...</span></div>';
+                        new QRCode(document.getElementById('qrCodeCanvas'), {
+                            text: qrUrl,
+                            width: 200,
+                            height: 200
+                        });
+                    } else {
+                        // 直接展示为图片（若链接即为图片）
+                        qrImage.src = qrUrl;
+                    }
+                } catch (e) {
+                    // 发生错误时退回图片模式
+                    qrImage.src = qrUrl;
+                }
+                
+                qrContainer.style.display = 'block';
+                qrLoginBtn.innerHTML = '<i class="bi bi-x-circle"></i> 取消扫码';
+                qrLoginBtn.onclick = cancelQRCodeLogin;
+                qrLoginBtn.disabled = false;
+                
+                // 3) 开始轮询扫码状态
+                qrCheckInterval = setInterval(async () => {
+                    try {
+                        const statusResp = await fetch(`/api/cloud115/poll_auth_status?uid=${deviceUid}&time=${deviceTime}&sign=${deviceSign}`);
+                        const status = await statusResp.json();
+                        if (status.state === 1 && status.data) {
+                            const s = status.data.status;
+                            if (s === 2) {
+                                clearInterval(qrCheckInterval);
+                                qrSpinner.innerHTML = '<div class="spinner-border text-success" role="status"><span class="visually-hidden">登录中...</span></div>';
+                                
+                                // 4) 换取 token
+                                const tokenResp = await fetch('/api/cloud115/device_code_to_token', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ uid: deviceUid, code_verifier: codeVerifier })
+                                });
+                                const tokenResult = await tokenResp.json();
+                                if (tokenResult.state === 1) {
+                                    alert('✓ 登录成功！');
+                                    cancelQRCodeLogin();
+                                    checkLoginStatus();
+                                } else {
+                                    throw new Error(tokenResult.message || '获取 Token 失败');
+                                }
+                            } else if (s === -1 || s === -2) {
+                                clearInterval(qrCheckInterval);
+                                alert('二维码已过期，请重新获取');
+                                cancelQRCodeLogin();
+                            }
+                        }
+                    } catch (err) {
+                        console.error('检查扫码状态失败:', err);
+                    }
+                }, 2000);
+                
+            } catch (error) {
+                console.error('二维码登录失败:', error);
+                alert('获取二维码失败: ' + error.message);
+                cancelQRCodeLogin();
+            }
+        }
+
+        function cancelQRCodeLogin() {
+            if (qrCheckInterval) {
+                clearInterval(qrCheckInterval);
+                qrCheckInterval = null;
+            }
+            document.getElementById('qrcodeContainer').style.display = 'none';
+            document.getElementById('qrLoginBtn').innerHTML = '<i class="bi bi-qr-code-scan"></i> 开始扫码登录';
+            document.getElementById('qrLoginBtn').onclick = startQRCodeLogin;
+            document.getElementById('qrLoginBtn').disabled = false;
+        }
+
+        // 加载当前生效的Cookie
+        async function loadCurrentCookie() {
+            try {
+                const response = await fetch('/api/cloud115/get_current_cookie');
+                const result = await response.json();
+                
+                if (result.state === 1 && result.data) {
+                    const cookieInput = document.getElementById('cookieInput');
+                    const authModeSelect = document.getElementById('authModeSelect');
+                    
+                    // 显示当前cookie
+                    if (result.data.cookie) {
+                        cookieInput.value = result.data.cookie;
+                        cookieInput.placeholder = '当前生效的 Cookie';
+                    }
+                    const cookieFileInput = document.getElementById('cookieFileInput');
+                    if (cookieFileInput && typeof result.data.cookie_file === 'string') {
+                        cookieFileInput.value = result.data.cookie_file;
+                    }
+                    
+                    // 设置认证模式
+                    if (result.data.auth_mode) {
+                        authModeSelect.value = result.data.auth_mode;
+                    }
+                }
+            } catch (error) {
+                console.error('加载当前Cookie失败:', error);
+            }
+        }
+
+        // 验证 Cookie 有效性
+        async function verifyCookie() {
+            const cookieInput = document.getElementById('cookieInput');
+            const cookie = cookieInput.value.trim();
+            const statusMsg = document.getElementById('cookieStatusMsg');
+            
+            if (!cookie) {
+                alert('请先输入 Cookie');
+                return;
+            }
+            
+            // 显示验证中状态
+            statusMsg.style.display = 'block';
+            statusMsg.className = 'alert alert-info mt-2';
+            statusMsg.innerHTML = '<i class="bi bi-hourglass-split"></i> 正在验证 Cookie...';
+            
+            try {
+                const response = await fetch('/api/cloud115/verify_cookie', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cookie })
+                });
+                
+                const result = await response.json();
+                
+                if (result.state === 1 && result.data && result.data.valid) {
+                    statusMsg.className = 'alert alert-success mt-2';
+                    statusMsg.innerHTML = '<i class="bi bi-check-circle"></i> ✓ Cookie 有效！可以正常使用';
+                } else {
+                    statusMsg.className = 'alert alert-danger mt-2';
+                    statusMsg.innerHTML = '<i class="bi bi-x-circle"></i> ✗ Cookie 无效: ' + (result.message || '未知错误');
+                }
+                
+                // 3秒后隐藏消息
+                setTimeout(() => {
+                    statusMsg.style.display = 'none';
+                }, 5000);
+            } catch (error) {
+                console.error('验证 Cookie 失败:', error);
+                statusMsg.className = 'alert alert-danger mt-2';
+                statusMsg.innerHTML = '<i class="bi bi-x-circle"></i> ✗ 验证失败: ' + error.message;
+            }
+        }
+
+        // 更新 Cookie（不修改认证模式）
+        async function updateCookie() {
+            const cookieInput = document.getElementById('cookieInput');
+            const cookieFileInput = document.getElementById('cookieFileInput');
+            const authModeSelect = document.getElementById('authModeSelect');
+            const cookie = cookieInput.value.trim();
+            const authMode = authModeSelect.value; // 保持当前认证模式
+            const cookieFile = cookieFileInput ? cookieFileInput.value.trim() : '';
+            
+            if (!cookie && !cookieFile) {
+                alert('请至少填写 Cookie 或 Cookie 文件路径');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/cloud115/update_cookie', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cookie, auth_mode: authMode, cookie_file: cookieFile })
+                });
+                
+                const result = await response.json();
+                
+                if (result.state === 1) {
+                    alert('✓ Cookie 更新成功！无需重启服务');
+                    loadCurrentCookie(); // 重新加载cookie
+                    checkLoginStatus();
+                } else {
+                    alert('✗ 更新失败: ' + result.message);
+                }
+            } catch (error) {
+                console.error('更新 Cookie 失败:', error);
+                alert('更新失败: ' + error.message);
+            }
+        }
+
+        // 切换认证模式
+        async function updateAuthMode() {
+            const authModeSelect = document.getElementById('authModeSelect');
+            const authMode = authModeSelect.value;
+            
+            try {
+                const response = await fetch('/api/cloud115/update_auth_mode', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ auth_mode: authMode })
+                });
+                
+                const result = await response.json();
+                
+                if (result.state === 1) {
+                    alert('✓ 认证模式已切换为: ' + authMode);
+                    checkLoginStatus();
+                } else {
+                    alert('✗ 切换失败: ' + result.message);
+                }
+            } catch (error) {
+                console.error('切换认证模式失败:', error);
+                alert('切换失败: ' + error.message);
+            }
+        }
+
+        // 退出115登录
+        async function logout115() {
+            if (!confirm('确定要退出115登录吗？这将清除所有登录凭据。')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/cloud115/logout', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                const result = await response.json();
+                
+                if (result.state === 1) {
+                    alert('✓ 已成功退出登录');
+                    checkLoginStatus();
+                } else {
+                    alert('✗ 退出失败: ' + result.message);
+                }
+            } catch (error) {
+                console.error('退出登录失败:', error);
+                alert('退出失败: ' + error.message);
+            }
+        }
+    </script>
+</body>
+</html>
+

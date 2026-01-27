@@ -1,0 +1,799 @@
+{% extends "base.html" %}
+
+{% block title %}Search Results{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12 mb-4">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="/">Home</a></li>
+                <li class="breadcrumb-item active">Search Results</li>
+            </ol>
+        </nav>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <h5>Search</h5>
+            </div>
+            <div class="card-body">
+                <form action="/search_keyword" method="get" id="searchForm">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="input-group mb-3">
+                                <input type="text" name="keyword" id="keywordInput" class="form-control" placeholder="输入关键词或留空显示全部影片" value="{{ keyword_query|default('') }}">
+                                <button type="submit" class="btn btn-primary">搜索</button>
+                            </div>
+                            <div class="d-flex justify-content-start mb-3">
+                                <div class="form-check me-3">
+                                    <input class="form-check-input" type="checkbox" id="magnetAll" name="magnet" value="all" {% if request.args.get('magnet') == 'all' %}checked{% endif %}>
+                                    <label class="form-check-label" for="magnetAll">包括无磁力影片</label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="uncensoredType" name="type" value="uncensored" {% if request.args.get('type') == 'uncensored' %}checked{% endif %}>
+                                    <label class="form-check-label" for="uncensoredType">无码影片</label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="row g-2">
+                                <div class="col-12">
+                                    <small class="text-muted mb-2 d-block">高级筛选 (点击切换):</small>
+                                </div>
+                                <div class="col-6">
+                                    <div class="input-group input-group-sm">
+                                        <span class="input-group-text">演员</span>
+                                        <input type="text" class="form-control form-control-sm filter-value" name="filterValue_star" placeholder="ID" value="{% if filter_type == 'star' %}{{ filter_value }}{% endif %}">
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="input-group input-group-sm">
+                                        <span class="input-group-text">类别</span>
+                                        <input type="text" class="form-control form-control-sm filter-value" name="filterValue_genre" placeholder="ID" value="{% if filter_type == 'genre' %}{{ filter_value }}{% endif %}">
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="input-group input-group-sm">
+                                        <span class="input-group-text">导演</span>
+                                        <input type="text" class="form-control form-control-sm filter-value" name="filterValue_director" placeholder="ID" value="{% if filter_type == 'director' %}{{ filter_value }}{% endif %}">
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="input-group input-group-sm">
+                                        <span class="input-group-text">制作商</span>
+                                        <input type="text" class="form-control form-control-sm filter-value" name="filterValue_studio" placeholder="ID" value="{% if filter_type == 'studio' %}{{ filter_value }}{% endif %}">
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="input-group input-group-sm">
+                                        <span class="input-group-text">发行商</span>
+                                        <input type="text" class="form-control form-control-sm filter-value" name="filterValue_label" placeholder="ID" value="{% if filter_type == 'label' %}{{ filter_value }}{% endif %}">
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="input-group input-group-sm">
+                                        <span class="input-group-text">系列</span>
+                                        <input type="text" class="form-control form-control-sm filter-value" name="filterValue_series" placeholder="ID" value="{% if filter_type == 'series' %}{{ filter_value }}{% endif %}">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if movie %}
+<div class="row">
+    <div class="col-md-12">
+        <h4>Movie Found</h4>
+        <div class="row">
+            <div class="col-md-4 mb-4">
+                <div class="card movie-card">
+                    <div class="movie-poster-container">
+                        <img src="/images/covers/{{ movie.id }}.jpg" class="card-img-top movie-poster" alt="{{ movie.id }}">
+                    </div>
+                    <div class="card-body">
+                        <h5 class="card-title">{{ movie.id }}</h5>
+                        <p class="card-text text-truncate">{{ movie.title }}</p>
+                        {% if movie.translated_title %}
+                        <p class="card-text text-truncate text-info"><small>{{ movie.translated_title }}</small></p>
+                        {% endif %}
+                        <a href="/movie/{{ movie.id }}" class="btn btn-primary stretched-link">View Details</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if actor %}
+<div class="row">
+    <div class="col-md-12">
+        <h4>Actor Profile</h4>
+
+        {% if actor.av_league_data and actor.av_league_data.av_league_updated %}
+        <!-- AV-League Enhanced Profile -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <div class="row">
+                    <!-- Left: AV-League Avatar -->
+                    <div class="col-md-3 text-center">
+                        {% if actor.av_league_data.av_league_avatar %}
+                        <div>
+                            {% set avatar_url = actor.av_league_data.av_league_avatar %}
+                            {% if avatar_url.startswith('/') %}
+                            {% set avatar_url = 'https://www.av-league.com' + avatar_url %}
+                            {% endif %}
+                            <img src="{{ avatar_url }}"
+                                 class="img-fluid rounded mb-2"
+                                 alt="{{ actor.av_league_data.name or actor.name }}">
+                        </div>
+                        {% else %}
+                        <div>
+                            <img src="/images/actor/{{ actor.id }}.jpg"
+                                 class="img-fluid rounded mb-2"
+                                 alt="{{ actor.name }}">
+                        </div>
+                        {% endif %}
+
+                        <!-- Refresh Button -->
+                        <button class="btn btn-sm btn-outline-primary mt-2"
+                                onclick="refreshActorAvLeagueFromSearch('{{ actor.id }}', '{{ actor.name }}')">
+                            刷新
+                        </button>
+                    </div>
+
+                    <!-- Middle: Basic Info -->
+                    <div class="col-md-5">
+                        <h5>{{ actor.name }}</h5>
+                        {% if actor.av_league_data.name_kana %}
+                        <p class="text-muted mb-3">{{ actor.av_league_data.name_kana }}</p>
+                        {% endif %}
+
+                        <!-- Aliases -->
+                        {% if actor.av_league_data.aliases %}
+                        <div class="mb-3">
+                            <small class="text-muted">别名:</small>
+                            <div>{{ actor.av_league_data.aliases|join('、') }}</div>
+                        </div>
+                        {% endif %}
+
+                        <!-- Measurements Table -->
+                        <table class="table table-sm">
+                            <tbody>
+                                {% if actor.av_league_data.bust or actor.av_league_data.cup %}
+                                <tr>
+                                    <th scope="row" style="width: 80px;">3サイズ</th>
+                                    <td>
+                                        {% if actor.av_league_data.bust %}B:{{ actor.av_league_data.bust }}{% endif %}
+                                        {% if actor.av_league_data.cup %}（{{ actor.av_league_data.cup }}）{% endif %}
+                                        {% if actor.av_league_data.waistline %} / W:{{ actor.av_league_data.waistline }}{% endif %}
+                                        {% if actor.av_league_data.hipline %} / H:{{ actor.av_league_data.hipline }}{% endif %}
+                                    </td>
+                                </tr>
+                                {% endif %}
+                                {% if actor.av_league_data.height %}
+                                <tr>
+                                    <th scope="row">身長</th>
+                                    <td>{{ actor.av_league_data.height }}cm</td>
+                                </tr>
+                                {% endif %}
+                                {% if actor.av_league_data.blood_type %}
+                                <tr>
+                                    <th scope="row">血液型</th>
+                                    <td>{{ actor.av_league_data.blood_type }}</td>
+                                </tr>
+                                {% endif %}
+                                {% if actor.av_league_data.birthday %}
+                                <tr>
+                                    <th scope="row">生年月日</th>
+                                    <td>{{ actor.av_league_data.birthday }}{% if actor.av_league_data.age %}（{{ actor.av_league_data.age }}歳）{% endif %}</td>
+                                </tr>
+                                {% endif %}
+                                {% if actor.av_league_data.birthplace %}
+                                <tr>
+                                    <th scope="row">出身</th>
+                                    <td>{{ actor.av_league_data.birthplace }}</td>
+                                </tr>
+                                {% endif %}
+                                {% if actor.av_league_data.debut_date %}
+                                <tr>
+                                    <th scope="row">デビュー</th>
+                                    <td>{{ actor.av_league_data.debut_date }}</td>
+                                </tr>
+                                {% endif %}
+                                {% if actor.av_league_data.video_count or actor.av_league_data.solo_count %}
+                                <tr>
+                                    <th scope="row">出演数</th>
+                                    <td>
+                                        {{ actor.av_league_data.video_count }}本
+                                        {% if actor.av_league_data.solo_count %} / 単体: {{ actor.av_league_data.solo_count }}本{% endif %}
+                                    </td>
+                                </tr>
+                                {% endif %}
+                                {% if actor.av_league_data.tags %}
+                                <tr>
+                                    <th scope="row">TAG</th>
+                                    <td>{{ actor.av_league_data.tags|join('、') }}</td>
+                                </tr>
+                                {% endif %}
+                                {% if actor.hobby %}
+                                <tr>
+                                    <th scope="row">爱好</th>
+                                    <td>{{ actor.hobby }}</td>
+                                </tr>
+                                {% endif %}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Right: Instagram Images Carousel -->
+                    <div class="col-md-4">
+                        {% if actor.av_league_data.instagram_images and actor.av_league_data.instagram_images|length > 0 %}
+                        <div class="insta-gallery">
+                            <h6 class="mb-2">
+                                Instagram
+                                <small class="text-muted">({{ actor.av_league_data.instagram_images|length }} 张)</small>
+                            </h6>
+                            {% set insta_images = actor.av_league_data.instagram_images %}
+                            {% if insta_images|length == 1 %}
+                            <!-- 只有一张图片，直接显示 -->
+                            {% set img_url = insta_images[0].url %}
+                            {% if img_url.startswith('/') %}
+                            {% set img_url = 'https://www.av-league.com' + img_url %}
+                            {% endif %}
+                            <img src="{{ img_url }}"
+                                 class="img-fluid rounded"
+                                 style="aspect-ratio: 1; object-fit: cover; width: 100%; cursor: pointer;"
+                                 alt="Instagram"
+                                 onclick="openInstagramModal(0)">
+                            {% else %}
+                            <!-- 多张图片，使用轮播 -->
+                            <div id="instagramCarousel" class="carousel slide" data-bs-ride="carousel">
+                                <!-- 轮播指示器（每 9 个图片一组） -->
+                                <div class="carousel-indicators">
+                                    {% set total_groups = (insta_images|length / 9)|round(0, 'ceil')|int %}
+                                    {% for i in range(total_groups) %}
+                                    <button type="button"
+                                            data-bs-target="#instagramCarousel"
+                                            data-bs-slide-to="{{ i }}"
+                                            {% if i == 0 %}class="active"{% endif %}></button>
+                                    {% endfor %}
+                                </div>
+
+                                <!-- 轮播内容 -->
+                                <div class="carousel-inner">
+                                    {% for i in range(total_groups) %}
+                                    <div class="carousel-item {% if i == 0 %}active{% endif %}">
+                                        <div class="row g-2">
+                                            {% for img in insta_images[i*9:(i+1)*9] %}
+                                            <div class="col-4">
+                                                {% set img_url = img.url %}
+                                                {% if img_url.startswith('/') %}
+                                                {% set img_url = 'https://www.av-league.com' + img_url %}
+                                                {% endif %}
+                                                <img src="{{ img_url }}"
+                                                     class="img-fluid rounded"
+                                                     style="aspect-ratio: 1; object-fit: cover; width: 100%; cursor: pointer;"
+                                                     alt="Instagram"
+                                                     onclick="openInstagramModal({{ i*9 + loop.index0 }})">
+                                            </div>
+                                            {% endfor %}
+                                        </div>
+                                        <!-- 每组显示的图片范围 -->
+                                        <p class="text-center text-muted mt-2 small">
+                                            {{ i*9+1 }}-{{ (i+1)*9 if (i+1)*9 < insta_images|length else insta_images|length }} / {{ insta_images|length }}
+                                        </p>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+
+                                <!-- 左右控制按钮 -->
+                                {% if total_groups > 1 %}
+                                <button class="carousel-control-prev" type="button"
+                                        data-bs-target="#instagramCarousel"
+                                        data-bs-slide="prev">
+                                    <span class="carousel-control-prev-icon" aria-hidden="true"></span>
+                                    <span class="visually-hidden">Previous</span>
+                                </button>
+                                <button class="carousel-control-next" type="button"
+                                        data-bs-target="#instagramCarousel"
+                                        data-bs-slide="next">
+                                    <span class="carousel-control-next-icon" aria-hidden="true"></span>
+                                    <span class="visually-hidden">Next</span>
+                                </button>
+                                {% endif %}
+                            </div>
+                            {% endif %}
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {% else %}
+        <!-- Fallback to basic profile without av-league data -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-3 text-center">
+                        <img src="/images/actor/{{ actor.id }}.jpg" class="img-fluid rounded mb-3" style="max-width: 200px;" alt="{{ actor.name }}">
+                        <h5>{{ actor.name }}</h5>
+                        <button class="btn btn-sm btn-outline-primary mt-2"
+                                onclick="refreshActorAvLeagueFromSearch('{{ actor.id }}', '{{ actor.name }}')">
+                            刷新 AV 数据
+                        </button>
+                    </div>
+                    <div class="col-md-9">
+                        <h5>Actor Information</h5>
+                        <table class="table">
+                            <tbody>
+                                {% if actor.birthdate %}
+                                <tr>
+                                    <th scope="row">Birthdate</th>
+                                    <td>{{ actor.birthdate }}</td>
+                                </tr>
+                                {% endif %}
+                                {% if actor.age %}
+                                <tr>
+                                    <th scope="row">Age</th>
+                                    <td>{{ actor.age }}</td>
+                                </tr>
+                                {% endif %}
+                                {% if actor.height %}
+                                <tr>
+                                    <th scope="row">Height</th>
+                                    <td>{{ actor.height }}</td>
+                                </tr>
+                                {% endif %}
+                                {% if actor.measurements %}
+                                <tr>
+                                    <th scope="row">Measurements</th>
+                                    <td>{{ actor.measurements }}</td>
+                                </tr>
+                                {% endif %}
+                                {% if actor.birthplace %}
+                                <tr>
+                                    <th scope="row">Birthplace</th>
+                                    <td>{{ actor.birthplace }}</td>
+                                </tr>
+                                {% endif %}
+                                {% if actor.hobby %}
+                                <tr>
+                                    <th scope="row">Hobby</th>
+                                    <td>{{ actor.hobby }}</td>
+                                </tr>
+                                {% endif %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+{% if keyword_results %}
+<div class="row">
+    <div class="col-md-12">
+        {% if keyword_query %}
+        <h4>关键字搜索结果: "{{ keyword_query }}"</h4>
+        {% elif filter_type and filter_value %}
+        <h4>
+            {% if filter_type == 'star' %}演员
+            {% elif filter_type == 'genre' %}类别
+            {% elif filter_type == 'director' %}导演
+            {% elif filter_type == 'studio' %}制作商
+            {% elif filter_type == 'label' %}发行商
+            {% elif filter_type == 'series' %}系列
+            {% else %}{{ filter_type }}
+            {% endif %}
+            筛选: "{{ filter_value }}"
+        </h4>
+        {% else %}
+        <h4>所有影片</h4>
+        {% endif %}
+
+        {% if filter_type and filter_value %}
+        <div class="mb-3">
+            <a href="/search_keyword{% if request.args.get('magnet') %}?magnet={{ request.args.get('magnet') }}{% endif %}{% if request.args.get('type') %}{% if request.args.get('magnet') %}&{% else %}?{% endif %}type={{ request.args.get('type') }}{% endif %}" class="btn btn-sm btn-outline-secondary">
+                <i class="bi bi-x"></i> 清除筛选
+            </a>
+        </div>
+        {% endif %}
+
+        <div class="row">
+            {% for movie in keyword_results %}
+            <div class="col-md-4 mb-4">
+                <div class="card movie-card">
+                    <div class="movie-poster-container">
+                        <img src="/images/covers/{{ movie.id }}.jpg" class="card-img-top movie-poster" alt="{{ movie.id }}">
+                    </div>
+                    <div class="card-body">
+                        <h5 class="card-title">{{ movie.id }}</h5>
+                        <p class="card-text text-truncate">{{ movie.title }}</p>
+                        {% if movie.translated_title %}
+                        <p class="card-text text-truncate text-info"><small>{{ movie.translated_title }}</small></p>
+                        {% endif %}
+                        {% if movie.tags %}
+                        <div class="mb-2">
+                            {% for tag in movie.tags %}
+                            <span class="badge bg-secondary me-1">{{ tag }}</span>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                        <p class="card-text"><small class="text-muted">{{ movie.date }}</small></p>
+                        <a href="/movie/{{ movie.id }}" class="btn btn-primary stretched-link">View Details</a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        {% if pagination and pagination.pages|length > 1 %}
+        <nav aria-label="Page navigation">
+            <ul class="pagination justify-content-center mt-4">
+                {% if pagination.current_page > 1 %}
+                <li class="page-item">
+                    <a class="page-link" href="/search_keyword?page={{ pagination.current_page - 1 }}{% if keyword_query %}&keyword={{ keyword_query }}{% endif %}{% if request.args.get('magnet') %}&magnet={{ request.args.get('magnet') }}{% endif %}{% if request.args.get('type') %}&type={{ request.args.get('type') }}{% endif %}{% if filter_type and filter_value %}&filterType={{ filter_type }}&filterValue={{ filter_value }}{% endif %}">Previous</a>
+                </li>
+                {% else %}
+                <li class="page-item disabled">
+                    <span class="page-link">Previous</span>
+                </li>
+                {% endif %}
+
+                {% for page in pagination.pages %}
+                <li class="page-item {% if page == pagination.current_page %}active{% endif %}">
+                    <a class="page-link" href="/search_keyword?page={{ page }}{% if keyword_query %}&keyword={{ keyword_query }}{% endif %}{% if request.args.get('magnet') %}&magnet={{ request.args.get('magnet') }}{% endif %}{% if request.args.get('type') %}&type={{ request.args.get('type') }}{% endif %}{% if filter_type and filter_value %}&filterType={{ filter_type }}&filterValue={{ filter_value }}{% endif %}">{{ page }}</a>
+                </li>
+                {% endfor %}
+
+                {% if pagination.has_next %}
+                <li class="page-item">
+                    <a class="page-link" href="/search_keyword?page={{ pagination.next_page }}{% if keyword_query %}&keyword={{ keyword_query }}{% endif %}{% if request.args.get('magnet') %}&magnet={{ request.args.get('magnet') }}{% endif %}{% if request.args.get('type') %}&type={{ request.args.get('type') }}{% endif %}{% if filter_type and filter_value %}&filterType={{ filter_type }}&filterValue={{ filter_value }}{% endif %}">Next</a>
+                </li>
+                {% else %}
+                <li class="page-item disabled">
+                    <span class="page-link">Next</span>
+                </li>
+                {% endif %}
+            </ul>
+        </nav>
+        {% endif %}
+    </div>
+</div>
+{% elif movies %}
+<div class="row">
+    <div class="col-md-12">
+        <h4>Found {{ movies|length }} Movies</h4>
+        <div class="row">
+            {% for movie in movies %}
+            <div class="col-md-3 mb-4">
+                <div class="card movie-card">
+                    <img src="/images/covers/{{ movie.id }}.jpg" class="card-img-top movie-poster" alt="{{ movie.id }}">
+                    <div class="card-body">
+                        <h5 class="card-title">{{ movie.id }}</h5>
+                        <p class="card-text text-truncate">{{ movie.title }}</p>
+                        {% if movie.translated_title %}
+                        <p class="card-text text-truncate text-info"><small>{{ movie.translated_title }}</small></p>
+                        {% endif %}
+                        <a href="/movie/{{ movie.id }}" class="btn btn-primary stretched-link">View Details</a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% elif actor_movies %}
+<div class="row">
+    <div class="col-md-12">
+        <h4>Movies featuring {{ actor.name }}</h4>
+        <div class="row">
+            {% for movie in actor_movies %}
+            <div class="col-md-3 mb-4">
+                <div class="card movie-card">
+                    <img src="/images/covers/{{ movie.id }}.jpg" class="card-img-top movie-poster" alt="{{ movie.id }}">
+                    <div class="card-body">
+                        <h5 class="card-title">{{ movie.id }}</h5>
+                        <p class="card-text text-truncate">{{ movie.title }}</p>
+                        {% if movie.translated_title %}
+                        <p class="card-text text-truncate text-info"><small>{{ movie.translated_title }}</small></p>
+                        {% endif %}
+                        <a href="/movie/{{ movie.id }}" class="btn btn-primary stretched-link">View Details</a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% else %}
+<div class="row">
+    <div class="col-md-12">
+        <div class="alert alert-info">
+            No results found for your search query.
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Instagram 图片 Modal -->
+<div class="modal fade" id="instagramModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Instagram</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body text-center">
+                <img id="modalImage" src="" class="img-fluid" alt="Instagram">
+            </div>
+            <div class="modal-footer justify-content-center">
+                <button type="button" class="btn btn-outline-secondary" id="modalPrevBtn">
+                    <i class="bi bi-chevron-left"></i> 上一张
+                </button>
+                <span id="modalImageInfo" class="text-muted align-self-center"></span>
+                <button type="button" class="btn btn-outline-secondary" id="modalNextBtn">
+                    下一张 <i class="bi bi-chevron-right"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    async function refreshActorAvLeagueFromSearch(actorId, actorName) {
+        // Find all buttons that call this function
+        const buttons = document.querySelectorAll(`[onclick*="refreshActorAvLeagueFromSearch('${actorId}'"]`);
+
+        // Show loading state
+        buttons.forEach(btn => {
+            btn.disabled = true;
+            btn.textContent = '加载中...';
+            btn.classList.remove('btn-outline-primary');
+            btn.classList.add('btn-warning');
+        });
+
+        try {
+            const response = await fetch('/api/actor/' + actorId + '/refresh-av-league', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'}
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                // Reload page to show updated data
+                location.reload();
+            } else {
+                // Show error
+                buttons.forEach(btn => {
+                    btn.disabled = false;
+                    btn.textContent = '刷新';
+                    btn.classList.remove('btn-warning');
+                    btn.classList.add('btn-outline-primary', 'btn-danger');
+                });
+                alert('刷新失败: ' + (result.error || '未知错误'));
+            }
+        } catch (error) {
+            console.error('Error refreshing AV-League data:', error);
+            buttons.forEach(btn => {
+                btn.disabled = false;
+                btn.textContent = '刷新';
+                btn.classList.remove('btn-warning');
+                btn.classList.add('btn-outline-primary', 'btn-danger');
+            });
+            alert('网络错误，请稍后重试');
+        }
+    }
+
+    // Instagram Modal 相关变量和函数
+    let instagramImages = [];
+    let currentImageIndex = 0;
+
+    function openInstagramModal(index) {
+        currentImageIndex = index;
+        showModalImage();
+        const modal = new bootstrap.Modal(document.getElementById('instagramModal'));
+        modal.show();
+    }
+
+    function showModalImage() {
+        const img = instagramImages[currentImageIndex];
+        const modalImage = document.getElementById('modalImage');
+        const modalImageInfo = document.getElementById('modalImageInfo');
+
+        // 处理相对路径
+        let imgSrc = img.url;
+        if (imgSrc.startsWith('/')) {
+            imgSrc = 'https://www.av-league.com' + imgSrc;
+        }
+
+        modalImage.src = imgSrc;
+        modalImageInfo.textContent = `${currentImageIndex + 1} / ${instagramImages.length}`;
+
+        // 更新按钮状态
+        document.getElementById('modalPrevBtn').disabled = currentImageIndex === 0;
+        document.getElementById('modalNextBtn').disabled = currentImageIndex === instagramImages.length - 1;
+    }
+
+    function showPrevImage() {
+        if (currentImageIndex > 0) {
+            currentImageIndex--;
+            showModalImage();
+        }
+    }
+
+    function showNextImage() {
+        if (currentImageIndex < instagramImages.length - 1) {
+            currentImageIndex++;
+            showModalImage();
+        }
+    }
+
+    // 绑定按钮事件
+    document.addEventListener('DOMContentLoaded', function() {
+        // 将 Instagram 图片数据传递给 JavaScript
+        {% if actor and actor.av_league_data and actor.av_league_data.instagram_images %}
+        instagramImages = {{ actor.av_league_data.instagram_images | tojson }};
+        {% endif %}
+
+        document.getElementById('modalPrevBtn').addEventListener('click', showPrevImage);
+        document.getElementById('modalNextBtn').addEventListener('click', showNextImage);
+
+        // 键盘导航
+        document.getElementById('instagramModal').addEventListener('keydown', function(e) {
+            if (e.key === 'ArrowLeft') {
+                showPrevImage();
+            } else if (e.key === 'ArrowRight') {
+                showNextImage();
+            }
+        });
+    });
+
+    document.addEventListener('DOMContentLoaded', function() {
+        // Get references to form elements
+        const searchForm = document.getElementById('searchForm');
+        if (searchForm) {
+            const keywordInput = document.getElementById('keywordInput');
+            const filterInputs = document.querySelectorAll('.filter-value');
+            
+            // Add event listeners to filter inputs
+            filterInputs.forEach(input => {
+                input.addEventListener('input', function() {
+                    // If any filter has a value, disable keyword input
+                    const hasFilterValue = Array.from(filterInputs).some(inp => inp.value.trim() !== '');
+                    if (hasFilterValue) {
+                        keywordInput.disabled = true;
+                        keywordInput.placeholder = "使用筛选条件时不能同时使用关键词搜索";
+                        keywordInput.value = '';
+                    } else {
+                        keywordInput.disabled = false;
+                        keywordInput.placeholder = "输入关键词或留空显示全部影片";
+                    }
+                });
+            });
+            
+            // Initialize the form state
+            const hasFilterValue = Array.from(filterInputs).some(inp => inp.value.trim() !== '');
+            if (hasFilterValue) {
+                keywordInput.disabled = true;
+                keywordInput.placeholder = "使用筛选条件时不能同时使用关键词搜索";
+            }
+            
+            // Handle form submission
+            searchForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                
+                const formData = new FormData(searchForm);
+                const params = new URLSearchParams();
+                
+                // Add keyword parameter if it has a value and no filters are active
+                const keyword = formData.get('keyword');
+                const hasFilter = Array.from(filterInputs).some(inp => inp.value.trim() !== '');
+                
+                if (keyword && !hasFilter) {
+                    params.append('keyword', keyword);
+                }
+                
+                // Add magnet parameter if checkbox is checked
+                if (document.getElementById('magnetAll') && document.getElementById('magnetAll').checked) {
+                    params.append('magnet', 'all');
+                }
+                
+                // Add type parameter if checkbox is checked
+                if (document.getElementById('uncensoredType') && document.getElementById('uncensoredType').checked) {
+                    params.append('type', 'uncensored');
+                }
+                
+                // Add filter parameters if any has a value
+                let activeFilterType = null;
+                let activeFilterValue = null;
+                
+                filterInputs.forEach(input => {
+                    if (input.value.trim() !== '') {
+                        // Extract filter type from input name (e.g., filterValue_star -> star)
+                        const filterType = input.name.split('_')[1];
+                        
+                        // Only use the first non-empty filter
+                        if (!activeFilterType) {
+                            activeFilterType = filterType;
+                            activeFilterValue = input.value.trim();
+                        }
+                    }
+                });
+                
+                if (activeFilterType && activeFilterValue) {
+                    params.append('filterType', activeFilterType);
+                    params.append('filterValue', activeFilterValue);
+                }
+                
+                // Redirect to search page with parameters
+                window.location.href = '/search_keyword?' + params.toString();
+            });
+        }
+    });
+</script>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.movie-poster-container {
+    position: relative;
+    width: 100%;
+    padding-top: 67.25%; /* 538/800 * 100% = 67.25% */
+    overflow: hidden;
+}
+
+.movie-poster {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.movie-card {
+    height: 100%;
+    transition: transform 0.2s;
+}
+
+.movie-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.card-body {
+    padding: 1rem;
+}
+
+.card-title {
+    font-size: 1.1rem;
+    margin-bottom: 0.5rem;
+}
+
+.card-text {
+    margin-bottom: 0.5rem;
+}
+
+.badge {
+    font-size: 0.8rem;
+}
+</style>
+{% endblock %} 

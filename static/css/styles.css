@@ -1,0 +1,115 @@
+/* Custom styles for JavBus Web Application */
+
+/* Add additional padding to the top of the body */
+body {
+    padding-top: 20px;
+}
+
+/* Movie card hover effect */
+.movie-card {
+    transition: transform 0.3s, box-shadow 0.3s;
+    height: 100%;
+}
+
+.movie-card:hover {
+    transform: scale(1.03);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* Set fixed height for movie poster images */
+.movie-poster {
+    height: 300px;
+    object-fit: cover;
+}
+
+/* Actor image styling */
+.actor-img {
+    width: 100px;
+    height: 100px;
+    object-fit: cover;
+    border-radius: 50%;
+    border: 2px solid #f8f9fa;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* Active navigation links */
+.nav-link.active {
+    font-weight: bold;
+    color: #0d6efd !important;
+}
+
+/* Fade out effect for removed favorites */
+.fade-out {
+    opacity: 0;
+    transition: opacity 0.3s;
+}
+
+/* Pagination styling */
+.pagination {
+    justify-content: center;
+    margin-top: 20px;
+}
+
+/* Badges for genres */
+.badge {
+    margin-right: 5px;
+    margin-bottom: 5px;
+}
+
+/* Magnet link items */
+.magnet-item {
+    transition: background-color 0.2s;
+}
+
+.magnet-item:hover {
+    background-color: #f8f9fa;
+}
+
+/* Copy button success animation */
+.copy-success {
+    color: #198754;
+    transition: color 0.3s;
+}
+
+/* Search form input focus */
+.form-control:focus {
+    border-color: #0d6efd;
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+}
+
+/* Card hover effect */
+.card {
+    transition: transform 0.2s;
+}
+
+/* Breadcrumb styling */
+.breadcrumb {
+    background-color: #f8f9fa;
+    padding: 0.75rem 1rem;
+    border-radius: 0.25rem;
+}
+
+/* Mobile optimizations */
+@media (max-width: 767.98px) {
+    .movie-poster {
+        height: 200px;
+    }
+    
+    .container {
+        padding-left: 10px;
+        padding-right: 10px;
+    }
+}
+
+/* Sample images styling */
+.sample-image {
+    transition: transform 0.3s ease;
+    max-height: 180px;
+    object-fit: cover;
+    cursor: pointer;
+}
+
+.sample-image:hover {
+    transform: scale(1.05);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+} 

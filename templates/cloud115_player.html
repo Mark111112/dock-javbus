@@ -1,0 +1,3992 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ title }} - 115云盘播放器{% endblock %}
+
+{% block head %}
+<style>
+    .video-container {
+        position: relative;
+        width: 100%;
+        max-width: 100%;
+        background-color: #000;
+        margin-bottom: 1rem;
+        /* 使用padding-top技巧创建16:9宽高比 */
+        padding-top: 56.25%; /* 9/16 = 0.5625 = 56.25% */
+        overflow: hidden;
+        border-radius: 8px;
+    }
+    
+    /* 桌面端：视频容器宽度由父容器控制 */
+    @media (min-width: 992px) {
+        .video-container {
+            max-width: 100%;
+        }
+    }
+
+    /* 容器全屏时的样式 */
+    .video-container:fullscreen,
+    .video-container:-webkit-full-screen,
+    .video-container:-moz-full-screen,
+    .video-container:-ms-fullscreen {
+        padding-top: 0;
+        width: 100vw;
+        height: 100vh;
+        background: #000;
+        border-radius: 0;
+    }
+
+    .video-container:fullscreen #player115,
+    .video-container:fullscreen #alistPlayer,
+    .video-container:fullscreen #direct115Player,
+    .video-container:-webkit-full-screen #player115,
+    .video-container:-webkit-full-screen #alistPlayer,
+    .video-container:-webkit-full-screen #direct115Player {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        background: #000;
+    }
+
+    /* 容器全屏时字幕层样式 */
+    .video-container:fullscreen .live-caption-layer,
+    .video-container:-webkit-full-screen .live-caption-layer {
+        bottom: 14%;
+        max-width: 90%;
+        font-size: 1.4rem;
+        padding: 6px 14px;
+    }
+
+    /* 隐藏原生控件 */
+    #player115::-webkit-media-controls,
+    #alistPlayer::-webkit-media-controls,
+    #direct115Player::-webkit-media-controls {
+        display: none !important;
+    }
+
+    #player115::-webkit-media-controls-enclosure,
+    #alistPlayer::-webkit-media-controls-enclosure,
+    #direct115Player::-webkit-media-controls-enclosure {
+        display: none !important;
+    }
+
+    /* 统一控制条样式 */
+    .unified-controls {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 14px;
+        background: linear-gradient(transparent, rgba(0, 0, 0, 0.8));
+        opacity: 0;
+        transition: opacity 0.3s ease;
+        z-index: 150;
+    }
+
+    .video-container:hover .unified-controls,
+    .unified-controls:hover,
+    .video-container.controls-visible .unified-controls {
+        opacity: 1;
+    }
+
+    .video-container:fullscreen .unified-controls,
+    .video-container:-webkit-full-screen .unified-controls {
+        opacity: 0;
+        transition: opacity 0.3s ease;
+    }
+
+    .video-container:fullscreen.controls-visible .unified-controls,
+    .video-container:-webkit-full-screen.controls-visible .unified-controls {
+        opacity: 1;
+    }
+
+    .unified-controls-left,
+    .unified-controls-right {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .unified-controls-center {
+        flex: 1;
+        margin: 0 16px;
+    }
+
+    .unified-btn {
+        background: transparent;
+        border: none;
+        color: #fff;
+        padding: 6px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 4px;
+        transition: background 0.2s;
+    }
+
+    .unified-btn:hover {
+        background: rgba(255, 255, 255, 0.2);
+    }
+
+    .unified-btn i {
+        font-size: 1.2rem;
+    }
+
+    .unified-time {
+        color: #fff;
+        font-size: 0.85rem;
+        font-family: Arial, Helvetica, sans-serif;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .unified-progress {
+        position: relative;
+        width: 100%;
+        height: 5px;
+        background: rgba(255, 255, 255, 0.3);
+        border-radius: 3px;
+        cursor: pointer;
+        transition: height 0.2s;
+    }
+
+    .unified-progress:hover {
+        height: 8px;
+    }
+
+    /* 进度条悬停提示 */
+    .unified-progress-tooltip {
+        position: absolute;
+        bottom: 100%;
+        transform: translateX(-50%);
+        margin-bottom: 8px;
+        padding: 4px 8px;
+        font-size: 12px;
+        color: #fff;
+        background: rgba(0, 0, 0, 0.85);
+        border-radius: 4px;
+        white-space: nowrap;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.15s ease;
+        z-index: 200;
+    }
+
+    .unified-progress-tooltip::after {
+        content: '';
+        position: absolute;
+        top: 100%;
+        left: 50%;
+        transform: translateX(-50%);
+        border: 4px solid transparent;
+        border-top-color: rgba(0, 0, 0, 0.85);
+    }
+
+    .unified-progress-tooltip.visible {
+        opacity: 1;
+    }
+
+    .unified-buffer {
+        position: absolute;
+        left: 0;
+        top: 0;
+        height: 100%;
+        background: rgba(255, 255, 255, 0.4);
+        border-radius: 3px;
+        width: 0%;
+        transition: width 0.1s linear;
+    }
+
+    .unified-filled {
+        position: absolute;
+        left: 0;
+        top: 0;
+        height: 100%;
+        background: #3b82f6;
+        border-radius: 3px;
+        width: 0%;
+        transition: width 0.1s linear;
+    }
+
+    .unified-volume-slider {
+        width: 80px;
+        height: 4px;
+        background: rgba(255, 255, 255, 0.3);
+        border-radius: 2px;
+        outline: none;
+        cursor: pointer;
+    }
+
+    .unified-volume-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 12px;
+        height: 12px;
+        background: #fff;
+        border-radius: 50%;
+        cursor: pointer;
+    }
+
+    .unified-volume-slider::-moz-range-thumb {
+        width: 12px;
+        height: 12px;
+        background: #fff;
+        border: none;
+        border-radius: 50%;
+        cursor: pointer;
+    }
+
+    .video-js {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+    }
+    
+    #player115, #alistPlayer, #direct115Player {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: #000;
+        object-fit: contain;
+    }
+
+    .live-caption-layer {
+        position: absolute;
+        left: 50%;
+        bottom: 12%;
+        transform: translateX(-50%);
+        max-width: 80%;
+        text-align: center;
+        color: #fff;
+        text-shadow: 0 0 4px rgba(0,0,0,0.8);
+        font-size: 1.1rem;
+        padding: 4px 10px;
+        background: rgba(0, 0, 0, 0.35);
+        border-radius: 4px;
+        pointer-events: none;
+        z-index: 9999;
+        white-space: pre-wrap;
+    }
+
+    /* 隐藏原生控件 */
+    #direct115Player::-webkit-media-controls-enclosure {
+        display: none !important;
+    }
+
+    .video-info {
+        padding: 1rem;
+        background-color: #f8f9fa;
+        border-radius: 8px;
+        margin-bottom: 1rem;
+        margin-top: 1rem;
+    }
+    
+    /* 桌面端：右侧内容区域不再限制最大宽度 */
+    @media (min-width: 992px) {
+        .video-info {
+            max-width: 100%;
+        }
+    }
+    
+    .definition-selector {
+        margin: 1rem 0;
+    }
+    
+    .quality-btn {
+        min-width: 100px;
+        margin-right: 5px;
+    }
+    
+    .back-btn {
+        margin-bottom: 1rem;
+    }
+    
+    .loading-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0,0,0,0.8);
+        display: none;
+        justify-content: center;
+        align-items: center;
+        z-index: 100;
+        color: white;
+        flex-direction: column;
+    }
+    
+    #debugInfo {
+        margin-top: 15px;
+        padding: 10px;
+        background-color: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 5px;
+        max-height: 200px;
+        overflow-y: auto;
+        font-family: monospace;
+        font-size: 0.8rem;
+        display: none;
+    }
+    
+    .controls-container {
+        margin-top: 15px;
+    }
+
+    #alistStatus,
+    #cloud115VideoStatus {
+        display: none;
+        margin-top: 1rem;
+    }
+
+    .nav-tabs .nav-link.disabled {
+        cursor: not-allowed;
+        color: #6c757d;
+    }
+
+    /* 响应式调整 */
+    @media (max-width: 768px) {
+        .video-info .row {
+            flex-direction: column;
+        }
+    }
+
+    /* 确保页面可以滚动 */
+    body {
+        overflow-y: auto !important;
+    }
+
+    .container {
+        max-width: 1440px;
+        padding-left: 20px;
+        padding-right: 20px;
+    }
+    
+    /* 为播放器内容区域添加更紧凑的布局 */
+    .player-wrapper {
+        max-width: 1440px;
+        margin: 0 auto;
+        padding-top: 20px;
+    }
+    
+    .player-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        margin-bottom: 24px;
+        padding: 16px 20px;
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12);
+    }
+    
+    .player-header h3 {
+        margin: 0;
+        font-size: 1.35rem;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    .player-header .btn-group .disabled {
+        pointer-events: none;
+        opacity: 0.6;
+    }
+    
+    .mode-sections {
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+    }
+    
+    .mode-section {
+        display: none;
+    }
+    
+    .mode-section.active {
+        display: block;
+    }
+    
+    /* 左右分栏布局 */
+    .player-layout {
+        display: flex;
+        gap: 20px;
+        align-items: flex-start;
+    }
+    
+    /* 左侧信息栏 */
+    .movie-info-sidebar {
+        flex: 0 0 405px;
+        background: #fff;
+        border-radius: 8px;
+        padding: 20px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        position: sticky;
+        top: 20px;
+        max-height: calc(100vh - 40px);
+        overflow-y: auto;
+    }
+    
+    .movie-info-sidebar .cover-image {
+        width: 100%;
+        max-width: 365px;
+        /* 设置固定宽高比：800:536 ≈ 1.49:1 */
+        aspect-ratio: 800/536;
+        object-fit: contain;
+        border-radius: 8px;
+        margin-bottom: 15px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        transition: transform 0.3s;
+        background-color: #f8f9fa;
+        /* 添加骨架屏效果 */
+        background-image: linear-gradient(
+            90deg,
+            #f0f0f0 0px,
+            #f8f8f8 40px,
+            #f0f0f0 80px
+        );
+        background-size: 600px;
+        animation: shimmer 1.5s infinite linear;
+    }
+    
+    @keyframes shimmer {
+        0% { background-position: -600px 0; }
+        100% { background-position: 600px 0; }
+    }
+    
+    .movie-info-sidebar .cover-image[src]:not([src=""]) {
+        /* 图片加载后移除骨架屏动画 */
+        animation: none;
+        background-image: none;
+    }
+    
+    .movie-info-sidebar .cover-image:hover {
+        transform: scale(1.02);
+    }
+    
+    .movie-info-sidebar h5 {
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: #495057;
+        margin-top: 15px;
+        margin-bottom: 8px;
+        border-bottom: 2px solid #e9ecef;
+        padding-bottom: 5px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    
+    .movie-info-sidebar h5:first-of-type {
+        margin-top: 0;
+    }
+    
+    .movie-info-sidebar h5 i {
+        color: #0d6efd;
+        font-size: 0.85rem;
+    }
+    
+    .movie-info-sidebar p {
+        font-size: 0.85rem;
+        color: #6c757d;
+        line-height: 1.6;
+        margin-bottom: 10px;
+    }
+    
+    .movie-info-sidebar .badge {
+        font-size: 0.75rem;
+        margin-right: 5px;
+        margin-bottom: 5px;
+        padding: 0.4em 0.65em;
+        font-weight: 500;
+    }
+    
+    /* 演员列表样式 */
+    .actors-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+    
+    .actor-item {
+        flex: 0 0 auto;
+    }
+    
+    .actor-link {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        text-decoration: none;
+        color: #495057;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: #f8f9fa;
+        transition: all 0.2s ease;
+        max-width: 200px;
+    }
+    
+    .actor-link:hover {
+        background-color: #e9ecef;
+        color: #0d6efd;
+        transform: translateY(-1px);
+    }
+    
+    .actor-avatar {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        object-fit: cover;
+        flex-shrink: 0;
+        background-image: linear-gradient(
+            90deg,
+            #f0f0f0 0px,
+            #f8f8f8 40px,
+            #f0f0f0 80px
+        );
+        background-size: 200px;
+        animation: shimmer 1.5s infinite linear;
+    }
+    
+    .actor-avatar[src]:not([src=""]) {
+        animation: none;
+        background-image: none;
+    }
+    
+    .actor-name {
+        font-size: 13px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    
+    .actor-link:hover .actor-name {
+        color: #0d6efd;
+    }
+    
+    /* 简介文本样式 */
+    .description-text {
+        font-size: 0.85rem;
+        color: #6c757d;
+        line-height: 1.7;
+        text-align: justify;
+        word-break: break-word;
+    }
+    
+    /* 右侧播放器区域 */
+    .player-main-content {
+        flex: 1;
+        min-width: 0;
+    }
+    
+    /* 移动端响应式 */
+    @media (max-width: 991px) {
+        .player-layout {
+            flex-direction: column;
+        }
+        
+        .movie-info-sidebar {
+            flex: 1 1 auto;
+            width: 100%;
+        }
+    }
+    
+    /* 标题样式优化 */
+    .controls-container h2 {
+        font-size: 1.5rem;
+        font-weight: 500;
+        color: #333;
+    }
+    
+    /* Tab 导航样式优化 */
+    .nav-tabs {
+        border-bottom: 2px solid #dee2e6;
+    }
+    
+    .nav-tabs .nav-link {
+        border: none;
+        color: #6c757d;
+        padding: 0.75rem 1.5rem;
+        transition: all 0.3s;
+    }
+    
+    .nav-tabs .nav-link:hover {
+        color: #495057;
+        background-color: #f8f9fa;
+    }
+    
+    .nav-tabs .nav-link.active {
+        color: #0d6efd;
+        background-color: transparent;
+        border-bottom: 3px solid #0d6efd;
+        font-weight: 500;
+    }
+
+    .video-info {
+        margin-top: 24px;
+        padding: 24px;
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12);
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+    
+    .playback-info-body {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 24px;
+        align-items: flex-start;
+    }
+    
+    .status-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        width: 100%;
+        max-width: 320px;
+    }
+    
+    .status-stack .alert {
+        margin: 0;
+    }
+    
+    .video-info-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 12px 24px;
+        font-size: 0.92rem;
+        color: #495057;
+    }
+    
+    .video-info-grid p {
+        margin: 0;
+    }
+    
+    @media (max-width: 768px) {
+        .playback-info-body {
+            flex-direction: column;
+        }
+        
+        .status-stack {
+            max-width: 100%;
+        }
+    }
+</style>
+<!-- HLS.js 库用于支持HLS流媒体 -->
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row">
+        <div class="col-12">
+            <div class="player-wrapper">
+            {% set header_movie_id = movie_detail.get('id') if movie_detail else (file_info.get('video_id') if file_info else '') %}
+            <div class="player-header">
+                <h3>
+                    {% if header_movie_id %}
+                    <span class="badge bg-success">{{ header_movie_id }}</span>
+                    {% endif %}
+                    {{ title }}
+                </h3>
+                <div class="btn-group">
+                    <a id="potplayerLink" href="#" class="btn btn-outline-primary btn-sm disabled" aria-disabled="true">
+                        <i class="fas fa-play-circle"></i> Potplayer播放
+                    </a>
+                    {% if header_movie_id %}
+                    <a href="{{ url_for('movie_detail', movie_id=header_movie_id) }}" class="btn btn-outline-info btn-sm">
+                        <i class="fas fa-info-circle"></i> 详情
+                    </a>
+                    {% endif %}
+                </div>
+            </div>
+            
+                <!-- 左右分栏布局 -->
+                <div class="player-layout">
+                    <!-- 左侧：影片信息 -->
+                    <aside class="movie-info-sidebar">
+                        {% if movie_detail %}
+                            <!-- 封面图：优先使用本地图片 -->
+                            {% set movie_id = movie_detail.get('id', '') %}
+                            <img src="/images/covers/{{ movie_id }}.jpg" 
+                                 alt="{{ title }}" 
+                                 class="cover-image"
+                                 onerror="this.onerror=null; this.src='{{ movie_detail.get('cover', url_for('static', filename='img/no_image.jpg')) }}';">
+                            
+                            
+                            {% set parsed_data = movie_detail.get('parsed_data', {}) %}
+                            
+                            <!-- 类别/标签 -->
+                            {% if parsed_data.get('genres') %}
+                            <h5><i class="fas fa-tags"></i> 类别</h5>
+                            <p>
+                                {% for genre in parsed_data.get('genres', []) %}
+                                <span class="badge bg-primary">{{ genre.get('name', '') }}</span>
+                                {% endfor %}
+                            </p>
+                            {% endif %}
+                            
+                            <!-- 演员（带头像） -->
+                            {% if parsed_data.get('stars') %}
+                            <h5><i class="fas fa-users"></i> 演员</h5>
+                            <div class="actors-list">
+                                {% for star in parsed_data.get('stars', []) %}
+                                <a href="{{ url_for('actor_detail', actor_id=star.get('id', '')) }}" class="actor-link">
+                                    <img src="/images/actor/{{ star.get('id', '') }}.jpg" 
+                                         alt="{{ star.get('name', '') }}" 
+                                         class="actor-avatar"
+                                         onerror="this.onerror=null; this.src='https://www.javbus.com/pics/actress/{{ star.get('id', '') }}_a.jpg'">
+                                    <span class="actor-name">{{ star.get('name', '') }}</span>
+                                </a>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                            
+                            <!-- 发行日期 -->
+                            {% if movie_detail.get('date') %}
+                            <h5><i class="fas fa-calendar"></i> 发行日期</h5>
+                            <p>{{ movie_detail.get('date') }}</p>
+                            {% endif %}
+                            
+                            {% set original_description = parsed_data.get('description') or movie_detail.get('description') %}
+                            {% set translated_description = parsed_data.get('translated_description') or movie_detail.get('translated_description') %}
+
+                            {% if original_description %}
+                            <h5><i class="fas fa-info-circle"></i> 简介（原文）</h5>
+                            <div class="description-text" style="white-space: pre-line;">{{ original_description }}</div>
+                            {% endif %}
+
+                            {% if translated_description %}
+                            <h5><i class="fas fa-language"></i> 简介（翻译）</h5>
+                            <div class="description-text" style="white-space: pre-line;">{{ translated_description }}</div>
+                            {% endif %}
+                        {% elif file_info %}
+                            <!-- 降级方案：如果没有movie_detail，使用file_info -->
+                            <img src="{{ url_for('static', filename='img/no_image.jpg') }}" 
+                                 alt="默认封面" 
+                                 class="cover-image">
+                            <p class="text-muted text-center"><small>暂无电影详细信息</small></p>
+                        {% endif %}
+                    </aside>
+                    
+                    <!-- 右侧：播放器 -->
+                    <div class="player-main-content">
+                        <div class="card mb-3">
+                            <div class="card-body p-0">
+                        <div class="mode-sections">
+                            <div class="mode-section {% if initial_mode == 'alist' %}active{% endif %}" id="alistSection">
+                                {% if alist_enabled %}
+                                <div class="video-container">
+                                    <video id="alistPlayer"
+                                           crossorigin="anonymous"
+                                           preload="metadata"
+                                           playsinline
+                                           webkit-playsinline
+                                           x5-playsinline
+                                           x5-video-player-type="h5"
+                                           x5-video-player-fullscreen="true"
+                                           x5-video-orientation="portraint">
+                                        <p class="vjs-no-js">
+                                            要查看此视频，请启用JavaScript并使用支持HTML5视频的浏览器
+                                        </p>
+                                    </video>
+                                    <div id="alist-loading-overlay" class="loading-overlay">
+                                        <div class="spinner-border text-light mb-3" role="status">
+                                            <span class="visually-hidden">加载中...</span>
+                                        </div>
+                                        <p>正在通过Alist获取视频地址...</p>
+                                    </div>
+                                    <!-- 统一控制条 -->
+                                    <div class="unified-controls" data-video="alistPlayer">
+                                        <div class="unified-controls-left">
+                                            <button class="unified-btn unified-play-btn" title="播放/暂停">
+                                                <i class="bi bi-play-fill"></i>
+                                            </button>
+                                            <div class="unified-time">
+                                                <span class="current-time">00:00</span> / <span class="total-time">00:00</span>
+                                            </div>
+                                        </div>
+                                        <div class="unified-controls-center">
+                                            <div class="unified-progress">
+                                                <div class="unified-progress-tooltip">00:00</div>
+                                                <div class="unified-buffer"></div>
+                                                <div class="unified-filled"></div>
+                                            </div>
+                                        </div>
+                                        <div class="unified-controls-right">
+                                            <button class="unified-btn unified-mute-btn" title="静音">
+                                                <i class="bi bi-volume-up"></i>
+                                            </button>
+                                            <input type="range" class="unified-volume-slider" min="0" max="1" step="0.1" value="1">
+                                            <button class="unified-btn unified-fullscreen-btn" title="全屏">
+                                                <i class="bi bi-fullscreen"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                                {% else %}
+                                <div class="alert alert-warning mt-3">
+                                    未检测到有效的Alist配置，请在配置文件中设置后刷新页面。
+                                </div>
+                                {% endif %}
+                            </div>
+
+                            <div class="mode-section {% if initial_mode == 'direct' %}active{% endif %}" id="direct115Section">
+                                <div class="video-container">
+                                    <video id="direct115Player"
+                                           crossorigin="anonymous"
+                                           preload="metadata"
+                                           playsinline
+                                           webkit-playsinline
+                                           x5-playsinline
+                                           x5-video-player-type="h5"
+                                           x5-video-player-fullscreen="true"
+                                           x5-video-orientation="portraint">
+                                        <p class="vjs-no-js">
+                                            要查看此视频，请启用JavaScript并使用支持HTML5视频的浏览器
+                                        </p>
+                                    </video>
+                                    <div id="liveCaptionLayerDirect" class="live-caption-layer"></div>
+                                    <!-- 统一控制条 -->
+                                    <div class="unified-controls" data-video="direct115Player">
+                                        <div class="unified-controls-left">
+                                            <button class="unified-btn unified-play-btn" title="播放/暂停">
+                                                <i class="bi bi-play-fill"></i>
+                                            </button>
+                                            <div class="unified-time">
+                                                <span class="current-time">00:00</span> / <span class="total-time">00:00</span>
+                                            </div>
+                                        </div>
+                                        <div class="unified-controls-center">
+                                            <div class="unified-progress">
+                                                <div class="unified-progress-tooltip">00:00</div>
+                                                <div class="unified-buffer"></div>
+                                                <div class="unified-filled"></div>
+                                            </div>
+                                        </div>
+                                        <div class="unified-controls-right">
+                                            <button class="unified-btn unified-mute-btn" title="静音">
+                                                <i class="bi bi-volume-up"></i>
+                                            </button>
+                                            <input type="range" class="unified-volume-slider" min="0" max="1" step="0.1" value="1">
+                                            <button class="unified-btn unified-fullscreen-btn" title="全屏">
+                                                <i class="bi bi-fullscreen"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div id="direct-loading-overlay" class="loading-overlay">
+                                        <div class="spinner-border text-light mb-3" role="status">
+                                            <span class="visually-hidden">加载中...</span>
+                                        </div>
+                                        <p>正在准备115直链播放...</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="mode-section {% if initial_mode not in ['alist', 'direct'] %}active{% endif %}" id="cloud115Section">
+                                <div class="video-container">
+                                    <video id="player115"
+                                           crossorigin="anonymous"
+                                           playsinline
+                                           webkit-playsinline
+                                           x5-playsinline
+                                           x5-video-player-type="h5"
+                                           x5-video-player-fullscreen="true"
+                                           x5-video-orientation="portraint">
+                                        <p class="vjs-no-js">
+                                            要查看此视频，请启用JavaScript并使用支持HTML5视频的浏览器
+                                        </p>
+                                    </video>
+
+                                    <div id="liveCaptionLayer" class="live-caption-layer"></div>
+
+                                    <!-- 统一控制条 -->
+                                    <div class="unified-controls" data-video="player115">
+                                        <div class="unified-controls-left">
+                                            <button class="unified-btn unified-play-btn" title="播放/暂停">
+                                                <i class="bi bi-play-fill"></i>
+                                            </button>
+                                            <div class="unified-time">
+                                                <span class="current-time">00:00</span> / <span class="total-time">00:00</span>
+                                            </div>
+                                        </div>
+                                        <div class="unified-controls-center">
+                                            <div class="unified-progress">
+                                                <div class="unified-progress-tooltip">00:00</div>
+                                                <div class="unified-buffer"></div>
+                                                <div class="unified-filled"></div>
+                                            </div>
+                                        </div>
+                                        <div class="unified-controls-right">
+                                            <button class="unified-btn unified-mute-btn" title="静音">
+                                                <i class="bi bi-volume-up"></i>
+                                            </button>
+                                            <input type="range" class="unified-volume-slider" min="0" max="1" step="0.1" value="1">
+                                            <button class="unified-btn unified-fullscreen-btn" title="全屏">
+                                                <i class="bi bi-fullscreen"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div id="loading-overlay" class="loading-overlay">
+                                        <div class="spinner-border text-light mb-3" role="status">
+                                            <span class="visually-hidden">加载中...</span>
+                                        </div>
+                                        <p>正在获取视频播放地址...</p>
+                                    </div>
+                                </div>
+
+                                <div id="debugInfo">
+                                    <div><strong>调试信息:</strong></div>
+                                    <div id="debugLogs"></div>
+                                </div>
+
+                                <div class="controls-container">
+                                    <div hidden class="btn-group" role="group">
+                                        <button class="btn btn-primary" onclick="document.getElementById('player115').play()">
+                                            <i class="fas fa-play"></i> 播放
+                                        </button>
+                                        <button class="btn btn-primary" onclick="document.getElementById('player115').pause()">
+                                            <i class="fas fa-pause"></i> 暂停
+                                        </button>
+                                        <button class="btn btn-primary" onclick="toggleFullScreen()">
+                                            <i class="fas fa-expand"></i> 全屏
+                                        </button>
+                                        <button class="btn btn-secondary" onclick="toggleDebugInfo()">
+                                            <i class="fas fa-bug"></i> 调试信息
+                                        </button>
+                                        <button id="retry-button" class="btn btn-warning">
+                                            <i class="fas fa-sync"></i> 重试
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div class="definition-selector mb-3" id="cloud115DefinitionContainer" style="display: none;">
+                                    <h5 class="mb-2">清晰度选择</h5>
+                                    <div id="definitionSelector" class="btn-group" role="group"></div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="transcode-controls" style="margin-top: 10px; padding: 15px; background: #f8f9fa; border-radius: 0 0 8px 8px;">
+                            <div class="d-flex justify-content-start align-items-center gap-2 flex-wrap">
+                                <div class="me-3">
+                                    <span id="playback-info" class="text-muted"></span>
+                                </div>
+                                <div class="btn-group" role="group" aria-label="播放模式切换">
+                                    <button id="alist-play-btn" class="btn btn-sm {% if initial_mode == 'alist' %}btn-secondary{% else %}btn-outline-primary{% endif %}" {% if not alist_enabled %}disabled{% endif %}>Alist 播放</button>
+                                    <button id="direct115-play-btn" class="btn btn-sm {% if initial_mode == 'direct' %}btn-secondary{% else %}btn-outline-primary{% endif %}" {% if not (direct_pickcode or file_id) %}disabled{% endif %}>115 直链</button>
+                                    <button id="cloud115-play-btn" class="btn btn-sm {% if initial_mode not in ['alist', 'direct'] %}btn-secondary{% else %}btn-outline-primary{% endif %}">115 播放</button>
+                                </div>
+                                <div class="btn-group ms-2" role="group" aria-label="转码控制">
+                                    <button id="force-transcode-btn" class="btn btn-sm btn-outline-warning" style="display:none;">强制转码</button>
+                                    <button id="stop-transcode-btn" class="btn btn-sm btn-outline-danger" style="display:none;">停止转码</button>
+                                    <a id="open-transcode-admin-btn" href="/cloud115/transcode/tasks" class="btn btn-sm btn-outline-secondary" target="_blank">转码管理</a>
+                                </div>
+                                <div class="btn-group ms-auto" role="group" aria-label="字幕控制">
+                                    <button id="liveCaptionToggleBtn" class="btn btn-sm btn-outline-secondary" type="button">
+                                        <i class="fas fa-closed-captioning"></i> 实时字幕
+                                    </button>
+                                    <button id="translationToggleBtn" class="btn btn-sm btn-outline-secondary" type="button" disabled>
+                                        <i class="fas fa-language"></i> 译文
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            <div class="video-info">
+                <div class="playback-info-body">
+                    <div class="flex-grow-1">
+                        <strong>播放信息</strong>
+                        <div class="video-info-grid mt-2">
+                            <p><strong>播放模式：</strong><span id="videoPlaybackMode">{{ 'Alist 播放' if initial_mode == 'alist' else ('115 直链播放' if initial_mode == 'direct' else '115 播放') }}</span></p>
+                            <p><strong>路径：</strong><span id="videoPath">{{ file_path or (file_info.get('filepath') if file_info) or '--' }}</span></p>
+                            <p><strong>文件名：</strong><span id="videoFilename">{{ file_info.get('title') if file_info else '--' }}</span></p>
+                            <p><strong>时长：</strong><span id="videoDuration">--:--</span></p>
+                            <p><strong>分辨率：</strong><span id="videoResolution">-- x --</span></p>
+                            <p><strong>文件大小：</strong><span id="videoSize">{{ file_info.get('size') if file_info and file_info.get('size') else '--' }}</span></p>
+                        </div>
+                    </div>
+                    <div class="status-stack">
+                        <div id="alistStatus" class="alert alert-info" style="display: none;"></div>
+                        <div id="cloud115VideoStatus" class="alert alert-info" style="display: none;"></div>
+                        <div id="direct115Status" class="alert alert-info" style="display: none;"></div>
+                    </div>
+                </div>
+                <div class="mt-3" id="mobileDebugInfo" style="display: none;">
+                    <button class="btn btn-sm btn-info" type="button" data-bs-toggle="collapse" data-bs-target="#browserCompatInfo">
+                        <i class="fas fa-mobile-alt"></i> 浏览器兼容性信息
+                    </button>
+                    <div class="collapse mt-2" id="browserCompatInfo">
+                        <div class="card card-body">
+                            <p><strong>浏览器：</strong> <span id="browserInfo">--</span></p>
+                            <p><strong>平台：</strong> <span id="platformInfo">--</span></p>
+                            <p><strong>H.264 支持：</strong> <span id="h264Support">--</span></p>
+                            <p><strong>HEVC 支持：</strong> <span id="hevcSupport">--</span></p>
+                            <p class="mb-0"><small class="text-muted">如果播放失败，请检查视频编解码器是否被浏览器支持</small></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+                        </div><!-- end player-main-content -->
+                    </div><!-- end player-layout -->
+            </div><!-- end player-wrapper -->
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    window.fwhisperWsHost = "{{ fwh_ws_host or '' }}";
+    window.fwhisperWsPort = "{{ fwh_ws_port or '' }}";
+    window.fwhisperModel = "{{ fwh_model or '' }}";
+    window.fwhisperLanguage = "{{ fwh_language or '' }}";
+    window.fwhisperChunkSecs = {{ fwh_chunk_secs|default(4.0) }};
+    window.fwhisperOverlapSecs = {{ fwh_overlap_secs|default(0.7) }};
+    window.fwhisperPrefixChars = {{ fwh_prefix_chars|default(0) }};
+    window.fwhisperSegmenter = "{{ fwh_segmenter or 'vad' }}";
+    window.fwhisperVadMaxWindow = {{ fwh_vad_max_window|default(15.0) }};
+    window.fwhisperVadOverlap = {{ fwh_vad_overlap|default(0.35) }};
+    window.fwhisperVadMinSilence = {{ fwh_vad_min_silence|default(0.4) }};
+    window.fwhisperVadMinSpeech = {{ fwh_vad_min_speech|default(0.6) }};
+    window.fwhisperVadFrame = {{ fwh_vad_frame|default(0.03) }};
+    window.fwhisperVadEnergy = {{ fwh_vad_energy|default(0.001) }};
+    document.addEventListener('DOMContentLoaded', function() {
+        const fileId = {{ file_id | tojson }};
+        const alistEnabled = {{ alist_enabled | tojson }};
+        const initialMode = {{ initial_mode | tojson }};
+        const playMode = {{ play_mode | tojson }};
+        const directPickcode = {{ (direct_pickcode or '') | tojson }};
+        const directPath = {{ (direct_path or '') | tojson }};
+        const fileId115 = {{ (file_info.get('file_id') if file_info else '') | tojson }};  // 115 文件 ID，用于获取时长
+        const hasDirectCapability = Boolean(directPickcode) || Boolean(fileId);
+        
+        // 检测移动端浏览器和编解码器支持
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+        const isEdgeMobile = /EdgA|EdgiOS/.test(navigator.userAgent);
+        
+        console.log('浏览器信息:', {
+            userAgent: navigator.userAgent,
+            isMobile: isMobile,
+            isIOS: isIOS,
+            isEdgeMobile: isEdgeMobile,
+            platform: navigator.platform
+        });
+        
+        // 检测视频编解码器支持
+        const videoEl = document.createElement('video');
+        const codecSupport = {
+            'h264_baseline': videoEl.canPlayType('video/mp4; codecs="avc1.42E01E"'),
+            'h264_main': videoEl.canPlayType('video/mp4; codecs="avc1.4D401E"'),
+            'h264_high': videoEl.canPlayType('video/mp4; codecs="avc1.64001E"'),
+            'hevc': videoEl.canPlayType('video/mp4; codecs="hev1.1.6.L93.B0"'),
+            'vp9': videoEl.canPlayType('video/webm; codecs="vp9"'),
+            'av1': videoEl.canPlayType('video/mp4; codecs="av01.0.05M.08"')
+        };
+        console.log('编解码器支持:', codecSupport);
+        
+        // 如果是移动端，显示调试信息
+        if (isMobile) {
+            const mobileDebugDiv = document.getElementById('mobileDebugInfo');
+            if (mobileDebugDiv) {
+                mobileDebugDiv.style.display = 'block';
+            }
+            
+            // 填充浏览器信息
+            const browserInfo = document.getElementById('browserInfo');
+            const platformInfo = document.getElementById('platformInfo');
+            const h264Support = document.getElementById('h264Support');
+            const hevcSupport = document.getElementById('hevcSupport');
+            
+            if (browserInfo) {
+                let browserName = 'Unknown';
+                if (isEdgeMobile) browserName = 'Edge Mobile';
+                else if (/Chrome/.test(navigator.userAgent)) browserName = 'Chrome Mobile';
+                else if (/Safari/.test(navigator.userAgent)) browserName = 'Safari Mobile';
+                else if (/Firefox/.test(navigator.userAgent)) browserName = 'Firefox Mobile';
+                browserInfo.textContent = browserName;
+            }
+            
+            if (platformInfo) {
+                platformInfo.textContent = navigator.platform || 'Unknown';
+            }
+            
+            if (h264Support) {
+                const h264Status = codecSupport.h264_baseline || codecSupport.h264_main || codecSupport.h264_high;
+                h264Support.textContent = h264Status ? `✅ ${h264Status}` : '❌ 不支持';
+                h264Support.style.color = h264Status ? 'green' : 'red';
+            }
+            
+            if (hevcSupport) {
+                hevcSupport.textContent = codecSupport.hevc ? `✅ ${codecSupport.hevc}` : '❌ 不支持';
+                hevcSupport.style.color = codecSupport.hevc ? 'green' : 'red';
+            }
+        }
+        const alistPlayer = document.getElementById('alistPlayer');
+        const alistLoadingOverlay = document.getElementById('alist-loading-overlay');
+        const alistStatus = document.getElementById('alistStatus');
+        const videoPlaybackModeEl = document.getElementById('videoPlaybackMode');
+        const videoPathEl = document.getElementById('videoPath');
+        const videoFilenameEl = document.getElementById('videoFilename');
+        const videoSizeEl = document.getElementById('videoSize');
+        const videoDurationEl = document.getElementById('videoDuration');
+        const videoResolutionEl = document.getElementById('videoResolution');
+        const cloud115Status = document.getElementById('cloud115VideoStatus');
+        const directStatus = document.getElementById('direct115Status');
+        const potplayerLink = document.getElementById('potplayerLink');
+        const alistModeButton = document.getElementById('alist-play-btn');
+        const directModeButton = document.getElementById('direct115-play-btn');
+        const cloud115ModeButton = document.getElementById('cloud115-play-btn');
+        const directPlayer = document.getElementById('direct115Player');
+        const directLoadingOverlay = document.getElementById('direct-loading-overlay');
+        const modeSections = {
+            alist: document.getElementById('alistSection'),
+            direct: document.getElementById('direct115Section'),
+            cloud115: document.getElementById('cloud115Section')
+        };
+
+        let currentMode = initialMode;
+        if (!['alist', 'cloud115', 'direct'].includes(currentMode)) {
+            currentMode = alistEnabled ? 'alist' : (hasDirectCapability ? 'direct' : 'cloud115');
+        }
+        if (!alistEnabled && currentMode === 'alist') {
+            currentMode = hasDirectCapability ? 'direct' : 'cloud115';
+        }
+
+        let lastAlistSource = null;
+        let lastCloud115Source = null;
+        let lastDirectSource = null;
+
+        const initialPath = {{ (file_path or (file_info.get('filepath') if file_info else None) or '') | tojson }};
+        if (initialPath && videoPathEl) {
+            videoPathEl.textContent = initialPath;
+        }
+        const initialFileName = {{ (file_info.get('title') if file_info else '') | tojson }};
+        if (initialFileName && videoFilenameEl) {
+            videoFilenameEl.textContent = initialFileName;
+        }
+        const initialFileSize = {{ (file_info.get('size') if file_info and file_info.get('size') else '') | tojson }};
+        if (initialFileSize && videoSizeEl) {
+            videoSizeEl.textContent = initialFileSize;
+        }
+
+        let alistInitialized = false;
+        let cloud115Initialized = false;
+        let directInitialized = false;
+        let lastDirectAuthCookie = null;
+        let directTranscodeInfo = null;
+        let directTranscodePollingTimer = null;
+        let directUsingTranscode = false;
+        let directHlsInstance = null;
+        let directTranscodeFallbackTriggered = false;
+        const stopTranscodeBtn = document.getElementById('stop-transcode-btn');
+        const forceTranscodeBtn = document.getElementById('force-transcode-btn');
+        const openTranscodeAdminBtn = document.getElementById('open-transcode-admin-btn');
+
+        // 转码流播放相关状态
+        let pendingSeekTarget = null;
+
+        // V2: 转码播放简化版全局变量
+        let directTranscodeTaskId = null;        // 当前转码任务 ID
+        let directTranscodePlaylistUrl = null;    // m3u8 播放列表 URL
+        let directTranscodeDuration = 0;          // 视频总时长
+        let seekingTimeoutV2 = null;              // Seek 防抖定时器（V2）
+
+        const ACTIVE_STATUSES = ['queued','starting','running','ready'];
+
+        // 存储所有转码任务的状态
+        let globalTranscodeTasks = [];
+        let transcodeTasksLastFetch = 0;
+        const TRANSCODE_TASKS_FETCH_INTERVAL = 3000;  // 3秒轮询间隔
+
+        // 获取所有后台转码任务
+        async function fetchGlobalTranscodeTasks() {
+            const now = Date.now();
+            // 避免频繁请求，使用缓存
+            if (globalTranscodeTasks.length > 0 && now - transcodeTasksLastFetch < TRANSCODE_TASKS_FETCH_INTERVAL) {
+                return globalTranscodeTasks;
+            }
+
+            try {
+                const response = await fetch('/api/cloud115/transcode/tasks');
+                if (response.ok) {
+                    const data = await response.json();
+                    globalTranscodeTasks = data.tasks || [];
+                    transcodeTasksLastFetch = now;
+                    return globalTranscodeTasks;
+                }
+            } catch (err) {
+                console.warn('Failed to fetch transcode tasks:', err);
+            }
+            return globalTranscodeTasks;
+        }
+
+        // 更新转码按钮状态（基于全局任务）
+        async function updateTranscodeButtons() {
+            if (!stopTranscodeBtn) return;
+
+            // 获取所有后台转码任务
+            const allTasks = await fetchGlobalTranscodeTasks();
+
+            // 查找活跃的转码任务
+            const activeTasks = allTasks.filter(task => {
+                const status = (task.status || '').toLowerCase();
+                return ACTIVE_STATUSES.includes(status);
+            });
+
+            const hasActiveTasks = activeTasks.length > 0;
+
+            // 显示/隐藏按钮
+            stopTranscodeBtn.style.display = hasActiveTasks ? 'inline-block' : 'none';
+
+            // 直链模式下显示"强制转码"按钮（已有活跃任务时不显示）
+            if (forceTranscodeBtn) {
+                const isDirectMode = currentMode === 'direct';
+                const shouldShowForce = isDirectMode && !hasActiveTasks && !directUsingTranscode;
+                forceTranscodeBtn.style.display = shouldShowForce ? 'inline-block' : 'none';
+            }
+
+            // 更新按钮状态
+            if (hasActiveTasks) {
+                stopTranscodeBtn.disabled = false;
+                stopTranscodeBtn.classList.remove('btn-secondary');
+                stopTranscodeBtn.classList.add('btn-outline-danger');
+                // 显示活跃任务数量
+                stopTranscodeBtn.textContent = activeTasks.length === 1
+                    ? '停止转码'
+                    : `停止转码 (${activeTasks.length})`;
+            } else {
+                stopTranscodeBtn.disabled = true;
+            }
+        }
+
+        // 定期刷新转码任务状态
+        setInterval(updateTranscodeButtons, TRANSCODE_TASKS_FETCH_INTERVAL);
+
+        function formatTime(seconds) {
+            if (!seconds || isNaN(seconds)) return '--:--';
+            
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = Math.floor(seconds % 60);
+            
+            if (hours > 0) {
+                return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+            }
+                return `${minutes}:${secs.toString().padStart(2, '0')}`;
+            }
+
+        function updateDurationAndResolution(element) {
+            if (!element) return;
+            
+            // 优先使用检测到的时长（如果存在）- 这是 ffprobe 检测到的总时长
+            let durationToUse = null;
+            if (directTranscodeInfo && directTranscodeInfo.duration && !isNaN(directTranscodeInfo.duration)) {
+                durationToUse = parseFloat(directTranscodeInfo.duration);
+            } else if (element.duration && !isNaN(element.duration)) {
+                durationToUse = element.duration;
+            }
+            
+            // 如果存在检测到的总时长，强制设置到 video element 上
+            // 这样进度条才能显示完整范围，允许跳转到未转码部分
+            if (directTranscodeInfo && directTranscodeInfo.duration && !isNaN(directTranscodeInfo.duration)) {
+                const totalDuration = parseFloat(directTranscodeInfo.duration);
+                if (totalDuration > 0) {
+                    // 使用 Object.defineProperty 覆盖只读的 duration 属性
+                    try {
+                        Object.defineProperty(element, 'duration', {
+                            get: function() { return totalDuration; },
+                            configurable: true
+                        });
+                    } catch (e) {
+                        console.warn('[Duration] 无法覆盖 duration 属性:', e);
+                    }
+                    
+                    // 对于 HLS.js，尝试通过 level 设置总时长
+                    if (directHlsInstance && directHlsInstance.levels && directHlsInstance.levels.length > 0) {
+                        const level = directHlsInstance.levels[0];
+                        if (level && (level.totalduration === undefined || level.totalduration < totalDuration)) {
+                            level.totalduration = totalDuration;
+                        }
+                    }
+                }
+            }
+            
+            if (durationToUse && durationToUse > 0 && videoDurationEl) {
+                videoDurationEl.textContent = formatTime(durationToUse);
+            }
+            
+            if (element.videoWidth && element.videoHeight && videoResolutionEl) {
+                videoResolutionEl.textContent = `${element.videoWidth} x ${element.videoHeight}`;
+            }
+        }
+
+        function setAlert(element, message, type = 'info') {
+            if (!element) return;
+            if (!message) {
+                element.style.display = 'none';
+                return;
+            }
+            element.className = `alert alert-${type}`;
+            element.innerHTML = message;
+            element.style.display = 'block';
+        }
+
+        function updatePotplayerLink(url) {
+            if (!potplayerLink) {
+                return;
+            }
+            if (url) {
+                potplayerLink.href = `potplayer://${url}`;
+                potplayerLink.classList.remove('disabled');
+                potplayerLink.removeAttribute('aria-disabled');
+            } else {
+                potplayerLink.href = '#';
+                potplayerLink.classList.add('disabled');
+                potplayerLink.setAttribute('aria-disabled', 'true');
+            }
+        }
+
+        function build115ProxyUrl(originalUrl, options) {
+            if (!originalUrl) {
+                return null;
+            }
+            const params = new URLSearchParams();
+            params.set('url', originalUrl);
+            const opts = options || {};
+            const authCookie = opts.authCookie;
+            if (authCookie && authCookie.name && authCookie.value) {
+                params.set('cookie_name', authCookie.name);
+                params.set('cookie_value', authCookie.value);
+                if (authCookie.path) {
+                    params.set('cookie_path', authCookie.path);
+                }
+                if (authCookie.expire) {
+                    params.set('cookie_expire', authCookie.expire);
+                }
+            }
+            if (opts.pickcode) {
+                params.set('pickcode', opts.pickcode);
+            }
+            return `/api/cloud115/proxy?${params.toString()}`;
+        }
+
+        function stopDirectTranscodePolling() {
+            if (directTranscodePollingTimer) {
+                clearTimeout(directTranscodePollingTimer);
+                directTranscodePollingTimer = null;
+            }
+        }
+
+        function clearDirectHlsInstance() {
+            if (directHlsInstance && typeof directHlsInstance.destroy === 'function') {
+                try {
+                    directHlsInstance.destroy();
+                } catch (err) {
+                    console.warn('销毁 direct HLS 实例失败:', err);
+                }
+            }
+            directHlsInstance = null;
+        }
+
+        // 跳转到指定时间（V2 版本，复用 handleTranscodeSeekV2）
+        window.seekToTranscodePosition = function(targetTime) {
+            // V2: 如果有转码任务 ID，使用 V2 seek 处理
+            if (directTranscodeTaskId) {
+                handleTranscodeSeekV2(targetTime);
+                return;
+            }
+
+            // 兼容旧代码：如果没有 directTranscodeTaskId，尝试从 directTranscodeInfo 获取
+            if (!directTranscodeInfo) {
+                return;
+            }
+
+            const taskId = directTranscodeInfo.task_id || directTranscodeInfo.id;
+            if (!taskId) {
+                return;
+            }
+
+            // 更新 directTranscodeTaskId 并使用 V2 处理
+            directTranscodeTaskId = taskId;
+            handleTranscodeSeekV2(targetTime);
+        };
+
+        function startDirectTranscodePlayback(info) {
+            if (!info || !info.stream_url || !directPlayer) {
+                return;
+            }
+            directUsingTranscode = true;
+            directTranscodeInfo = Object.assign({}, directTranscodeInfo || {}, info);
+
+            // 将转码信息存储到 video 元素的 data 属性中，供 initUnifiedControls 使用
+            if (info.duration && !isNaN(info.duration)) {
+                directPlayer.dataset.totalDuration = info.duration.toString();
+                directPlayer.dataset.usingTranscode = 'true';
+            }
+            // 保存 task_id
+            if (info.task_id || info.id) {
+                directPlayer.dataset.transcodeTaskId = info.task_id || info.id;
+            }
+
+            // 保存起始偏移量：如果 pendingSeekTarget 存在，使用它作为偏移量，否则使用 info.start_offset
+            let startOffset = 0;
+            if (pendingSeekTarget !== null && pendingSeekTarget !== undefined) {
+                startOffset = pendingSeekTarget;
+            } else if (info.start_offset !== undefined && !isNaN(info.start_offset)) {
+                startOffset = parseFloat(info.start_offset);
+            }
+            directPlayer.dataset.startOffset = startOffset.toString();
+
+            // 清除pending seek target
+            if (pendingSeekTarget !== null && pendingSeekTarget !== undefined) {
+                pendingSeekTarget = null;
+            }
+            stopDirectTranscodePolling();
+            clearDirectHlsInstance();
+
+            const streamUrl = info.stream_url;
+            lastDirectSource = info.abs_stream_url || streamUrl;
+            updatePotplayerLink(lastDirectSource);
+            setAlert(directStatus, '<i class="fas fa-spinner fa-spin"></i> 正在加载转码流，请稍候...', 'info');
+
+            // 如果转码任务信息中包含时长，先更新 UI 显示的时长
+            if (info.duration && !isNaN(info.duration) && videoDurationEl) {
+                const durationSeconds = parseFloat(info.duration);
+                if (durationSeconds > 0) {
+                    videoDurationEl.textContent = formatTime(durationSeconds);
+                }
+            }
+
+            if (typeof Hls !== 'undefined' && Hls.isSupported()) {
+                directHlsInstance = new Hls({
+                    enableWorker: true,
+                    lowLatencyMode: false,         // 禁用低延迟模式，避免自动跳转追赶"直播"位置
+                    // 缓冲区配置 - 优化跳转后的播放体验
+                    maxBufferLength: 10,           // 最大缓冲长度（秒）- 降低以更快开始播放
+                    maxMaxBufferLength: 30,        // 最大缓冲区长度上限
+                    maxBufferSize: 60 * 1000 * 1000,  // 最大缓冲区大小（60MB）
+                    maxBufferHole: 0.5,            // 最大缓冲洞阈值（容忍分段）
+                    backBufferLength: 30,          // 保留过去的缓冲，避免跳转后退时重新加载
+                    // 播放稳定性配置
+                    nudgeOffset: 0.1,              // 微调偏移量
+                    nudgeMaxRetry: 3,              // 最大微调重试次数
+                    maxFragLookUpTolerance: 0.2,   // 片段查找容差
+                    // VOD模式配置：禁用实时同步，避免自动跳过分片
+                    liveSyncDuration: Infinity,    // 禁用实时同步，不追赶"直播"位置
+                    liveDurationInfinity: false,   // 不将流视为无限时长
+                    xhrSetup: function(xhr, url) {
+                        // 拦截 m3u8 请求，获取响应头中的总时长
+                        xhr.addEventListener('load', function() {
+                            const durationHeader = xhr.getResponseHeader('X-Video-Duration');
+                            if (durationHeader && !isNaN(durationHeader)) {
+                                const totalDuration = parseFloat(durationHeader);
+                                if (totalDuration > 0) {
+                                    // 更新 directTranscodeInfo 中的 duration
+                                    if (directTranscodeInfo) {
+                                        directTranscodeInfo.duration = totalDuration;
+                                    }
+
+                                    // 同步更新 dataset，供 initUnifiedControls 使用
+                                    if (directPlayer) {
+                                        directPlayer.dataset.totalDuration = totalDuration.toString();
+                                        directPlayer.dataset.usingTranscode = 'true';
+                                    }
+
+                                    // 更新 UI 显示的时长
+                                    if (videoDurationEl) {
+                                        videoDurationEl.textContent = formatTime(totalDuration);
+                                    }
+
+                                    console.log(`[Duration] 从响应头获取总时长: ${totalDuration} 秒`);
+                                }
+                            }
+                        });
+                    }
+                });
+                directHlsInstance.loadSource(streamUrl);
+                directHlsInstance.attachMedia(directPlayer);
+                directHlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+                    setAlert(directStatus, '<i class="fas fa-check-circle"></i> 已切换到转码播放', 'success');
+
+                    // 监听第一个片段加载完成，确保立即开始播放（解决跳转后卡住问题）
+                    const onFirstFragLoaded = (event, data) => {
+                        directHlsInstance.off(Hls.Events.FRAG_LOADED, onFirstFragLoaded);
+                        console.log('[HLS] 第一个片段加载完成，确保播放状态');
+                        // 确保播放器正在播放
+                        if (directPlayer.paused && !directPlayer.ended) {
+                            directPlayer.play().catch(err => {
+                                console.warn('[HLS] 自动播放被阻止:', err);
+                            });
+                        }
+                    };
+                    directHlsInstance.once(Hls.Events.FRAG_LOADED, onFirstFragLoaded);
+
+                    // 监听片段解析完成事件，确保播放不会卡住
+                    const onFragParsed = (event, data) => {
+                        console.log('[HLS] 片段解析完成，当前缓冲:', directPlayer.buffered.length > 0 ? `${directPlayer.buffered.end(0).toFixed(2)}s` : '0s');
+                        // 如果播放器暂停但有缓冲数据，恢复播放
+                        if (directPlayer.paused && !directPlayer.ended && directPlayer.buffered.length > 0) {
+                            const bufferedEnd = directPlayer.buffered.end(0);
+                            // 如果缓冲超过 1 秒，应该可以播放了
+                            if (bufferedEnd > 1) {
+                                directPlayer.play().catch(err => {
+                                    console.warn('[HLS] 恢复播放失败:', err);
+                                });
+                            }
+                        }
+                    };
+                    directHlsInstance.on(Hls.Events.FRAG_PARSING_COMPLETE, onFragParsed);
+
+                    // 立即设置总时长（如果存在），这样进度条就能显示完整范围
+                    if (info.duration && !isNaN(info.duration)) {
+                        const totalDuration = parseFloat(info.duration);
+                        if (totalDuration > 0) {
+                            // 更新 directTranscodeInfo 中的 duration
+                            if (directTranscodeInfo) {
+                                directTranscodeInfo.duration = totalDuration;
+                            }
+
+                            // 同步更新 dataset，供 initUnifiedControls 使用
+                            if (directPlayer) {
+                                directPlayer.dataset.totalDuration = totalDuration.toString();
+                                directPlayer.dataset.usingTranscode = 'true';
+                            }
+
+                            // 尝试通过 HLS.js level 设置总时长
+                            if (directHlsInstance.levels && directHlsInstance.levels.length > 0) {
+                                const level = directHlsInstance.levels[0];
+                                if (level) {
+                                    level.totalduration = totalDuration;
+                                }
+                            }
+
+                            // 更新 UI 显示的时长
+                            if (videoDurationEl) {
+                                videoDurationEl.textContent = formatTime(totalDuration);
+                            }
+                        }
+                    }
+
+                    // 等待元数据加载后，更新时长显示
+                    const onMetadataLoaded = () => {
+                        directPlayer.removeEventListener('loadedmetadata', onMetadataLoaded);
+                        updateDurationAndResolution(directPlayer);
+                        // 再次确保使用检测到的总时长
+                        if (info.duration && !isNaN(info.duration)) {
+                            const detectedDuration = parseFloat(info.duration);
+                            if (videoDurationEl) {
+                                videoDurationEl.textContent = formatTime(detectedDuration);
+                            }
+                        }
+                        // 位置恢复由applySavedPosition统一处理
+                    };
+                    directPlayer.addEventListener('loadedmetadata', onMetadataLoaded, { once: true });
+                    directPlayer.play().catch(err => {
+                        setAlert(directStatus, `<i class="fas fa-info-circle"></i> 自动播放被阻止: ${err.message}`, 'info');
+                    });
+                });
+                directHlsInstance.on(Hls.Events.ERROR, (event, data) => {
+                    if (!data) return;
+                    console.error('Direct HLS error', data);
+                    if (data.fatal) {
+                        setAlert(directStatus, `<i class="fas fa-exclamation-triangle"></i> 转码流播放失败: ${data.details || '未知错误'}`, 'danger');
+                    }
+                });
+            } else if (directPlayer.canPlayType('application/vnd.apple.mpegurl')) {
+                directPlayer.src = streamUrl;
+                
+                // 在加载前就设置总时长（如果存在）
+                if (info.duration && !isNaN(info.duration)) {
+                    const totalDuration = parseFloat(info.duration);
+                    if (totalDuration > 0) {
+                        // 更新 directTranscodeInfo 中的 duration
+                        if (directTranscodeInfo) {
+                            directTranscodeInfo.duration = totalDuration;
+                        }
+                        
+                        // 更新 UI 显示的时长
+                        if (videoDurationEl) {
+                            videoDurationEl.textContent = formatTime(totalDuration);
+                        }
+                    }
+                }
+
+                const onLoaded = () => {
+                    directPlayer.removeEventListener('loadedmetadata', onLoaded);
+                    updateDurationAndResolution(directPlayer);
+                    // 确保使用检测到的总时长
+                    if (info.duration && !isNaN(info.duration) && videoDurationEl) {
+                        const detectedDuration = parseFloat(info.duration);
+                        videoDurationEl.textContent = formatTime(detectedDuration);
+                    }
+                    // 位置恢复由applySavedPosition统一处理
+
+                    setAlert(directStatus, '<i class="fas fa-check-circle"></i> 已切换到转码播放', 'success');
+                    directPlayer.play().catch(err => {
+                        setAlert(directStatus, `<i class="fas fa-info-circle"></i> 自动播放被阻止: ${err.message}`, 'info');
+                    });
+                };
+                directPlayer.addEventListener('loadedmetadata', onLoaded, { once: true });
+            } else {
+                setAlert(directStatus, '<i class="fas fa-exclamation-triangle"></i> 当前浏览器不支持HLS转码播放，请更换浏览器。', 'danger');
+            }
+        }
+
+        // V2: 简化的转码播放启动函数
+        function startDirectTranscodePlaybackV2() {
+            if (!directTranscodePlaylistUrl || !directTranscodeTaskId || !directPlayer) {
+                return;
+            }
+
+            setAlert(directStatus, '<i class="fas fa-spinner fa-spin"></i> 正在加载播放器...', 'info');
+            directUsingTranscode = true;
+
+            // 更新停止转码按钮显示
+            updateTranscodeButtons();
+
+            // 保存转码信息到 dataset（兼容旧代码）
+            if (directTranscodeDuration > 0) {
+                directPlayer.dataset.totalDuration = directTranscodeDuration.toString();
+                directPlayer.dataset.usingTranscode = 'true';
+            }
+            directPlayer.dataset.transcodeTaskId = directTranscodeTaskId;
+            directPlayer.dataset.startOffset = '0';  // V2 不再需要偏移量
+
+            stopDirectTranscodePolling();
+            clearDirectHlsInstance();
+
+            // V2: 使用服务端生成的完整 m3u8 播放列表
+            if (typeof Hls !== 'undefined' && Hls.isSupported()) {
+                directHlsInstance = new Hls({
+                    maxBufferLength: 30,
+                    maxMaxBufferLength: 600,
+                    enableWorker: true,
+                });
+
+                directHlsInstance.loadSource(directTranscodePlaylistUrl);
+                directHlsInstance.attachMedia(directPlayer);
+
+                // 设置加载超时
+                const initialLoadTimeout = setTimeout(() => {
+                    if (!directPlayer.duration) {
+                        setAlert(directStatus, '<i class="fas fa-spinner fa-spin"></i> 播放列表加载中，请稍候...', 'info');
+                        directHlsInstance.loadSource(directTranscodePlaylistUrl);
+                    }
+                }, 15000);
+
+                directHlsInstance.on(Hls.Events.MANIFEST_PARSED, function() {
+                    clearTimeout(initialLoadTimeout);
+                    // 更新时长和进度条
+                    updateDurationAndResolution(directPlayer);
+                    setAlert(directStatus, '<i class="fas fa-check-circle"></i> 开始播放', 'success');
+                    directPlayer.play().catch(err => {
+                        // Auto-play blocked by browser
+                    });
+                });
+
+                directHlsInstance.on(Hls.Events.ERROR, function(event, data) {
+                    clearTimeout(initialLoadTimeout);
+                    if (data.fatal) {
+                        switch (data.type) {
+                            case Hls.ErrorTypes.NETWORK_ERROR:
+                                setAlert(directStatus, '<i class="fas fa-spinner fa-spin"></i> 网络中断，正在恢复...', 'warning');
+                                directHlsInstance.startLoad();
+                                break;
+                            case Hls.ErrorTypes.MEDIA_ERROR:
+                                setAlert(directStatus, '<i class="fas fa-spinner fa-spin"></i> 媒体错误，正在恢复...', 'warning');
+                                directHlsInstance.recoverMediaError();
+                                break;
+                            default:
+                                setAlert(directStatus, `<i class="fas fa-exclamation-triangle"></i> 播放错误: ${data.details || data.type}`, 'danger');
+                                break;
+                        }
+                    }
+                });
+            } else {
+                setAlert(directStatus, '<i class="fas fa-exclamation-triangle"></i> 当前浏览器不支持HLS播放', 'danger');
+            }
+        }
+
+        function pollDirectTranscodeStatus(statusUrl, attempt = 0) {
+            if (!statusUrl || directUsingTranscode) {
+                return;
+            }
+            stopDirectTranscodePolling();
+            fetch(statusUrl, { cache: 'no-store' })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(result => {
+                    if (!result.success) {
+                        throw new Error(result.message || '获取转码状态失败');
+                    }
+                    const task = result.task || {};
+                    directTranscodeInfo = Object.assign({}, directTranscodeInfo || {}, task);
+
+                    // 如果转码任务信息中包含时长，更新 UI 显示的时长
+                    if (task.duration && !isNaN(task.duration) && videoDurationEl) {
+                        const durationSeconds = parseFloat(task.duration);
+                        if (durationSeconds > 0) {
+                            videoDurationEl.textContent = formatTime(durationSeconds);
+                        }
+                    }
+
+                    if (task.ready && task.stream_url) {
+                        startDirectTranscodePlayback(task);
+                        return;
+                    }
+
+                    if (['queued', 'starting', 'running'].includes(task.status || '')) {
+                        setAlert(directStatus, '<i class="fas fa-spinner fa-spin"></i> 转码处理中，请稍候...', 'info');
+                        // 优化后的轮询间隔：初始 200ms，更快增长，最大 2 秒
+                        const delay = Math.min(2000, 200 + attempt * 100);
+                        directTranscodePollingTimer = setTimeout(() => pollDirectTranscodeStatus(statusUrl, attempt + 1), delay);
+                        return;
+                    }
+
+                    if ((task.status || '').toLowerCase() === 'error') {
+                        setAlert(directStatus, `<i class="fas fa-exclamation-triangle"></i> 转码失败: ${task.reason || '未知错误'}`, 'danger');
+                        return;
+                    }
+
+                    // 优化后的轮询间隔：初始 300ms，最大 3 秒
+                    const delay = Math.min(3000, 300 + attempt * 150);
+                    directTranscodePollingTimer = setTimeout(() => pollDirectTranscodeStatus(statusUrl, attempt + 1), delay);
+                })
+                .catch(error => {
+                    console.warn('转码状态查询失败:', error);
+                    // 优化后的错误重试间隔：初始 500ms，最大 5 秒
+                    const delay = Math.min(5000, 500 + attempt * 250);
+                    directTranscodePollingTimer = setTimeout(() => pollDirectTranscodeStatus(statusUrl, attempt + 1), delay);
+                });
+        }
+
+        function startDirectTranscodeTask(force = false) {
+            // V2: 简化版转码启动
+            if (!directPickcode) {
+                return;
+            }
+            stopDirectTranscodePolling();
+            setAlert(directStatus, '<i class="fas fa-spinner fa-spin"></i> 正在启动转码...', 'info');
+
+            fetch('/api/cloud115/transcode/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    pickcode: directPickcode,
+                    file_name: videoFilenameEl ? videoFilenameEl.textContent : undefined,
+                    file_id: fileId115,  // 115 文件 ID，用于通过 OpenAPI 获取时长
+                }),
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.error) {
+                    throw new Error(result.error);
+                }
+
+                // V2: 保存任务信息到全局变量
+                directTranscodeTaskId = result.task_id;
+                directTranscodePlaylistUrl = result.playlist_url;
+                directTranscodeDuration = result.duration || 0;
+
+                // 兼容旧代码：更新 directTranscodeInfo，并添加必要的 URL 字段
+                directTranscodeInfo = result.task || result;
+                // 确保 status_url 等字段存在（用于其他代码路径）
+                if (!directTranscodeInfo.status_url) {
+                    directTranscodeInfo.status_url = `/api/cloud115/transcode/status/${result.task_id}`;
+                }
+                if (!directTranscodeInfo.stream_url) {
+                    directTranscodeInfo.stream_url = result.playlist_url;
+                }
+                if (!directTranscodeInfo.playlist_url) {
+                    directTranscodeInfo.playlist_url = result.playlist_url;
+                }
+                directTranscodeInfo.task_id = result.task_id;
+
+                updateTranscodeButtons();
+
+                // 如果有时长信息，更新显示
+                if (directTranscodeDuration > 0 && videoDurationEl) {
+                    videoDurationEl.textContent = formatTime(directTranscodeDuration);
+                }
+
+                // V2: 启动播放（不再需要轮询等待）
+                startDirectTranscodePlaybackV2();
+            })
+            .catch(error => {
+                setAlert(directStatus, `<i class="fas fa-exclamation-triangle"></i> 启动转码失败: ${error.message}`, 'danger');
+            });
+        }
+
+        function updateModeButtons(mode) {
+            if (alistModeButton) {
+                alistModeButton.classList.toggle('btn-secondary', mode === 'alist');
+                alistModeButton.classList.toggle('btn-outline-primary', mode !== 'alist');
+            }
+            if (directModeButton) {
+                directModeButton.classList.toggle('btn-secondary', mode === 'direct');
+                directModeButton.classList.toggle('btn-outline-primary', mode !== 'direct');
+            }
+            if (cloud115ModeButton) {
+                cloud115ModeButton.classList.toggle('btn-secondary', mode === 'cloud115');
+                cloud115ModeButton.classList.toggle('btn-outline-primary', mode !== 'cloud115');
+            }
+        }
+
+        function updateModeSections(mode) {
+            if (modeSections.alist) {
+                modeSections.alist.classList.toggle('active', mode === 'alist');
+            }
+            if (modeSections.direct) {
+                modeSections.direct.classList.toggle('active', mode === 'direct');
+            }
+            if (modeSections.cloud115) {
+                modeSections.cloud115.classList.toggle('active', mode === 'cloud115');
+            }
+            updateTranscodeButtons();
+        }
+
+        // 模式切换时的播放位置记忆
+        let lastModePlaybackPosition = null;
+        let lastModeName = null;
+
+        // 获取当前模式的播放位置
+        function getCurrentModePlaybackPosition() {
+            const video = getActiveVideo();
+            if (video && video.duration && video.currentTime > 0) {
+                return {
+                    position: video.currentTime,
+                    duration: video.duration
+                };
+            }
+            return null;
+        }
+
+        // 询问是否跳转到上一个模式的播放位置
+        function askJumpToLastModePosition(targetVideoElement) {
+            if (!lastModePlaybackPosition || lastModePlaybackPosition.position < 10) {
+                return; // 位置太小或不存在，不询问
+            }
+
+            const position = lastModePlaybackPosition.position;
+            const minutes = Math.floor(position / 60);
+            const seconds = Math.floor(position % 60);
+            const timeStr = minutes > 0 ? `${minutes}分${seconds}秒` : `${seconds}秒`;
+
+            if (confirm(`${lastModeName === 'alist' ? 'Alist播放' : lastModeName === 'direct' ? '直链播放' : '115播放'}播放到 ${timeStr}，是否跳转到此位置继续播放？`)) {
+                // 设置待跳转的位置
+                if (typeof pendingSeekPosition === 'number' && pendingSeekPosition > 0) {
+                    // 如果有待恢复的保存位置，优先使用用户刚刚确认的"上一个模式"的位置
+                    console.log(`[ModeSwitch] 用户选择跳转到上一个模式的位置: ${position}秒（覆盖保存的${pendingSeekPosition}秒）`);
+                }
+                pendingSeekPosition = position;
+
+                // 立即应用到视频并播放
+                applySavedPosition(targetVideoElement);
+
+                // 自动播放
+                targetVideoElement.play().catch(err => {
+                    console.log('[ModeSwitch] 自动播放被阻止:', err);
+                });
+            }
+
+            // 清空已使用的位置
+            lastModePlaybackPosition = null;
+            lastModeName = null;
+        }
+
+        function applyMode(mode) {
+            // 保存当前模式的播放位置（如果不是首次切换）
+            if (currentMode && currentMode !== mode) {
+                const currentPosition = getCurrentModePlaybackPosition();
+                if (currentPosition && currentPosition.position >= 10) {
+                    lastModePlaybackPosition = currentPosition;
+                    lastModeName = currentMode;
+                    console.log(`[ModeSwitch] 保存${currentMode}模式的播放位置: ${currentPosition.position}秒`);
+                }
+            }
+
+            if (!['alist', 'cloud115', 'direct'].includes(mode)) {
+                mode = alistEnabled ? 'alist' : (hasDirectCapability ? 'direct' : 'cloud115');
+            }
+            currentMode = mode;
+            updateModeButtons(mode);
+            updateModeSections(mode);
+            if (mode !== 'direct') {
+                stopDirectTranscodePolling();
+                clearDirectHlsInstance();
+                directUsingTranscode = false;
+                directTranscodeFallbackTriggered = false;
+            }
+
+            if (videoPlaybackModeEl) {
+                if (mode === 'alist') {
+                    videoPlaybackModeEl.textContent = 'Alist 播放';
+                } else if (mode === 'direct') {
+                    videoPlaybackModeEl.textContent = '115 直链播放';
+                } else {
+                    videoPlaybackModeEl.textContent = '115 播放';
+                }
+            }
+
+            if (mode === 'alist') {
+                if (cloud115Status) {
+                    cloud115Status.style.display = 'none';
+                }
+                if (directStatus) {
+                    directStatus.style.display = 'none';
+                }
+                if (alistStatus && alistStatus.innerHTML.trim()) {
+                    alistStatus.style.display = 'block';
+                } else if (alistStatus) {
+                    alistStatus.style.display = 'none';
+                }
+                const player115El = document.getElementById('player115');
+                if (player115El && !player115El.paused) {
+                    player115El.pause();
+                }
+                if (window.currentHls && window.currentHls.media && !window.currentHls.media.paused) {
+                    window.currentHls.media.pause();
+                }
+                if (directPlayer && !directPlayer.paused) {
+                    directPlayer.pause();
+                }
+                if (alistEnabled) {
+                    initAlistPlayer();
+                }
+                updatePotplayerLink(lastAlistSource);
+
+                // 询问是否跳转到上一个模式的播放位置
+                setTimeout(() => {
+                    const alistVideo = document.getElementById('alistPlayer');
+                    if (alistVideo) {
+                        askJumpToLastModePosition(alistVideo);
+                    }
+                }, 500);
+            } else if (mode === 'direct') {
+                if (alistStatus) {
+                    alistStatus.style.display = 'none';
+                }
+                if (cloud115Status) {
+                    cloud115Status.style.display = 'none';
+                }
+                if (directStatus && directStatus.innerHTML.trim()) {
+                    directStatus.style.display = 'block';
+                } else if (directStatus) {
+                    directStatus.style.display = 'none';
+                }
+                const player115El = document.getElementById('player115');
+                if (player115El && !player115El.paused) {
+                    player115El.pause();
+                }
+                if (window.currentHls && typeof window.currentHls.stopLoad === 'function') {
+                    try {
+                        window.currentHls.stopLoad();
+                    } catch (err) {
+                        console.debug('停止HLS加载失败:', err);
+                    }
+                }
+                if (alistPlayer && !alistPlayer.paused) {
+                    alistPlayer.pause();
+                }
+                initDirect115Player();
+                if (directPlayer && lastDirectSource) {
+                    directPlayer.play().catch(() => {});
+                }
+                updatePotplayerLink(lastDirectSource);
+                // 根据是否存在转码任务，控制停止按钮显示
+                if (stopTranscodeBtn) {
+                    const hasTaskId = directTranscodeInfo && (directTranscodeInfo.task_id || directTranscodeInfo.id);
+                    stopTranscodeBtn.style.display = hasTaskId ? 'inline-block' : 'none';
+                }
+
+                // 询问是否跳转到上一个模式的播放位置
+                setTimeout(() => {
+                    const directVideo = document.getElementById('direct115Player');
+                    if (directVideo) {
+                        askJumpToLastModePosition(directVideo);
+                    }
+                }, 500);
+            } else {
+                if (alistStatus) {
+                    alistStatus.style.display = 'none';
+                }
+                if (cloud115Status && cloud115Status.innerHTML.trim()) {
+                    cloud115Status.style.display = 'block';
+                } else if (cloud115Status) {
+                    cloud115Status.style.display = 'none';
+                }
+                if (directStatus) {
+                    directStatus.style.display = 'none';
+                }
+                if (alistPlayer && !alistPlayer.paused) {
+                    alistPlayer.pause();
+                }
+                if (directPlayer && !directPlayer.paused) {
+                    directPlayer.pause();
+                }
+                initCloud115Player();
+                updatePotplayerLink(lastCloud115Source);
+                if (stopTranscodeBtn) {
+                    stopTranscodeBtn.style.display = 'none';
+                }
+
+                // 询问是否跳转到上一个模式的播放位置
+                setTimeout(() => {
+                    const cloud115Video = document.getElementById('player115');
+                    if (cloud115Video) {
+                        askJumpToLastModePosition(cloud115Video);
+                    }
+                }, 500);
+            }
+        }
+
+        function initAlistPlayer() {
+            if (!alistEnabled || alistInitialized || !alistPlayer) {
+                return;
+            }
+            alistInitialized = true;
+            setAlert(alistStatus, '<i class="fas fa-spinner fa-spin"></i> 正在准备Alist播放地址...', 'info');
+            if (alistLoadingOverlay) {
+                alistLoadingOverlay.style.display = 'flex';
+            }
+
+            let alistApiUrl = null;
+            if (playMode === 'direct') {
+                if (!directPickcode) {
+                    setAlert(alistStatus, '<i class="fas fa-exclamation-triangle"></i> 缺少pickcode，无法获取播放信息', 'danger');
+                    if (alistLoadingOverlay) {
+                        alistLoadingOverlay.style.display = 'none';
+                    }
+                    return;
+                }
+                const params = new URLSearchParams({ pickcode: directPickcode });
+                if (directPath) {
+                    params.append('path', directPath);
+                }
+                alistApiUrl = `/api/cloud115/alist_play_info?${params.toString()}`;
+            } else {
+                if (!fileId) {
+                    setAlert(alistStatus, '<i class="fas fa-exclamation-triangle"></i> 缺少文件ID，无法获取播放信息', 'danger');
+                    if (alistLoadingOverlay) {
+                        alistLoadingOverlay.style.display = 'none';
+                    }
+                    return;
+                }
+                alistApiUrl = `/api/cloud115/alist_play_info?file_id=${fileId}`;
+            }
+
+            fetch(alistApiUrl)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('请求Alist播放信息失败');
+                    }
+                    return response.json();
+                })
+                .then(result => {
+                    if (!result.success) {
+                        throw new Error(result.message || 'Alist未返回播放信息');
+                    }
+                    const info = result.data || {};
+                    if (info.relative_path && videoPathEl) {
+                        videoPathEl.textContent = info.relative_path;
+                }
+                    if (info.file_name && videoFilenameEl) {
+                        videoFilenameEl.textContent = info.file_name;
+                    }
+                    if (info.file_size && videoSizeEl) {
+                        videoSizeEl.textContent = info.file_size;
+                    }
+                    if (!info.proxy_url) {
+                        throw new Error('未获取到Alist代理地址');
+                    }
+                    
+                    const preferredUrl = info.raw_url || info.proxy_url;
+                    lastAlistSource = preferredUrl;
+                    if (currentMode === 'alist') {
+                        updatePotplayerLink(preferredUrl);
+                    }
+                    
+                    console.log('=== Alist 播放调试信息 ===');
+                    console.log('当前页面协议:', window.location.protocol);
+                    console.log('当前页面主机:', window.location.host);
+                    console.log('proxy_url:', info.proxy_url);
+                    console.log('raw_url:', info.raw_url);
+                    
+                    alistPlayer.setAttribute('playsinline', '');
+                    alistPlayer.setAttribute('webkit-playsinline', '');
+                    
+                    alistPlayer.src = info.proxy_url;
+                    alistPlayer.load();
+                    
+                    // 添加错误监听
+                    alistPlayer.addEventListener('error', function(e) {
+                        const error = alistPlayer.error;
+                        let errorMsg = 'Alist 视频加载失败';
+                        if (error) {
+                            switch(error.code) {
+                                case error.MEDIA_ERR_ABORTED:
+                                    errorMsg += ': 视频加载被中止';
+                                    break;
+                                case error.MEDIA_ERR_NETWORK:
+                                    errorMsg += ': 网络错误';
+                                    break;
+                                case error.MEDIA_ERR_DECODE:
+                                    errorMsg += ': 视频解码失败（可能不支持该编解码器）';
+                                    break;
+                                case error.MEDIA_ERR_SRC_NOT_SUPPORTED:
+                                    errorMsg += ': 不支持的视频格式或MIME类型';
+                                    break;
+                            }
+                            errorMsg += ` (错误代码: ${error.code})`;
+                        }
+                        console.error('Alist播放器错误:', errorMsg, e);
+                        setAlert(alistStatus, `<i class="fas fa-exclamation-triangle"></i> ${errorMsg}`, 'danger');
+                    }, { once: true });
+                    
+                    // 视频加载完成后自动播放
+                    alistPlayer.addEventListener('loadeddata', function() {
+                        console.log('Alist视频已加载，准备播放');
+                        // 移动端可能需要用户交互才能播放
+                        alistPlayer.play().catch(err => {
+                            console.log('自动播放被阻止:', err);
+                            setAlert(alistStatus, '<i class="fas fa-info-circle"></i> Alist 视频已准备就绪，点击播放按钮开始观看。', 'info');
+                        });
+                    }, { once: true });
+                    
+                    // 添加canplay事件，确保视频可以播放
+                    alistPlayer.addEventListener('canplay', function() {
+                        console.log('Alist视频可以播放了');
+                    }, { once: true });
+                    
+                    setAlert(alistStatus, '<i class="fas fa-check-circle"></i> Alist 视频正在加载...', 'success');
+                })
+                .catch(error => {
+                    console.error('Alist播放初始化失败:', error);
+                    setAlert(alistStatus, `<i class="fas fa-exclamation-triangle"></i> ${error.message}`, 'danger');
+                    lastAlistSource = null;
+                    if (currentMode === 'alist') {
+                        updatePotplayerLink(null);
+                    }
+                })
+                .finally(() => {
+                    if (alistLoadingOverlay) {
+                        alistLoadingOverlay.style.display = 'none';
+                    }
+                });
+        }
+
+        function initDirect115Player() {
+            if (directInitialized || !directPlayer) {
+                return;
+            }
+
+            directInitialized = true;
+
+            setAlert(directStatus, '<i class="fas fa-spinner fa-spin"></i> 正在准备115直链播放...', 'info');
+            if (directLoadingOverlay) {
+                directLoadingOverlay.style.display = 'flex';
+            }
+
+            let apiUrl = null;
+            if (directPickcode) {
+                apiUrl = `/api/cloud115/direct_download?pickcode=${encodeURIComponent(directPickcode)}`;
+            } else if (fileId) {
+                apiUrl = `/api/cloud115/direct_download?file_id=${fileId}`;
+            }
+
+            if (!apiUrl) {
+                setAlert(directStatus, '<i class="fas fa-exclamation-triangle"></i> 缺少直链参数，无法获取播放地址', 'danger');
+                if (directLoadingOverlay) {
+                    directLoadingOverlay.style.display = 'none';
+                }
+                directInitialized = false;
+                return;
+            }
+
+            const fetchDirectLink = (useAndroidApi = false) => {
+                let requestUrl = apiUrl;
+                if (useAndroidApi) {
+                    requestUrl += (requestUrl.includes('?') ? '&' : '?') + 'android_api=1';
+                }
+
+            stopDirectTranscodePolling();
+            directTranscodeInfo = null;
+            directTranscodeFallbackTriggered = false;
+
+            // 清理 V2 转码相关状态（防止残留旧任务状态）
+            directTranscodeTaskId = null;
+            directTranscodePlaylistUrl = null;
+            directTranscodeDuration = 0;
+            clearDirectHlsInstance();
+
+                return fetch(requestUrl)
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error(`请求失败 (HTTP ${response.status})`);
+                        }
+                        return response.json();
+                    })
+                    .then(result => {
+                        console.log('115 直链响应:', result);
+                        if (!result.success) {
+                            const data = result.data || {};
+                            const payload = data.response_payload || {};
+                            const msg = result.message || payload.msg || payload.message || '115 未返回直链';
+                            const code = payload.msg_code || data.msg_code || payload.code;
+
+                            if (!useAndroidApi && (code === 50028 || /超出限制/.test(msg))) {
+                                setAlert(directStatus, '<i class="fas fa-info-circle"></i> Chrome接口受限，尝试Android接口获取直链...', 'info');
+                                return fetchDirectLink(true);
+                            }
+
+                            throw new Error(msg);
+                        }
+
+                        return result.data || {};
+                    });
+            };
+
+            fetchDirectLink(false)
+                .then(data => {
+                    const downloadUrl = data.download_url;
+                    if (!downloadUrl) {
+                        throw new Error('115 未返回直链地址');
+                    }
+
+                    lastDirectSource = downloadUrl;
+                    lastDirectAuthCookie = data.auth_cookie || null;
+                    stopDirectTranscodePolling();
+                    directTranscodeInfo = data.transcode || null;
+                    directUsingTranscode = false;
+                    directTranscodeFallbackTriggered = false;
+                    
+                    // 如果转码信息中包含任务信息，提取任务对象
+                    if (directTranscodeInfo && directTranscodeInfo.task) {
+                        const task = directTranscodeInfo.task;
+                        // 如果任务中包含时长，更新 UI
+                        if (task.duration && !isNaN(task.duration) && videoDurationEl) {
+                            const durationSeconds = parseFloat(task.duration);
+                            if (durationSeconds > 0) {
+                                videoDurationEl.textContent = formatTime(durationSeconds);
+                            }
+                        }
+                        // 合并任务信息到 directTranscodeInfo
+                        directTranscodeInfo = Object.assign({}, directTranscodeInfo, task);
+                    } else if (directTranscodeInfo && directTranscodeInfo.duration && !isNaN(directTranscodeInfo.duration) && videoDurationEl) {
+                        // 如果转码信息中直接包含时长，也更新 UI
+                        const durationSeconds = parseFloat(directTranscodeInfo.duration);
+                        if (durationSeconds > 0) {
+                            videoDurationEl.textContent = formatTime(durationSeconds);
+                        }
+                    }
+                    
+                    if (directTranscodeInfo && directTranscodeInfo.enabled && directTranscodeInfo.should_transcode) {
+                        if (directTranscodeInfo.ready && directTranscodeInfo.stream_url) {
+                            startDirectTranscodePlayback(directTranscodeInfo);
+                            return;
+                        }
+                        if (directTranscodeInfo.status_url) {
+                            pollDirectTranscodeStatus(directTranscodeInfo.status_url);
+                            setAlert(directStatus, '<i class="fas fa-info-circle"></i> 正在准备转码流，若直链无法播放将自动切换。', 'info');
+                        } else {
+                            setAlert(directStatus, '<i class="fas fa-info-circle"></i> 已获取直链，必要时可切换到转码播放。', 'info');
+                        }
+                    }
+            
+            // 控制“停止转码”按钮显示
+            updateTranscodeButtons();
+
+                    if (videoFilenameEl && data.file_name) {
+                        videoFilenameEl.textContent = data.file_name;
+                    }
+                    if (videoSizeEl && data.file_size) {
+                        videoSizeEl.textContent = data.file_size;
+                    }
+
+                    clearDirectHlsInstance();
+                    directUsingTranscode = false;
+                    directPlayer.setAttribute('playsinline', '');
+                    directPlayer.setAttribute('webkit-playsinline', '');
+                    directPlayer.setAttribute('x5-playsinline', '');
+                    const proxiedUrl = build115ProxyUrl(downloadUrl, { authCookie: lastDirectAuthCookie, pickcode: directPickcode || null });
+                    directPlayer.src = proxiedUrl;
+                    directPlayer.load();
+                    directPlayer.play().catch(err => {
+                        console.log('直链自动播放被阻止:', err);
+                        setAlert(directStatus, '<i class="fas fa-info-circle"></i> 视频已准备就绪，点击播放按钮开始观看。', 'info');
+                    });
+
+                    if (currentMode === 'direct') {
+                        updatePotplayerLink(lastDirectSource);
+                    }
+
+                    if (!directTranscodeInfo || !directTranscodeInfo.should_transcode) {
+                        setAlert(directStatus, '<i class="fas fa-check-circle"></i> 直链已加载，正在播放...', 'success');
+                    }
+                })
+                .catch(error => {
+                    console.error('115 直链获取失败:', error);
+                    setAlert(directStatus, `<i class="fas fa-exclamation-triangle"></i> ${error.message}`, 'danger');
+                    lastDirectSource = null;
+                    lastDirectAuthCookie = null;
+                    if (currentMode === 'direct') {
+                        updatePotplayerLink(null);
+                    }
+                    directInitialized = false;
+                })
+                .finally(() => {
+                    if (directLoadingOverlay) {
+                        directLoadingOverlay.style.display = 'none';
+                    }
+                });
+        }
+
+        if (alistPlayer) {
+            alistPlayer.addEventListener('loadedmetadata', function() {
+                updateDurationAndResolution(alistPlayer);
+            });
+            alistPlayer.addEventListener('timeupdate', function() {
+                if (currentMode === 'alist') {
+                    updateDurationAndResolution(alistPlayer);
+                }
+            });
+            alistPlayer.addEventListener('error', function() {
+                setAlert(alistStatus, '<i class="fas fa-exclamation-triangle"></i> Alist 视频播放出错，请稍后重试。', 'danger');
+            });
+        }
+
+        if (directPlayer) {
+            directPlayer.addEventListener('loadedmetadata', function() {
+                updateDurationAndResolution(directPlayer);
+            });
+            directPlayer.addEventListener('timeupdate', function() {
+                if (currentMode === 'direct') {
+                    updateDurationAndResolution(directPlayer);
+                }
+            });
+            // V2: 添加 seeking 事件处理（简化版）
+            // V2 seek 处理函数
+            function handleTranscodeSeekV2(targetTime) {
+                if (!directTranscodeTaskId) {
+                    return;
+                }
+
+                fetch(`/api/cloud115/transcode/seek/${directTranscodeTaskId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ time: targetTime }),
+                })
+                .then(response => response.json())
+                .then(result => {
+                    if (result.error) {
+                        setAlert(directStatus, `<i class="fas fa-exclamation-triangle"></i> 跳转失败: ${result.error}`, 'danger');
+                        return;
+                    }
+
+                    // 如果返回了新的任务 ID，或者 start_time 发生了变化，需要重新加载播放器
+                    const newTaskId = result.task_id || (result.task && result.task.id);
+                    const startTime = result.start_time || 0;
+                    const currentStartOffset = parseFloat(directPlayer.dataset.startOffset || '0');
+
+                    // V2 单一任务模式：task_id 始终相同，需要检查 start_time 是否变化
+                    const needsReload = (newTaskId && newTaskId !== directTranscodeTaskId) ||
+                                       (startTime !== currentStartOffset);
+
+                    if (needsReload) {
+                        setAlert(directStatus, '<i class="fas fa-spinner fa-spin"></i> 正在跳转...', 'info');
+
+                        // 更新任务信息（重要：必须同时更新所有相关变量）
+                        if (newTaskId) {
+                            directTranscodeTaskId = newTaskId;
+                            directPlayer.dataset.transcodeTaskId = newTaskId;
+                        }
+                        // 更新 startOffset，让进度条正确显示时间
+                        directPlayer.dataset.startOffset = startTime.toString();
+
+                        // 更新 directTranscodeInfo，确保 status_url 等字段指向新任务
+                        if (result.task) {
+                            directTranscodeInfo = Object.assign({}, directTranscodeInfo || {}, result.task);
+                            const taskId = newTaskId || directTranscodeTaskId;
+                            directTranscodeInfo.status_url = `/api/cloud115/transcode/status/${taskId}`;
+                            directTranscodeInfo.stream_url = `/api/cloud115/transcode/playlist/${taskId}`;
+                            directTranscodeInfo.playlist_url = `/api/cloud115/transcode/playlist/${taskId}`;
+                            directTranscodeInfo.task_id = taskId;
+                            // 确保 totalDuration 始终是完整的视频时长
+                            if (directTranscodeInfo.duration && !isNaN(directTranscodeInfo.duration)) {
+                                directPlayer.dataset.totalDuration = directTranscodeInfo.duration.toString();
+                            }
+                        }
+
+                        // 计算在新流中的播放位置
+                        const currentTime = targetTime - startTime;
+
+                        // 重新加载播放器
+                        if (directHlsInstance) {
+                            const wasPlaying = !directPlayer.paused;
+
+                            directHlsInstance.destroy();
+                            directHlsInstance = new Hls({
+                                maxBufferLength: 30,
+                                maxMaxBufferLength: 600,
+                            });
+
+                            const taskId = newTaskId || directTranscodeTaskId;
+                            const newPlaylistUrl = `/api/cloud115/transcode/playlist/${taskId}`;
+                            directTranscodePlaylistUrl = newPlaylistUrl;
+                            directHlsInstance.loadSource(newPlaylistUrl);
+                            directHlsInstance.attachMedia(directPlayer);
+
+                            // 设置超时，防止卡住
+                            const manifestTimeout = setTimeout(() => {
+                                setAlert(directStatus, '<i class="fas fa-exclamation-triangle"></i> 播放列表加载超时，正在重试...', 'warning');
+                                // 重新加载
+                                directHlsInstance.loadSource(newPlaylistUrl);
+                            }, 10000);
+
+                            directHlsInstance.on(Hls.Events.MANIFEST_PARSED, function() {
+                                clearTimeout(manifestTimeout);
+                                // 播放器加载完成后跳转
+                                ignoreNextSeeking = true;  // 防止触发另一个 seek 事件
+                                directPlayer.currentTime = Math.max(0, currentTime);
+                                // 更新时长和进度条
+                                updateDurationAndResolution(directPlayer);
+                                // 更新停止转码按钮显示
+                                updateTranscodeButtons();
+                                if (wasPlaying) {
+                                    directPlayer.play().catch(err => {
+                                        // Auto-play blocked by browser
+                                    });
+                                }
+                                setAlert(directStatus, '<i class="fas fa-check-circle"></i> 跳转完成', 'success');
+                            });
+
+                            directHlsInstance.on(Hls.Events.ERROR, function(event, data) {
+                                clearTimeout(manifestTimeout);
+                                if (data.fatal) {
+                                    switch (data.type) {
+                                        case Hls.ErrorTypes.NETWORK_ERROR:
+                                            setAlert(directStatus, '<i class="fas fa-exclamation-triangle"></i> 网络错误，正在恢复...', 'warning');
+                                            directHlsInstance.startLoad();
+                                            break;
+                                        case Hls.ErrorTypes.MEDIA_ERROR:
+                                            setAlert(directStatus, '<i class="fas fa-exclamation-triangle"></i> 媒体错误，正在恢复...', 'warning');
+                                            directHlsInstance.recoverMediaError();
+                                            break;
+                                        default:
+                                            setAlert(directStatus, `<i class="fas fa-exclamation-triangle"></i> 播放错误: ${data.type}`, 'danger');
+                                            directHlsInstance.destroy();
+                                            break;
+                                    }
+                                }
+                            });
+                        }
+                    } else {
+                        // 不需要重新加载 HLS，执行本地 seek
+                        const currentTime = targetTime - startTime;
+                        ignoreNextSeeking = true;
+                        directPlayer.currentTime = Math.max(0, currentTime);
+                        setAlert(directStatus, '', '');  // 清除提示
+                    }
+                })
+                .catch(error => {
+                    setAlert(directStatus, `<i class="fas fa-exclamation-triangle"></i> 跳转请求失败: ${error.message}`, 'danger');
+                });
+            }
+
+            // V2: seeking 事件监听器（简化版）
+            let seekingTimeoutV2 = null;
+            let ignoreNextSeeking = false;  // 防止递归 seek
+
+            directPlayer.addEventListener('seeking', function() {
+                // 只处理转码模式
+                if (!directTranscodeTaskId) {
+                    return;  // 非转码模式，不处理
+                }
+
+                // 忽略程序触发的 seek
+                if (ignoreNextSeeking) {
+                    ignoreNextSeeking = false;
+                    return;
+                }
+
+                const targetTime = directPlayer.currentTime;
+
+                // 防抖处理
+                if (seekingTimeoutV2) {
+                    clearTimeout(seekingTimeoutV2);
+                }
+
+                seekingTimeoutV2 = setTimeout(function() {
+                    handleTranscodeSeekV2(targetTime);
+                }, 300);  // 300ms 防抖
+            });
+
+            directPlayer.addEventListener('seeked', function() {
+                // 清除防抖定时器
+                if (seekingTimeoutV2) {
+                    clearTimeout(seekingTimeoutV2);
+                    seekingTimeoutV2 = null;
+                }
+            });
+            directPlayer.addEventListener('error', function() {
+                setAlert(directStatus, '<i class="fas fa-exclamation-triangle"></i> 直链播放出错，正在尝试切换到转码流...', 'danger');
+                if (directTranscodeInfo && directTranscodeInfo.enabled && !directUsingTranscode && !directTranscodeFallbackTriggered) {
+                    directTranscodeFallbackTriggered = true;
+                    if (directTranscodeInfo.status_url) {
+                        setAlert(directStatus, '<i class="fas fa-spinner fa-spin"></i> 等待转码流就绪，请稍候...', 'warning');
+                        pollDirectTranscodeStatus(directTranscodeInfo.status_url);
+                    } else {
+                        startDirectTranscodeTask();
+                    }
+                } else if (!directUsingTranscode && !directTranscodeFallbackTriggered) {
+                    directTranscodeFallbackTriggered = true;
+                    startDirectTranscodeTask();
+                }
+            });
+        }
+        
+        // 停止转码按钮逻辑（停止所有活跃的转码任务）
+        if (stopTranscodeBtn) {
+            stopTranscodeBtn.addEventListener('click', async function() {
+                // 获取所有转码任务
+                const allTasks = await fetchGlobalTranscodeTasks();
+
+                // 查找活跃的转码任务
+                const activeTasks = allTasks.filter(task => {
+                    const status = (task.status || '').toLowerCase();
+                    return ACTIVE_STATUSES.includes(status);
+                });
+
+                if (activeTasks.length === 0) {
+                    setAlert(directStatus, '<i class="fas fa-info-circle"></i> 当前没有活跃的转码任务。', 'info');
+                    // 刷新按钮状态
+                    updateTranscodeButtons();
+                    return;
+                }
+
+                const taskCount = activeTasks.length;
+                setAlert(directStatus, `<i class="fas fa-spinner fa-spin"></i> 正在停止 ${taskCount} 个转码任务...`, 'info');
+
+                // 并发停止所有活跃任务
+                const stopPromises = activeTasks.map(task => {
+                    const taskId = task.task_id || task.id;
+                    return fetch(`/api/cloud115/transcode/stop/${taskId}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ reason: '用户点击停止' }),
+                    });
+                });
+
+                try {
+                    const results = await Promise.allSettled(stopPromises);
+
+                    // 统计成功和失败的数量
+                    let successCount = 0;
+                    let failCount = 0;
+
+                    results.forEach((result, index) => {
+                        if (result.status === 'fulfilled') {
+                            result.value.json().then(data => {
+                                if (data && data.success) {
+                                    successCount++;
+                                } else {
+                                    failCount++;
+                                }
+                            }).catch(() => failCount++);
+                        } else {
+                            failCount++;
+                        }
+                    });
+
+                    // 清空缓存，强制下次重新获取
+                    globalTranscodeTasks = [];
+                    transcodeTasksLastFetch = 0;
+
+                    // 如果当前页面有转码任务，更新其状态
+                    if (directTranscodeInfo && activeTasks.some(t => (t.task_id || t.id) === (directTranscodeInfo.task_id || directTranscodeInfo.id))) {
+                        directTranscodeInfo.status = 'cancelled';
+                    }
+
+                    // 显示结果
+                    if (failCount === 0) {
+                        setAlert(directStatus, `<i class="fas fa-check-circle"></i> 已成功停止 ${taskCount} 个转码任务。`, 'success');
+                    } else if (successCount > 0) {
+                        setAlert(directStatus, `<i class="fas fa-exclamation-triangle"></i> 停止完成：成功 ${successCount} 个，失败 ${failCount} 个。`, 'warning');
+                    } else {
+                        setAlert(directStatus, `<i class="fas fa-exclamation-triangle"></i> 停止失败，请稍后重试。`, 'danger');
+                    }
+
+                    // 刷新按钮状态
+                    updateTranscodeButtons();
+                } catch (err) {
+                    setAlert(directStatus, `<i class="fas fa-exclamation-triangle"></i> 停止失败: ${err.message}`, 'danger');
+                }
+            });
+        }
+
+        // 强制转码按钮逻辑
+        if (forceTranscodeBtn) {
+            forceTranscodeBtn.addEventListener('click', function() {
+                if (!directPickcode) {
+                    setAlert(directStatus, '<i class="fas fa-exclamation-triangle"></i> 缺少pickcode，无法启动转码', 'danger');
+                    return;
+                }
+                startDirectTranscodeTask(true);  // 强制启动转码
+            });
+        }
+
+        function initCloud115Player() {
+            if (cloud115Initialized) return;
+            cloud115Initialized = true;
+
+            const videoElement = document.getElementById('player115');
+            const loadingOverlay = document.getElementById('loading-overlay');
+            const retryButton = document.getElementById('retry-button');
+            const definitionSelector = document.getElementById('definitionSelector');
+            const debugInfo = document.getElementById('debugInfo');
+            const debugLogs = document.getElementById('debugLogs');
+
+            if (!videoElement || !loadingOverlay || !definitionSelector) {
+                console.warn('115播放器元素未找到，初始化失败');
+                return;
+            }
+
+            let videoData = null;
+            let currentDefinition = null;
+            let lastPlayedPosition = 0;
+            let hls = null;
+            // 将HLS实例存储在window对象上，以便在切换tab时可以访问
+            window.currentHls = null;
+
+            function addDebugLog(message) {
+                if (debugLogs) {
+            const timestamp = new Date().toISOString().substr(11, 8);
+            debugLogs.innerHTML += `<div>[${timestamp}] ${message}</div>`;
+            debugLogs.scrollTop = debugLogs.scrollHeight;
+                }
+            console.log(`[DEBUG] ${message}`);
+        }
+        
+        function updateVideoStatus(message, type = 'info') {
+                setAlert(cloud115Status, message, type);
+        }
+        
+        function destroyHls() {
+            if (hls) {
+                try {
+                    hls.destroy();
+                    hls = null;
+                    addDebugLog('已销毁现有HLS实例');
+                } catch (e) {
+                    addDebugLog(`销毁HLS实例错误: ${e.message}`);
+                }
+            }
+        }
+        
+            function updateVideoInfo() {
+                try {
+                    updateDurationAndResolution(videoElement);
+                    if (videoData) {
+                        if (videoData.file_name && videoFilenameEl) {
+                            videoFilenameEl.textContent = videoData.file_name;
+                        }
+                        if (videoData.file_size && videoSizeEl) {
+                            const sizeInMB = (videoData.file_size / (1024 * 1024)).toFixed(2);
+                            videoSizeEl.textContent = `${sizeInMB} MB`;
+                        }
+                    }
+                } catch (e) {
+                    addDebugLog(`更新视频信息错误: ${e.message}`);
+                }
+            }
+
+        function playVideo(videoUrl, startTime = 0) {
+            if (!videoUrl) {
+                updateVideoStatus('<i class="fas fa-exclamation-triangle"></i> 无效的视频URL', 'danger');
+                loadingOverlay.style.display = 'none';
+                return;
+            }
+
+            addDebugLog(`准备播放视频: ${videoUrl}`);
+
+            loadingOverlay.style.display = 'flex';
+            updateVideoStatus('<i class="fas fa-spinner fa-spin"></i> 正在加载视频...', 'info');
+
+            if (videoElement.currentTime && !isNaN(videoElement.currentTime)) {
+                lastPlayedPosition = videoElement.currentTime;
+            }
+
+            destroyHls();
+
+            const proxyUrl = build115ProxyUrl(videoUrl);
+            addDebugLog(`使用代理URL: ${proxyUrl}`);
+
+            const handleMetadataLoaded = function() {
+                addDebugLog('视频元数据已加载');
+
+                // 位置恢复由applySavedPosition统一处理
+                updateVideoInfo();
+                loadingOverlay.style.display = 'none';
+            };
+                
+                const handleError = function(e) {
+                    console.error('Video error:', e);
+                    addDebugLog(`视频错误: ${videoElement.error?.code || 'unknown'} - ${videoElement.error?.message || 'No details'}`);
+                    updateVideoStatus(`<i class="fas fa-exclamation-triangle"></i> 视频播放错误: ${videoElement.error?.message || '未知错误'}`, 'danger');
+                loadingOverlay.style.display = 'none';
+                };
+
+                videoElement.addEventListener('error', handleError, { once: true });
+                videoElement.addEventListener('loadedmetadata', handleMetadataLoaded, { once: true });
+                videoElement.addEventListener('loadstart', () => addDebugLog('视频开始加载'), { once: true });
+                videoElement.addEventListener('loadeddata', () => addDebugLog('视频数据已加载'), { once: true });
+            
+            videoElement.addEventListener('canplay', () => {
+                addDebugLog('视频可以开始播放');
+                    updateVideoStatus('<i class="fas fa-check-circle"></i> 视频已准备就绪，可以播放', 'success');
+                }, { once: true });
+            
+            videoElement.addEventListener('play', () => addDebugLog('视频开始播放'));
+            videoElement.addEventListener('pause', () => addDebugLog('视频已暂停'));
+            videoElement.addEventListener('seeking', () => addDebugLog('视频跳转中'));
+            videoElement.addEventListener('seeked', () => addDebugLog('视频已跳转'));
+            
+            if (Hls.isSupported()) {
+                addDebugLog('HLS.js支持已检测到，正在初始化...');
+                
+                    hls = window.currentHls = new Hls({
+                    debug: false,
+                    enableWorker: true,
+                        lowLatencyMode: true,
+                        startLevel: -1,
+                        maxBufferLength: 10,
+                        maxMaxBufferLength: 30,
+                        maxBufferSize: 60 * 1000 * 1000,
+                    maxBufferHole: 0.5,
+                    highBufferWatchdogPeriod: 2,
+                    nudgeOffset: 0.1,
+                        nudgeMaxRetry: 3,
+                    maxFragLookUpTolerance: 0.25,
+                    liveSyncDurationCount: 3,
+                    liveMaxLatencyDurationCount: 10,
+                    liveDurationInfinity: false,
+                    manifestLoadPolicy: {
+                        default: {
+                                maxTimeToFirstByteMs: 5000,
+                                maxLoadTimeMs: 10000,
+                            timeoutRetry: {
+                                    maxNumRetry: 2,
+                                retryDelayMs: 0,
+                                    maxRetryDelayMs: 500
+                            },
+                            errorRetry: {
+                                    maxNumRetry: 4,
+                                    retryDelayMs: 500,
+                                    maxRetryDelayMs: 4000
+                            }
+                        }
+                    },
+                    fragLoadPolicy: {
+                        default: {
+                                maxTimeToFirstByteMs: 5000,
+                                maxLoadTimeMs: 60000,
+                            timeoutRetry: {
+                                    maxNumRetry: 2,
+                                    retryDelayMs: 500,
+                                    maxRetryDelayMs: 4000
+                            },
+                            errorRetry: {
+                                    maxNumRetry: 3,
+                                    retryDelayMs: 500,
+                                    maxRetryDelayMs: 4000
+                            }
+                        }
+                    },
+                    xhrSetup: function(xhr, url) {
+                            if ((url.includes('115.com') || url.includes('.m3u8') || url.includes('.ts')) && !url.includes('/api/cloud115/proxy')) {
+                                const proxied = build115ProxyUrl(url, { pickcode: directPickcode || null });
+                            const shortUrl = url.length > 60 ? url.substring(0, 60) + '...' : url;
+                            addDebugLog(`拦截并代理HLS请求: ${shortUrl}`);
+                                xhr.open('GET', proxied, true);
+                        }
+                        xhr.withCredentials = false;
+                    }
+                });
+                
+                hls.on(Hls.Events.MEDIA_ATTACHED, function() {
+                    addDebugLog('HLS: 媒体已附加');
+                });
+                
+                hls.on(Hls.Events.MANIFEST_PARSED, function(event, data) {
+                    addDebugLog(`HLS: 清单已解析，发现 ${data.levels?.length || 0} 种质量级别`);
+                        updateVideoStatus('<i class="fas fa-check-circle"></i> 视频流已加载，正在播放...', 'success');
+                    videoElement.play().catch(e => {
+                        addDebugLog(`自动播放被阻止: ${e.message}`);
+                    });
+                });
+                
+                hls.on(Hls.Events.LEVEL_LOADING, function(event, data) {
+                    addDebugLog(`HLS: 正在加载级别 ${data.level}: ${data.url.substring(0, 100)}...`);
+                });
+                
+                hls.on(Hls.Events.FRAG_LOADING, function(event, data) {
+                    if (data.frag && data.frag.url) {
+                        const urlParts = data.frag.url.split('/');
+                        const fileName = urlParts[urlParts.length - 1];
+                        addDebugLog(`HLS: 加载片段: ${fileName.substring(0, 30)}...`);
+                    }
+                });
+                
+                addDebugLog('加载HLS源...');
+                hls.loadSource(proxyUrl);
+                addDebugLog('附加到视频元素...');
+                hls.attachMedia(videoElement);
+                
+                hls.on(Hls.Events.ERROR, function(event, data) {
+                    console.error('HLS error:', data);
+                    const errorType = data.type || 'unknown';
+                    const errorDetails = data.details || 'unknown';
+                    const isFatal = !!data.fatal;
+                    
+                    addDebugLog(`HLS错误: 类型=${errorType}, 详情=${errorDetails}, 致命=${isFatal}`);
+                    
+                    if (data.response) {
+                        const responseCode = data.response.code || 'unknown';
+                        const responseText = data.response.text || '';
+                        addDebugLog(`错误响应: ${responseCode} - ${responseText}`);
+                    }
+                    
+                    if (data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR) {
+                        addDebugLog('清单加载错误，尝试直接使用原始URL...');
+                        setTimeout(() => {
+                            const directProxyUrl = build115ProxyUrl(videoUrl, { pickcode: directPickcode || null });
+                            addDebugLog(`尝试使用直接代理URL加载: ${directProxyUrl}`);
+                            hls.loadSource(directProxyUrl);
+                        }, 1000);
+                        } else if (data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT) {
+                        addDebugLog('清单加载超时，尝试重新加载...');
+                        setTimeout(() => hls.loadSource(proxyUrl), 2000);
+                        } else if (data.details === Hls.ErrorDetails.FRAG_LOAD_ERROR) {
+                        addDebugLog('片段加载错误，尝试修复URL问题...');
+                            if (data.frag && data.frag.url && data.frag.url.includes('/api/cloud115/proxy?url=')) {
+                                try {
+                                    let originalUrl = data.frag.url;
+                                        while (originalUrl.includes('/api/cloud115/proxy?url=')) {
+                                        const parsedUrl = new URL(originalUrl);
+                                        const encodedOriginalUrl = parsedUrl.searchParams.get('url');
+                                        if (!encodedOriginalUrl) break;
+                                        originalUrl = decodeURIComponent(encodedOriginalUrl);
+                                        }
+                                        const cleanProxyUrl = build115ProxyUrl(originalUrl, { pickcode: directPickcode || null });
+                                        addDebugLog(`尝试修复片段URL: ${originalUrl.substring(0, 50)}...`);
+                                        data.frag.url = cleanProxyUrl;
+                                        hls.trigger(Hls.Events.FRAG_LOAD);
+                                        return;
+                                } catch (error) {
+                                    addDebugLog(`修复URL失败: ${error.message}`);
+                                }
+                            }
+                        }
+
+                    if (data.fatal) {
+                            switch (data.type) {
+                            case Hls.ErrorTypes.NETWORK_ERROR:
+                                addDebugLog('致命网络错误。尝试恢复...');
+                                updateVideoStatus(`<i class="fas fa-exclamation-triangle"></i> 网络错误: ${data.details}。尝试恢复中...`, 'warning');
+                                hls.startLoad();
+                                break;
+                            case Hls.ErrorTypes.MEDIA_ERROR:
+                                addDebugLog('致命媒体错误。尝试恢复...');
+                                updateVideoStatus(`<i class="fas fa-exclamation-triangle"></i> 媒体错误: ${data.details}。尝试恢复中...`, 'warning');
+                                hls.recoverMediaError();
+                                break;
+                            default:
+                                addDebugLog('致命错误。无法恢复。');
+                                updateVideoStatus(`<i class="fas fa-times-circle"></i> 致命错误: ${data.details}。无法继续播放。`, 'danger');
+                                hls.destroy();
+                                updateVideoStatus(`<i class="fas fa-info-circle"></i> 尝试直接打开流URL...
+                                    <div class="mt-2">
+                                        <a href="${videoUrl}" target="_blank" class="btn btn-sm btn-outline-primary">在新窗口打开</a>
+                                        <a href="${proxyUrl}" target="_blank" class="btn btn-sm btn-outline-primary">通过代理打开</a>
+                                    </div>
+                                `, 'info');
+                                break;
+                        }
+                    }
+                });
+                } else if (videoElement.canPlayType('application/vnd.apple.mpegurl')) {
+                addDebugLog('检测到浏览器原生HLS支持');
+                videoElement.src = proxyUrl;
+                videoElement.addEventListener('loadedmetadata', function() {
+                    addDebugLog('使用原生HLS支持开始播放');
+                        updateVideoInfo();
+                    videoElement.play().catch(e => {
+                        addDebugLog(`自动播放被阻止: ${e.message}`);
+                    });
+                    }, { once: true });
+                } else {
+                addDebugLog('浏览器不支持HLS');
+                loadingOverlay.style.display = 'none';
+                updateVideoStatus('<i class="fas fa-exclamation-triangle"></i> 您的浏览器不支持HLS流媒体。请尝试使用不同的浏览器。', 'warning');
+            }
+        }
+        
+        function switchDefinition(definition) {
+            if (!videoData || !videoData.video_url) {
+                addDebugLog('没有可用的视频数据');
+                return;
+            }
+            
+            addDebugLog(`切换到清晰度: ${definition}`);
+            
+            if (videoElement.currentTime && !isNaN(videoElement.currentTime)) {
+                lastPlayedPosition = videoElement.currentTime;
+            }
+            
+            const videoUrl = videoData.video_url.find(item => parseInt(item.definition) === parseInt(definition));
+            if (videoUrl && videoUrl.url) {
+                currentDefinition = definition;
+                const buttons = definitionSelector.querySelectorAll('button');
+                buttons.forEach(btn => {
+                    if (parseInt(btn.getAttribute('data-definition')) === parseInt(definition)) {
+                        btn.classList.remove('btn-outline-primary');
+                        btn.classList.add('btn-primary');
+                    } else {
+                        btn.classList.remove('btn-primary');
+                        btn.classList.add('btn-outline-primary');
+                    }
+                });
+                lastCloud115Source = videoUrl.url;
+                if (currentMode === 'cloud115') {
+                    updatePotplayerLink(lastCloud115Source);
+                }
+                playVideo(videoUrl.url, lastPlayedPosition);
+            } else {
+                addDebugLog(`未找到清晰度 ${definition} 的视频URL`);
+                updateVideoStatus(`<i class="fas fa-exclamation-triangle"></i> 未找到清晰度 ${definition} 的视频URL`, 'warning');
+            }
+        }
+        
+            function createDefinitionSelector(data) {
+                if (!data || !data.video_url || !data.video_url.length) {
+                addDebugLog('没有可用的视频URL列表');
+                updateVideoStatus('<i class="fas fa-exclamation-triangle"></i> 未找到可用的视频清晰度', 'warning');
+                return;
+            }
+            
+            definitionSelector.innerHTML = '';
+            const definitionNames = {
+                1: '标清',
+                2: '高清',
+                3: '超清',
+                4: '1080P',
+                5: '4K',
+                100: '原画'
+            };
+            
+                addDebugLog(`发现 ${data.video_url.length} 种清晰度选项`);
+            
+                const definitions = data.video_url
+                .map(item => ({
+                    definition: parseInt(item.definition), 
+                    name: item.title || definitionNames[item.definition] || `清晰度 ${item.definition}`
+                }))
+                .sort((a, b) => b.definition - a.definition);
+            
+            definitions.forEach(def => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'btn quality-btn btn-outline-primary';
+                button.setAttribute('data-definition', def.definition);
+                button.textContent = def.name;
+                button.addEventListener('click', () => switchDefinition(def.definition));
+                definitionSelector.appendChild(button);
+                addDebugLog(`添加清晰度选项: ${def.name} (${def.definition})`);
+            });
+            
+            if (definitions.length > 0) {
+                const highestDef = definitions[0].definition;
+                addDebugLog(`默认选择最高清晰度: ${highestDef}`);
+                switchDefinition(highestDef);
+            }
+        }
+        
+        function fetchVideoUrls() {
+            loadingOverlay.style.display = 'flex';
+            updateVideoStatus('<i class="fas fa-spinner fa-spin"></i> 正在获取视频信息...', 'info');
+
+            let videoApiUrl = null;
+            if (playMode === 'direct') {
+                if (!directPickcode) {
+                    updateVideoStatus('<i class="fas fa-exclamation-triangle"></i> 缺少pickcode，无法获取播放地址', 'danger');
+                    loadingOverlay.style.display = 'none';
+                    return;
+                }
+                addDebugLog(`请求视频播放地址: pickcode=${directPickcode}`);
+                videoApiUrl = `/api/cloud115/video_play_url?pickcode=${encodeURIComponent(directPickcode)}`;
+            } else {
+                if (!fileId) {
+                    updateVideoStatus('<i class="fas fa-exclamation-triangle"></i> 缺少文件ID，无法获取播放地址', 'danger');
+                    loadingOverlay.style.display = 'none';
+                    return;
+                }
+                addDebugLog(`请求视频播放地址: 文件ID=${fileId}`);
+                videoApiUrl = `/api/cloud115/video_play_url?file_id=${fileId}`;
+            }
+
+            fetch(videoApiUrl)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('获取视频播放地址失败');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    addDebugLog(`API响应: ${JSON.stringify(data).substring(0, 200)}...`);
+                    if (!data.success && !data.state) {
+                        throw new Error(data.message || '获取视频播放地址失败');
+                    }
+                    videoData = data.data || {};
+                    if (!videoData || !videoData.video_url || !videoData.video_url.length) {
+                        throw new Error('未找到可用的播放地址');
+                    }
+                    addDebugLog(`成功获取视频数据，共 ${videoData.video_url.length} 个清晰度`);
+                    createDefinitionSelector(videoData);
+                })
+                .catch(error => {
+                    console.error('获取视频URL错误:', error);
+                    addDebugLog(`获取视频URL错误: ${error.message}`);
+                    loadingOverlay.style.display = 'none';
+                    updateVideoStatus(`<i class="fas fa-exclamation-circle"></i> ${error.message}`, 'danger');
+                    lastCloud115Source = null;
+                    if (currentMode === 'cloud115') {
+                        updatePotplayerLink(null);
+                    }
+                });
+        }
+        
+            if (retryButton) {
+        retryButton.addEventListener('click', function() {
+            addDebugLog('用户点击重试按钮');
+            if (currentDefinition && videoData) {
+                addDebugLog('使用现有数据重试，清晰度: ' + currentDefinition);
+                switchDefinition(currentDefinition);
+            } else {
+                addDebugLog('重新获取视频数据');
+                fetchVideoUrls();
+            }
+        });
+            }
+        
+            if (debugInfo) {
+                debugInfo.style.display = 'none';
+            }
+
+        addDebugLog('初始化115云盘播放器');
+        fetchVideoUrls();
+        }
+
+        if (alistModeButton) {
+            alistModeButton.addEventListener('click', function() {
+                if (currentMode !== 'alist') {
+                    applyMode('alist');
+                }
+            });
+        }
+
+        if (directModeButton) {
+            directModeButton.addEventListener('click', function() {
+                if (currentMode !== 'direct') {
+                    applyMode('direct');
+                }
+            });
+        }
+
+        if (cloud115ModeButton) {
+            cloud115ModeButton.addEventListener('click', function() {
+                if (currentMode !== 'cloud115') {
+                    applyMode('cloud115');
+                }
+            });
+        }
+
+        applyMode(currentMode);
+
+        // 播放位置记录功能
+        let playbackPositionSaveInterval = null;
+        let hasAskedResume = false;
+
+        // 获取当前激活的video元素
+        function getActiveVideo() {
+            const activeSection = document.querySelector('.mode-section.active');
+            if (!activeSection) return null;
+            if (activeSection.id === 'alistSection') return document.getElementById('alistPlayer');
+            if (activeSection.id === 'direct115Section') return document.getElementById('direct115Player');
+            if (activeSection.id === 'cloud115Section') return document.getElementById('player115');
+            return null;
+        }
+
+        // 保存播放位置
+        function savePlaybackPosition() {
+            const video = getActiveVideo();
+            if (!video || !video.duration || video.currentTime < 1) return;
+
+            const file_id = fileId || directPickcode;
+            if (!file_id) return;
+
+            const position = video.currentTime;
+            const duration = video.duration;
+
+            fetch('/api/playback/position', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    file_id: file_id,
+                    file_type: 'cloud115',
+                    position: position,
+                    duration: duration,
+                    title: file_id
+                })
+            }).catch(err => console.log('保存播放位置失败:', err));
+        }
+
+        // 加载播放位置
+        async function loadPlaybackPosition() {
+            const file_id = fileId || directPickcode;
+            console.log(`[PlaybackResume] 尝试加载播放位置, file_id=${file_id}, fileId=${fileId}, directPickcode=${directPickcode}`);
+            if (!file_id) {
+                console.log('[PlaybackResume] file_id为空，无法加载播放位置');
+                return null;
+            }
+
+            try {
+                const response = await fetch(`/api/playback/position?file_id=${encodeURIComponent(file_id)}`);
+                const data = await response.json();
+                console.log(`[PlaybackResume] API响应:`, data);
+                if (data.success && data.position && data.position > 0) {
+                    return data.position;
+                }
+            } catch (err) {
+                console.log('获取播放位置失败:', err);
+            }
+            return null;
+        }
+
+        // 存储待恢复的播放位置
+        let pendingSeekPosition = null;
+
+        // 询问是否恢复播放位置
+        async function askResumePlayback() {
+            if (hasAskedResume) return;
+            hasAskedResume = true;
+
+            console.log('[PlaybackResume] 开始检查播放位置...');
+            const savedPosition = await loadPlaybackPosition();
+            console.log(`[PlaybackResume] 保存的播放位置: ${savedPosition}秒`);
+            if (savedPosition && savedPosition > 10) { // 只在超过10秒时询问
+                const minutes = Math.floor(savedPosition / 60);
+                const seconds = Math.floor(savedPosition % 60);
+                const timeStr = minutes > 0 ? `${minutes}分${seconds}秒` : `${seconds}秒`;
+
+                if (confirm(`上次播放到 ${timeStr}，是否继续播放？`)) {
+                    // 存储待恢复的播放位置
+                    pendingSeekPosition = savedPosition;
+                    console.log(`[PlaybackResume] 已记录待恢复位置: ${savedPosition}秒`);
+
+                    // 尝试立即应用到当前video（如果已存在）
+                    const video = getActiveVideo();
+                    if (video) {
+                        applySavedPosition(video);
+                    }
+                }
+            }
+        }
+
+        // 应用保存的播放位置
+        function applySavedPosition(video) {
+            if (pendingSeekPosition === null || pendingSeekPosition === undefined) return;
+
+            const positionToApply = pendingSeekPosition;
+
+            console.log(`[PlaybackResume] 应用播放位置: ${positionToApply}秒, video.src=${video.src ? '已设置' : '未设置'}`);
+
+            const applyPosition = () => {
+                console.log(`[PlaybackResume] 实际设置currentTime = ${positionToApply}, 当前currentTime=${video.currentTime}, readyState=${video.readyState}`);
+                video.currentTime = positionToApply;
+                // 清空pendingSeekPosition，只在实际应用后清空
+                pendingSeekPosition = null;
+                // 验证是否设置成功
+                setTimeout(() => {
+                    console.log(`[PlaybackResume] 验证: currentTime=${video.currentTime}`);
+                }, 200);
+            };
+
+            if (video.readyState >= 1 && video.src) {
+                // 视频已加载元数据且有源，延迟一小段时间后设置
+                setTimeout(applyPosition, 100);
+            } else {
+                // 等待元数据加载和源设置
+                const waitForReady = () => {
+                    video.addEventListener('loadedmetadata', function onMetadata() {
+                        console.log(`[PlaybackResume] loadedmetadata事件触发, readyState=${video.readyState}`);
+                        // 等待canplay事件以确保视频可以设置位置
+                        video.addEventListener('canplay', function onCanPlay() {
+                            video.removeEventListener('canplay', onCanPlay);
+                            // 再次检查pendingSeekPosition（可能已被其他代码处理）
+                            if (pendingSeekPosition !== null) {
+                                applyPosition();
+                            }
+                        }, { once: true });
+                    }, { once: true });
+                };
+
+                // 检查是否已经有源但没有触发事件（边缘情况）
+                if (video.src) {
+                    waitForReady();
+                } else {
+                    // 如果源还没设置，监听src变化
+                    const observer = new MutationObserver(() => {
+                        if (video.src) {
+                            observer.disconnect();
+                            waitForReady();
+                        }
+                    });
+                    observer.observe(video, { attributes: true, attributeFilter: ['src'] });
+                    // 设置超时，如果5秒后还没源，放弃
+                    setTimeout(() => {
+                        observer.disconnect();
+                        console.log('[PlaybackResume] 等待视频源超时');
+                    }, 5000);
+                }
+            }
+        }
+
+        // 开始自动保存播放位置（每10秒）
+        function startPlaybackPositionSave() {
+            if (playbackPositionSaveInterval) {
+                clearInterval(playbackPositionSaveInterval);
+            }
+            playbackPositionSaveInterval = setInterval(savePlaybackPosition, 10000);
+
+            // 页面卸载时保存一次
+            window.addEventListener('beforeunload', savePlaybackPosition);
+        }
+
+        // 初始化播放位置功能
+        setTimeout(() => {
+            askResumePlayback();
+            startPlaybackPositionSave();
+        }, 1000);
+
+        // 初始化统一控制条
+        initUnifiedControls();
+    });
+
+    // 统一控制条功能
+    function initUnifiedControls() {
+        const controlBars = document.querySelectorAll('.unified-controls');
+
+        controlBars.forEach(controlBar => {
+            const videoId = controlBar.dataset.video;
+            const video = document.getElementById(videoId);
+            const playBtn = controlBar.querySelector('.unified-play-btn');
+            const progress = controlBar.querySelector('.unified-progress');
+            const tooltip = controlBar.querySelector('.unified-progress-tooltip');
+            const buffer = controlBar.querySelector('.unified-buffer');
+            const filled = controlBar.querySelector('.unified-filled');
+            const currentTimeEl = controlBar.querySelector('.current-time');
+            const totalTimeEl = controlBar.querySelector('.total-time');
+            const muteBtn = controlBar.querySelector('.unified-mute-btn');
+            const volumeSlider = controlBar.querySelector('.unified-volume-slider');
+            const fullscreenBtn = controlBar.querySelector('.unified-fullscreen-btn');
+
+            // 调试：检查video元素是否存在
+            if (!video) {
+                console.warn(`[UnifiedControls] 未找到video元素: ${videoId}`);
+                return;
+            }
+            console.log(`[UnifiedControls] 已绑定到video元素: ${videoId}`);
+
+            // 格式化时间
+            function formatTime(seconds) {
+                if (!seconds || isNaN(seconds)) return '00:00';
+                const mins = Math.floor(seconds / 60);
+                const secs = Math.floor(seconds % 60);
+                return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+            }
+
+            // 播放/暂停
+            function togglePlay() {
+                if (video) {
+                    if (video.paused) {
+                        console.log(`[UnifiedControls] 尝试播放: ${videoId}, src=${video.src}`);
+                        video.play().catch(err => {
+                            console.error(`[UnifiedControls] 播放失败:`, err);
+                        });
+                    } else {
+                        video.pause();
+                    }
+                }
+            }
+
+            // 更新播放/暂停图标
+            function updatePlayPauseIcon() {
+                const icon = playBtn?.querySelector('i');
+                if (!icon) return;
+                if (video && !video.paused) {
+                    icon.classList.remove('bi-play-fill');
+                    icon.classList.add('bi-pause-fill');
+                } else {
+                    icon.classList.remove('bi-pause-fill');
+                    icon.classList.add('bi-play-fill');
+                }
+            }
+
+            // 更新进度
+            function updateProgress() {
+                if (!video) return;
+
+                // 对于转码模式，优先使用 dataset 中的总时长，而不是 video.duration（已转码时长）
+                let durationToUse = video.duration;
+                const totalDuration = video.dataset.totalDuration;
+                const usingTranscode = video.dataset.usingTranscode === 'true';
+                if (usingTranscode && totalDuration && !isNaN(totalDuration)) {
+                    durationToUse = parseFloat(totalDuration);
+                }
+
+                // 获取起始偏移量（转码从哪个时间点开始）
+                const startOffset = video.dataset.startOffset ? parseFloat(video.dataset.startOffset) : 0;
+
+                if (!durationToUse) return;
+
+                // 计算实际播放时间 = 当前 HLS 时间 + 起始偏移量
+                const actualTime = video.currentTime + startOffset;
+                const percent = (actualTime / durationToUse) * 100;
+
+                if (filled) filled.style.width = percent + '%';
+                if (currentTimeEl) currentTimeEl.textContent = formatTime(actualTime);
+
+                // 更新缓冲进度（缓冲也需要加上偏移量）
+                if (video.buffered.length > 0 && buffer) {
+                    const bufferedEnd = video.buffered.end(video.buffered.length - 1) + startOffset;
+                    const bufferPercent = Math.min(100, (bufferedEnd / durationToUse) * 100);
+                    buffer.style.width = bufferPercent + '%';
+                }
+            }
+
+            // 点击进度条跳转
+            if (progress && video) {
+                progress.addEventListener('click', function(e) {
+                    const rect = progress.getBoundingClientRect();
+                    const pos = (e.clientX - rect.left) / rect.width;
+
+                    // 对于转码模式，优先使用 dataset 中的总时长，而不是 video.duration（已转码时长）
+                    let durationToUse = video.duration;
+                    const totalDuration = video.dataset.totalDuration;
+                    const usingTranscode = video.dataset.usingTranscode === 'true';
+                    if (usingTranscode && totalDuration && !isNaN(totalDuration)) {
+                        durationToUse = parseFloat(totalDuration);
+                    }
+                    const targetTime = pos * durationToUse;
+
+                    // 对于转码模式，调用全局函数处理跳转（会暂停、清空缓冲、销毁 HLS、发送请求）
+                    if (usingTranscode && typeof window.seekToTranscodePosition === 'function') {
+                        window.seekToTranscodePosition(targetTime);
+                        return;
+                    }
+
+                    // 非转码模式，正常设置 video.currentTime
+                    video.currentTime = targetTime;
+                });
+
+                // 进度条悬停提示
+                if (tooltip) {
+                    progress.addEventListener('mousemove', function(e) {
+                        // 对于转码模式，优先使用 dataset 中的总时长，而不是 video.duration（已转码时长）
+                        let durationToUse = video.duration;
+                        const totalDuration = video.dataset.totalDuration;
+                        const usingTranscode = video.dataset.usingTranscode === 'true';
+                        if (usingTranscode && totalDuration && !isNaN(totalDuration)) {
+                            durationToUse = parseFloat(totalDuration);
+                        }
+                        if (!durationToUse) return;
+
+                        const rect = progress.getBoundingClientRect();
+                        const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                        const hoverTime = pos * durationToUse;
+                        tooltip.textContent = formatTime(hoverTime);
+                        tooltip.style.left = (pos * 100) + '%';
+                        tooltip.classList.add('visible');
+                    });
+
+                    progress.addEventListener('mouseleave', function() {
+                        tooltip.classList.remove('visible');
+                    });
+                }
+            }
+
+            // 音量控制
+            if (volumeSlider) {
+                volumeSlider.addEventListener('input', function() {
+                    if (video) video.volume = this.value;
+                    updateVolumeIcon();
+                });
+            }
+
+            function updateVolumeIcon() {
+                const icon = muteBtn?.querySelector('i');
+                if (!icon) return;
+                if (video && (video.muted || video.volume === 0)) {
+                    icon.className = 'bi bi-volume-mute';
+                } else if (video && video.volume < 0.5) {
+                    icon.className = 'bi bi-volume-down';
+                } else {
+                    icon.className = 'bi bi-volume-up';
+                }
+            }
+
+            // 静音切换
+            if (muteBtn) {
+                muteBtn.addEventListener('click', function() {
+                    if (video) video.muted = !video.muted;
+                    updateVolumeIcon();
+                });
+            }
+
+            // 全屏切换 - 确保无论video是否存在都能工作
+            if (fullscreenBtn) {
+                fullscreenBtn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log('全屏按钮被点击');
+                    toggleFullScreen();
+                });
+            }
+
+            // video事件监听
+            if (video) {
+                video.addEventListener('play', updatePlayPauseIcon);
+                video.addEventListener('pause', updatePlayPauseIcon);
+                video.addEventListener('timeupdate', updateProgress);
+                video.addEventListener('loadedmetadata', function() {
+                    if (totalTimeEl) totalTimeEl.textContent = formatTime(video.duration);
+                });
+                video.addEventListener('progress', function() {
+                    if (video.buffered.length > 0 && buffer) {
+                        const bufferedEnd = video.buffered.end(video.buffered.length - 1);
+                        const bufferPercent = (bufferedEnd / video.duration) * 100;
+                        buffer.style.width = bufferPercent + '%';
+                    }
+                });
+
+                // 播放/暂停按钮
+                if (playBtn) {
+                    playBtn.addEventListener('click', togglePlay);
+                }
+                video.addEventListener('click', togglePlay);
+            }
+        });
+    }
+
+    function toggleFullScreen() {
+        // 通过DOM查询获取当前激活的模式
+        const activeSection = document.querySelector('.mode-section.active');
+        if (!activeSection) return;
+
+        let container = null;
+        if (activeSection.id === 'alistSection') {
+            container = activeSection.querySelector('.video-container');
+        } else if (activeSection.id === 'direct115Section') {
+            container = activeSection.querySelector('.video-container');
+        } else if (activeSection.id === 'cloud115Section') {
+            container = activeSection.querySelector('.video-container');
+        }
+
+        if (!container) {
+            console.log('未找到video容器');
+            return;
+        }
+
+        console.log('找到容器，准备全屏:', container.className);
+
+        if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+            if (container.requestFullscreen) {
+                container.requestFullscreen().catch(err => console.log('全屏失败:', err));
+            } else if (container.webkitRequestFullscreen) {
+                container.webkitRequestFullscreen();
+            } else if (container.msRequestFullscreen) {
+                container.msRequestFullscreen();
+            }
+        } else {
+            if (document.exitFullscreen) {
+                document.exitFullscreen();
+            } else if (document.webkitExitFullscreen) {
+                document.webkitExitFullscreen();
+            } else if (document.msExitFullscreen) {
+                document.msExitFullscreen();
+            }
+        }
+    }
+
+    // 全屏控件自动隐藏功能
+    let controlsHideTimeout = null;
+
+    function showControls() {
+        const activeSection = document.querySelector('.mode-section.active');
+        if (!activeSection) return;
+        const container = activeSection.querySelector('.video-container');
+        if (!container) return;
+
+        // 只在全屏状态下处理
+        if (!document.fullscreenElement && !document.webkitFullscreenElement) return;
+
+        container.classList.add('controls-visible');
+
+        // 清除之前的定时器
+        if (controlsHideTimeout) {
+            clearTimeout(controlsHideTimeout);
+        }
+
+        // 2秒后隐藏控件
+        controlsHideTimeout = setTimeout(() => {
+            container.classList.remove('controls-visible');
+        }, 2000);
+    }
+
+    function setupAutoHideControls() {
+        const activeSection = document.querySelector('.mode-section.active');
+        if (!activeSection) return;
+        const container = activeSection.querySelector('.video-container');
+        if (!container) return;
+
+        // 鼠标移动时显示控件
+        container.addEventListener('mousemove', showControls);
+        container.addEventListener('click', showControls);
+
+        // 监听全屏变化
+        document.addEventListener('fullscreenchange', handleFullscreenChange);
+        document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    }
+
+    function handleFullscreenChange() {
+        const activeSection = document.querySelector('.mode-section.active');
+        if (!activeSection) return;
+        const container = activeSection.querySelector('.video-container');
+        if (!container) return;
+
+        if (document.fullscreenElement || document.webkitFullscreenElement) {
+            // 进入全屏，显示控件并开始自动隐藏
+            container.classList.add('controls-visible');
+            if (controlsHideTimeout) {
+                clearTimeout(controlsHideTimeout);
+            }
+            controlsHideTimeout = setTimeout(() => {
+                container.classList.remove('controls-visible');
+            }, 2000);
+        } else {
+            // 退出全屏，清除定时器和状态
+            if (controlsHideTimeout) {
+                clearTimeout(controlsHideTimeout);
+            }
+            container.classList.remove('controls-visible');
+        }
+    }
+
+    // 初始化自动隐藏功能
+    setupAutoHideControls();
+
+    function toggleDebugInfo() {
+        const debugInfo = document.getElementById('debugInfo');
+        if (debugInfo.style.display === 'none' || !debugInfo.style.display) {
+            debugInfo.style.display = 'block';
+        } else {
+            debugInfo.style.display = 'none';
+        }
+    }
+
+    // 页面关闭时停止转码任务
+    function stopTranscodeTaskOnUnload() {
+        if (directTranscodeInfo && directTranscodeInfo.task_id) {
+            const taskId = directTranscodeInfo.task_id;
+            const url = `/api/cloud115/transcode/stop/${taskId}`;
+            try { console.debug(`[Transcode][Unload] 准备发送停止请求: taskId=${taskId}, url=${url}`); } catch (e) {}
+            
+            // 优先使用 sendBeacon（支持 POST，使用 FormData）
+            if (navigator.sendBeacon) {
+                try {
+                    // sendBeacon 支持 POST，使用 FormData 或 Blob
+                    const formData = new FormData();
+                    formData.append('_method', 'POST');
+                    const success = navigator.sendBeacon(url, formData);
+                    if (success) {
+                        try { console.debug(`[Transcode][Unload] sendBeacon 发送成功: taskId=${taskId}`); } catch (e) {}
+                    } else {
+                        // sendBeacon 失败，使用 fetch with keepalive
+                        fetch(url, {
+                            method: 'POST',
+                            keepalive: true,
+                        }).then(() => {
+                            try { console.debug(`[Transcode][Unload] sendBeacon 返回false，降级使用 fetch keepalive: taskId=${taskId}`); } catch (e) {}
+                        }).catch(() => {});
+                    }
+                } catch (e) {
+                    // sendBeacon 失败，使用 fetch with keepalive
+                    fetch(url, {
+                        method: 'POST',
+                        keepalive: true,
+                    }).then(() => {
+                        try { console.debug(`[Transcode][Unload] sendBeacon 异常，降级使用 fetch keepalive: taskId=${taskId}`); } catch (e2) {}
+                    }).catch(() => {});
+                }
+            } else {
+                // 降级方案：使用 fetch with keepalive（确保请求在页面关闭时也能发送）
+                fetch(url, {
+                    method: 'POST',
+                    keepalive: true,
+                }).then(() => {
+                    try { console.debug(`[Transcode][Unload] 不支持 sendBeacon，已使用 fetch keepalive: taskId=${taskId}`); } catch (e) {}
+                }).catch(() => {
+                    // 忽略错误，因为页面可能已经关闭
+                });
+            }
+        }
+    }
+
+    // 监听页面关闭事件
+    window.addEventListener('beforeunload', stopTranscodeTaskOnUnload);
+    // 冗余：部分浏览器在 unload 触发时机不同，补充监听
+    window.addEventListener('unload', stopTranscodeTaskOnUnload);
+    
+    // 监听页面隐藏事件（移动端切换应用时）
+    document.addEventListener('visibilitychange', function() {
+        try { console.debug(`[Transcode] visibilitychange: hidden=${document.hidden}, state=${document.visibilityState}`); } catch (e) {}
+    });
+
+    // -----------------------
+    // 实时字幕：根据当前播放模式从对应 video 抓取音频并推送到后端
+    // -----------------------
+     (function () {
+        const TARGET_SAMPLE_RATE = 16000;
+        const BUFFER_SIZE = 4096;
+
+        let audioCtx = null;
+        let sourceNode = null;
+        let processor = null;
+        let ws = null;
+        let liveCaptionEnabled = false;
+        let currentCaptionLayer = null;
+        let currentVideo = null;
+        let silentGain = null;
+        let captionClearTimer = null;
+        let seekRestartTimer = null;
+        let showTranslation = false;
+        let lastCaptionBase = '';
+        let lastCaptionTranslated = '';
+
+        function floatTo16BitPCM(float32Array) {
+            const buffer = new ArrayBuffer(float32Array.length * 2);
+            const view = new DataView(buffer);
+            let offset = 0;
+            for (let i = 0; i < float32Array.length; i++, offset += 2) {
+                const s = Math.max(-1, Math.min(1, float32Array[i]));
+                view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+            }
+            return buffer;
+        }
+
+        function downsampleBuffer(buffer, inputSampleRate) {
+            if (inputSampleRate === TARGET_SAMPLE_RATE) return buffer;
+            if (inputSampleRate < TARGET_SAMPLE_RATE) return buffer;
+
+            const sampleRateRatio = inputSampleRate / TARGET_SAMPLE_RATE;
+            const newLength = Math.round(buffer.length / sampleRateRatio);
+            const result = new Float32Array(newLength);
+            let offsetResult = 0;
+            let offsetBuffer = 0;
+
+            while (offsetResult < result.length) {
+                const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
+                let accum = 0;
+                let count = 0;
+                for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
+                    accum += buffer[i];
+                    count++;
+                }
+                result[offsetResult] = count > 0 ? accum / count : 0;
+                offsetResult++;
+                offsetBuffer = nextOffsetBuffer;
+            }
+
+            return result;
+        }
+
+        function getActivePlayerAndLayer() {
+            let mode = 'cloud115';
+            const alistSection = document.getElementById('alistSection');
+            const directSection = document.getElementById('direct115Section');
+            const cloud115Section = document.getElementById('cloud115Section');
+
+            if (directSection && directSection.classList.contains('active')) {
+                mode = 'direct';
+            } else if (alistSection && alistSection.classList.contains('active')) {
+                mode = 'alist';
+            } else if (cloud115Section && cloud115Section.classList.contains('active')) {
+                mode = 'cloud115';
+            }
+
+            let video = null;
+            let layer = null;
+
+            if (mode === 'alist') {
+                video = document.getElementById('alistPlayer');
+                layer = document.getElementById('liveCaptionLayer');
+            } else if (mode === 'direct') {
+                video = document.getElementById('direct115Player');
+                layer = document.getElementById('liveCaptionLayerDirect');
+            } else {
+                video = document.getElementById('player115');
+                layer = document.getElementById('liveCaptionLayer');
+            }
+
+            return { video, layer };
+        }
+
+        function updateCaptionLayer(text) {
+            const layer = currentCaptionLayer || document.getElementById('liveCaptionLayer');
+            if (!layer) return;
+            layer.textContent = text || '';
+        }
+
+        function renderCaption() {
+            const baseText = lastCaptionBase || '';
+            const translated = lastCaptionTranslated || '';
+            const merged = (showTranslation && translated) ? `${baseText}\n${translated}` : baseText;
+            updateCaptionLayer(merged);
+        }
+
+        function ensureAudioNodes(video) {
+            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+            if (!audioCtx) {
+                audioCtx = new AudioContextClass({ sampleRate: TARGET_SAMPLE_RATE });
+            } else if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+
+            const needRebind = currentVideo !== video || !sourceNode || !processor;
+            if (!needRebind) return;
+
+            try { sourceNode?.disconnect(); } catch (e) {}
+            try { processor?.disconnect(); } catch (e) {}
+            try { silentGain?.disconnect(); } catch (e) {}
+
+            currentVideo = video;
+            sourceNode = audioCtx.createMediaElementSource(video);
+            sourceNode.connect(audioCtx.destination);
+
+            // 使用 1 个静音输出通道让 onaudioprocess 保持触发
+            processor = audioCtx.createScriptProcessor(BUFFER_SIZE, 2, 1);
+            silentGain = audioCtx.createGain();
+            silentGain.gain.value = 0;
+            processor.connect(silentGain);
+            silentGain.connect(audioCtx.destination);
+            sourceNode.connect(processor);
+        }
+
+        function startLiveCaption(withTranslation = false) {
+            if (liveCaptionEnabled) return;
+
+            const active = getActivePlayerAndLayer();
+            const video = active.video;
+            currentCaptionLayer = active.layer;
+
+            if (!video) {
+                console.warn('???????????????????????');
+                return;
+            }
+
+            liveCaptionEnabled = true;
+
+            try {
+                ensureAudioNodes(video);
+            } catch (e) {
+                console.error('????????????:', e);
+                liveCaptionEnabled = false;
+                return;
+            }
+
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+            const wsUrl = wsProtocol + window.location.host + '/ws/caption';
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = function () {
+                try {
+                    ws.send(JSON.stringify({
+                        type: 'start',
+                        translate: !!withTranslation,
+                        segmenter: window.fwhisperSegmenter || 'vad',
+                        movieId: '{{ file_info.get("title") if file_info else file_id }}',
+                        language: window.fwhisperLanguage ? window.fwhisperLanguage : undefined,
+                        model: window.fwhisperModel || undefined,
+                        prefix_chars: window.fwhisperPrefixChars || 0,
+                        sampleRate: TARGET_SAMPLE_RATE,
+                        vad_max_window_secs: window.fwhisperVadMaxWindow || 15.0,
+                        vad_overlap_secs: window.fwhisperVadOverlap || 0.35,
+                        vad_min_silence_secs: window.fwhisperVadMinSilence || 0.4,
+                        vad_min_speech_secs: window.fwhisperVadMinSpeech || 0.6,
+                        vad_frame_secs: window.fwhisperVadFrame || 0.03,
+                        vad_energy_threshold: window.fwhisperVadEnergy || 0.001,
+                        dedup_overlaps: true,
+                        drop_overlap: true
+                    }));
+                } catch (e) {
+                    console.error('Failed to send start message:', e);
+                }
+            };
+
+            ws.onmessage = function (event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'transcript') {
+                        if (captionClearTimer) {
+                            clearTimeout(captionClearTimer);
+                            captionClearTimer = null;
+                        }
+                        lastCaptionBase = data.text || '';
+                        lastCaptionTranslated = data.translated_text || '';
+                        renderCaption();
+                        captionClearTimer = setTimeout(function () {
+                            lastCaptionBase = '';
+                            lastCaptionTranslated = '';
+                            updateCaptionLayer('');
+                        }, 5000);
+                    }
+                } catch (e) {
+                    console.error('Transcription WS parse error:', e);
+                }
+            };
+
+            ws.onerror = function (e) {
+                console.error('Transcription WS error:', e);
+            };
+
+            ws.onclose = function () {
+                console.log('Transcription WS closed');
+            };
+
+            processor.onaudioprocess = function (e) {
+                if (!liveCaptionEnabled) return;
+                if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+                const inputBuffer = e.inputBuffer;
+                const sourceData = inputBuffer.getChannelData(0);
+                const downsampled = downsampleBuffer(sourceData, audioCtx.sampleRate);
+                const pcmBuffer = floatTo16BitPCM(downsampled);
+
+                try {
+                    ws.send(pcmBuffer);
+                } catch (err) {
+                    console.error('Failed to send audio chunk:', err);
+                }
+            };
+        }
+
+        function stopLiveCaption() {
+            liveCaptionEnabled = false;
+
+            if (ws) {
+                try { ws.send(JSON.stringify({ type: 'stop' })); } catch (e) {}
+                try { ws.close(); } catch (e) {}
+                ws = null;
+            }
+            if (captionClearTimer) {
+                clearTimeout(captionClearTimer);
+                captionClearTimer = null;
+            }
+            lastCaptionBase = '';
+            lastCaptionTranslated = '';
+            renderCaption();
+            updateCaptionLayer('');
+        }
+
+        function restartLiveCaption() {
+            if (!liveCaptionEnabled) return;
+            stopLiveCaption();
+            startLiveCaption(showTranslation);
+        }
+
+        function bindSeekRestart() {
+            const playerIds = ['player115', 'direct115Player', 'alistPlayer'];
+            playerIds.forEach(id => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                el.addEventListener('seeked', function () {
+                    if (!liveCaptionEnabled) return;
+                    if (seekRestartTimer) {
+                        clearTimeout(seekRestartTimer);
+                    }
+                    seekRestartTimer = setTimeout(function () {
+                        restartLiveCaption();
+                    }, 150);
+                });
+            });
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+            const btn = document.getElementById('liveCaptionToggleBtn');
+            const translateBtn = document.getElementById('translationToggleBtn');
+            if (!btn) return;
+
+            bindSeekRestart();
+
+            btn.addEventListener('click', function () {
+                if (!liveCaptionEnabled) {
+                    startLiveCaption(showTranslation);
+                    btn.classList.add('btn-success');
+                    if (translateBtn) translateBtn.disabled = false;
+                } else {
+                    stopLiveCaption();
+                    btn.classList.remove('btn-success');
+                    if (translateBtn) {
+                        translateBtn.disabled = true;
+                        translateBtn.classList.remove('btn-success');
+                    }
+                    showTranslation = false;
+                }
+            });
+
+            if (translateBtn) {
+                translateBtn.addEventListener('click', function () {
+                    if (!liveCaptionEnabled) return;
+                    showTranslation = !showTranslation;
+                    if (showTranslation) {
+                        translateBtn.classList.add('btn-success');
+                    } else {
+                        translateBtn.classList.remove('btn-success');
+                    }
+                    restartLiveCaption();
+                });
+            }
+        });
+    })();
+</script>
+{% endblock %} 

@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page_title or "Jellyfin 封面测试" }}{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h1 class="h3 mb-0">Jellyfin 封面测试</h1>
+        <a href="{{ url_for('jellyfin_library') }}" class="btn btn-outline-secondary btn-sm">
+            <i class="fas fa-arrow-left"></i> 返回 Jellyfin 库
+        </a>
+    </div>
+
+    <div class="alert alert-info">
+        输入 Jellyfin 的 <strong>item_id</strong>，通过后台代理直接请求 Jellyfin 已有的封面（不依赖 video_id）。
+        当前配置的服务器：<code>{{ server_url or '未配置' }}</code>，API Key：<span class="badge bg-{{ 'success' if has_api_key else 'secondary' }}">{{ '已配置' if has_api_key else '未配置' }}</span>
+    </div>
+
+    <form id="cover-test-form" class="row g-3">
+        <div class="col-md-6">
+            <label for="itemIdInput" class="form-label">Jellyfin Item ID</label>
+            <input type="text" class="form-control" id="itemIdInput" placeholder="例如: 123abc456def" required>
+        </div>
+        <div class="col-md-3">
+            <label for="qualityInput" class="form-label">质量 (10-100)</label>
+            <input type="number" class="form-control" id="qualityInput" value="90" min="10" max="100">
+        </div>
+        <div class="col-md-3">
+            <label for="tagInput" class="form-label">Image Tag (可选)</label>
+            <input type="text" class="form-control" id="tagInput" placeholder="PrimaryImageTag">
+        </div>
+        <div class="col-12 d-flex gap-2">
+            <button type="submit" class="btn btn-primary">获取封面</button>
+            <button type="button" id="clearBtn" class="btn btn-outline-secondary">清空</button>
+        </div>
+    </form>
+
+    <div id="resultSection" class="mt-4" style="display: none;">
+        <div id="errorAlert" class="alert alert-danger d-none"></div>
+        <div class="row g-3">
+            <div class="col-md-6">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <h6 class="mb-2">Primary 封面</h6>
+                        <div class="mb-2 small text-muted">请求 URL（不含 token）：<code id="previewUrlPrimary"></code></div>
+                        <img id="coverPreviewPrimary" src="" alt="封面预览" class="img-fluid border rounded" style="max-height: 520px;">
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <h6 class="mb-2">Backdrop 背景图</h6>
+                        <div class="mb-2 small text-muted">请求 URL（不含 token）：<code id="previewUrlBackdrop"></code></div>
+                        <img id="coverPreviewBackdrop" src="" alt="背景预览" class="img-fluid border rounded" style="max-height: 520px;">
+                        <div id="backdropHint" class="text-muted small mt-2">如果没有背景图，可能显示为空或返回 404。</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('cover-test-form');
+    const resultSection = document.getElementById('resultSection');
+    const previewPrimary = document.getElementById('coverPreviewPrimary');
+    const previewBackdrop = document.getElementById('coverPreviewBackdrop');
+    const previewUrlPrimary = document.getElementById('previewUrlPrimary');
+    const previewUrlBackdrop = document.getElementById('previewUrlBackdrop');
+    const errorAlert = document.getElementById('errorAlert');
+    const clearBtn = document.getElementById('clearBtn');
+
+    function showError(msg) {
+        errorAlert.textContent = msg;
+        errorAlert.classList.remove('d-none');
+        resultSection.style.display = 'block';
+    }
+
+    function clearError() {
+        errorAlert.classList.add('d-none');
+        errorAlert.textContent = '';
+    }
+
+    form.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        clearError();
+
+        const itemId = document.getElementById('itemIdInput').value.trim();
+        const quality = document.getElementById('qualityInput').value.trim() || '90';
+        const tag = document.getElementById('tagInput').value.trim();
+
+        if (!itemId) {
+            showError('请输入 item_id');
+            return;
+        }
+
+        async function fetchImage(type, targetImg, urlLabel) {
+            const params = new URLSearchParams({ item_id: itemId, quality, type, ts: Date.now() });
+            if (tag) params.append('tag', tag);
+            if (type === 'Backdrop') params.append('index', '0');
+
+            const proxyUrl = `/api/jellyfin/cover_proxy?${params.toString()}`;
+            urlLabel.textContent = proxyUrl.replace(/api_key=[^&]*/g, 'api_key=***');
+
+            const resp = await fetch(proxyUrl);
+            if (!resp.ok) {
+                // Allow backdrop to fail silently (often missing)
+                const text = await resp.text();
+                if (type === 'Backdrop') {
+                    targetImg.src = '';
+                    return;
+                }
+                throw new Error(`请求失败 (${resp.status}): ${text || '无返回内容'}`);
+            }
+            const blob = await resp.blob();
+            targetImg.src = URL.createObjectURL(blob);
+        }
+
+        try {
+            await fetchImage('Primary', previewPrimary, previewUrlPrimary);
+            await fetchImage('Backdrop', previewBackdrop, previewUrlBackdrop);
+            resultSection.style.display = 'block';
+        } catch (err) {
+            console.error(err);
+            showError(`请求异常: ${err.message}`);
+        }
+    });
+
+    clearBtn.addEventListener('click', function() {
+        document.getElementById('itemIdInput').value = '';
+        document.getElementById('tagInput').value = '';
+        document.getElementById('qualityInput').value = '90';
+        clearError();
+        resultSection.style.display = 'none';
+        previewPrimary.src = '';
+        previewBackdrop.src = '';
+        previewUrlPrimary.textContent = '';
+        previewUrlBackdrop.textContent = '';
+    });
+});
+</script>
+{% endblock %}
