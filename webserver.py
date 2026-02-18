@@ -2507,6 +2507,15 @@ def api_video_player(movie_id):
             "error": str(e)
         }), 500
 
+@app.route('/api/resolve/<movie_id>')
+def api_resolve_movie(movie_id):
+    """解析影片流URL的别名路由，兼容Flutter应用的调用
+
+    Flutter应用调用 /api/resolve/{movie_id}，这里作为 /api/video_player/{movie_id} 的别名
+    """
+    # 直接调用现有的 api_video_player 函数
+    return api_video_player(movie_id)
+
 @app.route('/api/proxy/stream')
 def proxy_stream():
     """代理HLS视频流内容，解决CORS问题"""
