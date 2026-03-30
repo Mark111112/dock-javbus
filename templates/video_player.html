@@ -1120,6 +1120,8 @@
 
         const originalHlsUrl = "{{ hls_url }}";
         const originalVideoUrl = "{{ video_url }}";
+        const streamResolve = {{ (stream_resolve or {})|tojson }};
+        const streamErrorMessage = {{ (stream_error_message or '')|tojson }};
         const displayUrl = originalHlsUrl || originalVideoUrl || '';
 
         if (filenameEl && !filenameEl.textContent.trim()) {
@@ -1247,7 +1249,16 @@
             });
         } else {
             addDebugLog('未找到可用的播放源');
-            updateVideoStatus('<i class="bi bi-exclamation-circle"></i> 未找到可用的播放源', 'warning');
+            if (streamResolve && streamResolve.error_code) {
+                addDebugLog(`解析失败: ${streamResolve.error_code} - ${streamResolve.error_message || ''}`);
+                if (streamResolve.challenge_detected) {
+                    updateVideoStatus('<i class="bi bi-shield-exclamation"></i> 当前源站触发了 Cloudflare 安全验证，服务端暂时无法自动解析出真实视频流。可先使用磁力/其他来源，或后续接入人工过验证的会话。', 'warning');
+                } else {
+                    updateVideoStatus(`<i class="bi bi-exclamation-circle"></i> 未找到可用的播放源：${streamResolve.error_message || streamErrorMessage || '未知原因'}`, 'warning');
+                }
+            } else {
+                updateVideoStatus('<i class="bi bi-exclamation-circle"></i> 未找到可用的播放源', 'warning');
+            }
         }
     });
 </script>

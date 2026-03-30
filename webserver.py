@@ -241,6 +241,10 @@ def load_config():
     """Load configuration file"""
     config = {
         "watch_url_prefix": "https://missav.ai",
+        "video_resolver": {
+            "enable_browser_fallback": False,
+            "browser_timeout_ms": 20000
+        },
         "base_url": "https://www.javbus.com",
         "javbus": {
             "mode": "internal",
@@ -1342,15 +1346,15 @@ def video_player(movie_id):
         video_url = ""
         hls_url = ""
         magnet_link = ""
+        stream_resolve = {}
+        stream_error_message = ""
         
         # Try to fetch HLS stream URL from external source - using the similar method as the Windows app
         if CURRENT_WATCH_URL_PREFIX and video_player_adapter:
             try:
-                # 修正：使用正确的URL格式：https://missav.ai/MOVIE-ID
                 target_url = f"{CURRENT_WATCH_URL_PREFIX}/{movie_id}"
                 logging.info(f"Fetching video page for {movie_id}: {target_url}")
-                
-                # 创建会话用于请求
+
                 session = requests.Session()
                 session.headers.update({
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -1359,28 +1363,34 @@ def video_player(movie_id):
                     "Referer": CURRENT_WATCH_URL_PREFIX,
                 })
 
-                # 使用适配器获取视频流URL
-                logging.info("使用VideoAPIAdapter获取视频流")
-                adapter = video_player_adapter.VideoAPIAdapter(retry=3, delay=2)
-                hls_url = video_player_adapter.get_video_stream_url(target_url, session)
-                
+                resolver_cfg = (CURRENT_CONFIG.get("video_resolver") or {})
+                stream_resolve = video_player_adapter.resolve_video_stream(
+                    target_url,
+                    session,
+                    enable_browser_fallback=bool(resolver_cfg.get("enable_browser_fallback", False)),
+                )
+                hls_url = stream_resolve.get("stream_url") or ""
+
                 if hls_url:
                     logging.info(f"成功获取HLS URL: {hls_url}")
                 else:
-                    logging.error(f"无法获取视频流URL")
+                    stream_error_message = stream_resolve.get("error_message") or "无法获取视频流URL"
+                    logging.error(f"无法获取视频流URL: {stream_error_message}")
             except Exception as e:
                 logging.error(f"Error fetching video stream URL: {str(e)}")
                 import traceback
                 logging.error(traceback.format_exc())
+                stream_error_message = str(e)
         
         # If HLS URL was not found, fallback to direct link
         if not hls_url and CURRENT_WATCH_URL_PREFIX:
-            video_url = f"{CURRENT_WATCH_URL_PREFIX}/{movie_id}"
-            logging.info(f"Using direct video URL for {movie_id}: {video_url}")
+            resolver_error_code = (stream_resolve or {}).get("error_code")
+            if resolver_error_code not in {"cf_challenge", "cf_challenge_browser", "fetch_failed", "stream_not_found_in_html"}:
+                video_url = f"{CURRENT_WATCH_URL_PREFIX}/{movie_id}"
+                logging.info(f"Using direct video URL for {movie_id}: {video_url}")
         
         # Check if we have magnet links as another fallback
         if formatted_movie.get("magnet_links") and len(formatted_movie["magnet_links"]) > 0:
-            # Get the best quality magnet link (first one after sorting)
             magnet_link = formatted_movie["magnet_links"][0]["link"]
             logging.info(f"Using magnet link as fallback for {movie_id}")
         
@@ -1391,6 +1401,8 @@ def video_player(movie_id):
                               hls_url=hls_url,
                               magnet_link=magnet_link,
                               movie_id=movie_id,
+                              stream_resolve=stream_resolve,
+                              stream_error_message=stream_error_message,
                               fwh_ws_host=transcription_ws_host,
                               fwh_ws_port=transcription_ws_port,
                               fwh_model=tconf.get("model"),
@@ -1442,13 +1454,23 @@ def api_download_mp4():
                     "Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
                     "Referer": CURRENT_WATCH_URL_PREFIX,
                 })
-                adapter = video_player_adapter.VideoAPIAdapter(retry=3, delay=2)
-                hls_url = video_player_adapter.get_video_stream_url(target_url, session, quality)
+                resolver_cfg = (CURRENT_CONFIG.get("video_resolver") or {})
+                stream_resolve = video_player_adapter.resolve_video_stream(
+                    target_url,
+                    session,
+                    quality=quality,
+                    enable_browser_fallback=bool(resolver_cfg.get("enable_browser_fallback", False)),
+                )
+                hls_url = stream_resolve.get("stream_url")
         except Exception as e:
             logging.warning(f"获取 HLS 地址失败: {e}")
 
         if not hls_url:
-            hls_url = f"{CURRENT_WATCH_URL_PREFIX}/{movie_id}"
+            return jsonify({
+                "success": False,
+                "message": (locals().get("stream_resolve") or {}).get("error_message") or "无法解析影片流地址，未启动下载任务",
+                "resolver": locals().get("stream_resolve") or None,
+            }), 502
 
         # 检查 ffmpeg 是否可用
         if not shutil.which('ffmpeg'):
@@ -2466,7 +2488,6 @@ def api_video_player(movie_id):
         target_url = f"{CURRENT_WATCH_URL_PREFIX}/{movie_id}"
         logging.info(f"Fetching from: {target_url}")
 
-        # 创建 session 并设置 headers
         session = requests.Session()
         session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
@@ -2476,9 +2497,13 @@ def api_video_player(movie_id):
             "Cookie": "age_verify=true",
         })
 
-        # 使用适配器获取视频流URL
-        adapter = video_player_adapter.VideoAPIAdapter(retry=3, delay=2)
-        hls_url = video_player_adapter.get_video_stream_url(target_url, session)
+        resolver_cfg = (CURRENT_CONFIG.get("video_resolver") or {})
+        stream_resolve = video_player_adapter.resolve_video_stream(
+            target_url,
+            session,
+            enable_browser_fallback=bool(resolver_cfg.get("enable_browser_fallback", False)),
+        )
+        hls_url = stream_resolve.get("stream_url")
 
         if hls_url:
             logging.info(f"Success: Got stream URL for {movie_id}")
@@ -2486,15 +2511,17 @@ def api_video_player(movie_id):
                 "success": True,
                 "movie_id": movie_id,
                 "stream_url": hls_url,
+                "resolver": stream_resolve,
             })
-        else:
-            logging.warning(f"Failed: No stream URL found for {movie_id}")
-            return jsonify({
-                "success": False,
-                "movie_id": movie_id,
-                "stream_url": None,
-                "error": "No stream URL found"
-            }), 404
+
+        logging.warning(f"Failed: No stream URL found for {movie_id} ({stream_resolve.get('error_code')})")
+        return jsonify({
+            "success": False,
+            "movie_id": movie_id,
+            "stream_url": None,
+            "error": stream_resolve.get("error_message") or "No stream URL found",
+            "resolver": stream_resolve,
+        }), 404
 
     except Exception as e:
         logging.error(f"Error getting video stream: {str(e)}")

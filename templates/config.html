@@ -123,6 +123,19 @@
                                         </label>
                                         <input type="text" class="form-control config-input" data-config-path="base_url" placeholder="https://www.javbus.com">
                                     </div>
+                                    <div class="mt-3">
+                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="当普通请求解析视频失败时，是否尝试使用 Playwright 浏览器态进行二次解析。">
+                                            浏览器态视频解析回退
+                                        </label>
+                                        <div class="btn-group w-100" role="group" aria-label="视频解析回退开关">
+                                            <input type="radio" class="btn-check config-input" name="video-resolver-browser-fallback" id="video-resolver-browser-fallback-false" data-config-path="video_resolver.enable_browser_fallback" data-type="boolean" value="false" autocomplete="off">
+                                            <label class="btn btn-outline-secondary" for="video-resolver-browser-fallback-false">关闭</label>
+
+                                            <input type="radio" class="btn-check config-input" name="video-resolver-browser-fallback" id="video-resolver-browser-fallback-true" data-config-path="video_resolver.enable_browser_fallback" data-type="boolean" value="true" autocomplete="off">
+                                            <label class="btn btn-outline-primary" for="video-resolver-browser-fallback-true">开启</label>
+                                        </div>
+                                        <small class="text-muted d-block mt-2">注意：如果 MissAV 按机房 IP / 自动化指纹强拦截，开启后也可能仍然失败，但架构上已支持浏览器态回退。</small>
+                                    </div>
                                 </div>
                             </div>
                             <div class="col-12 col-xl-8">

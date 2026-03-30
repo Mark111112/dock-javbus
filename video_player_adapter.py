@@ -1,32 +1,49 @@
 """
-视频播放器适配器 - 用于将video_player2.py中的功能封装为Web应用可以使用的API
+视频播放器适配器
+
+负责从影片页解析真实播放地址（优先 m3u8）。
+设计目标：
+1. 保留旧的 requests/curl_cffi 轻量解析能力
+2. 为 Cloudflare / 风控场景提供结构化失败原因
+3. 预留 Playwright 浏览器态 fallback
+4. 避免调用方在失败时拿到 None 却不知道为什么
 """
 
+import asyncio
 import logging
-import time
+import os
 import re
+import time
+from dataclasses import dataclass, asdict
 from typing import Optional, Dict, Any
 
 # 设置日志级别为WARNING，减少详细日志
 logging.getLogger(__name__).setLevel(logging.WARNING)
 
-# 尝试导入curl_cffi
+# 尝试导入 curl_cffi
 try:
-    from curl_cffi import requests
+    from curl_cffi import requests as curl_requests
 except ImportError:
     logging.warning("curl_cffi未安装，使用备用方法")
-    requests = None
+    curl_requests = None
 
-# 常量定义 - 从video_player2.py复制
+# 尝试导入 Playwright（可选）
+try:
+    from playwright.async_api import async_playwright
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    async_playwright = None
+    PLAYWRIGHT_AVAILABLE = False
+
+# 常量定义
 VIDEO_M3U8_PREFIX = 'https://surrit.com/'
 VIDEO_PLAYLIST_SUFFIX = '/playlist.m3u8'
-MATCH_UUID_PATTERN = r'm3u8\|([a-f0-9\|]+)\|com\|surrit\|https\|video'
 RESOLUTION_PATTERN = r'RESOLUTION=(\d+)x(\d+)'
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
     'Accept-Language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
-    'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+    'sec-ch-ua': '"Chromium";v="136", "Google Chrome";v="136", "Not-A.Brand";v="99"',
     'sec-ch-ua-mobile': '?0',
     'sec-ch-ua-platform': '"Windows"',
     'sec-fetch-dest': 'document',
@@ -36,103 +53,105 @@ HEADERS = {
     'upgrade-insecure-requests': '1'
 }
 
+
+@dataclass
+class StreamResolveResult:
+    success: bool
+    stream_url: Optional[str] = None
+    source: str = "none"
+    stage: str = "init"
+    error_code: Optional[str] = None
+    error_message: Optional[str] = None
+    target_url: Optional[str] = None
+    status_code: Optional[int] = None
+    html_title: Optional[str] = None
+    challenge_detected: bool = False
+    used_browser_fallback: bool = False
+    details: Optional[Dict[str, Any]] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
 class VideoAPIAdapter:
     """视频API适配器类，提供获取视频流URL的功能"""
-    
-    def __init__(self, retry: int = 3, delay: int = 2):
-        """初始化适配器
-        
-        Args:
-            retry: 重试次数
-            delay: 重试延迟(秒)
-        """
+
+    def __init__(self, retry: int = 3, delay: int = 2, enable_browser_fallback: bool = False, browser_timeout_ms: int = 20000):
         self.retry = retry
         self.delay = delay
         self.direct_url = None
+        self.enable_browser_fallback = enable_browser_fallback
+        self.browser_timeout_ms = browser_timeout_ms
 
-    def _get_with_curl_cffi(self, url: str, headers: Dict[str, str] = None, 
-                           cookies: Dict[str, str] = None) -> Optional[str]:
-        """使用curl_cffi获取URL内容，更好地绕过Cloudflare保护
-        
-        Args:
-            url: 要请求的URL
-            headers: 请求头
-            cookies: Cookie
+    @staticmethod
+    def _is_cf_challenge(text: Optional[str]) -> bool:
+        if not text:
+            return False
+        lowered = text.lower()
+        return (
+            'just a moment' in lowered
+            or 'performing security verification' in lowered
+            or '执行安全验证' in text
+            or 'cloudflare' in lowered and 'ray id' in lowered
+        )
 
-        Returns:
-            响应内容字符串或None(如果失败)
-        """
-        if not requests:
+    @staticmethod
+    def _extract_title(html: Optional[str]) -> Optional[str]:
+        if not html:
             return None
-            
+        m = re.search(r'<title>(.*?)</title>', html, re.I | re.S)
+        if not m:
+            return None
+        return re.sub(r'\s+', ' ', m.group(1)).strip()
+
+    def _get_with_curl_cffi(self, url: str, headers: Dict[str, str] = None, cookies: Dict[str, str] = None):
+        if not curl_requests:
+            return None
         try:
-            response = requests.get(
+            response = curl_requests.get(
                 url=url,
                 headers=headers or HEADERS,
                 cookies=cookies,
-                impersonate="chrome110",  # 模拟Chrome 110
-                timeout=15,
+                impersonate="chrome136",
+                timeout=20,
                 verify=False
             )
-            
-            if response.status_code == 200:
-                return response.text
+            return response
         except Exception as e:
             logging.error(f"curl_cffi请求失败: {str(e)}")
-            
-        return None
+            return None
 
-    def _get_with_requests(self, url: str, session, 
-                          headers: Dict[str, str] = None, 
-                          cookies: Dict[str, str] = None) -> Optional[str]:
-        """使用标准requests获取URL内容
-        
-        Args:
-            url: 要请求的URL
-            session: 请求会话
-            headers: 请求头
-            cookies: Cookie
-
-        Returns:
-            响应内容字符串或None(如果失败)
-        """
+    def _get_with_requests(self, url: str, session, headers: Dict[str, str] = None, cookies: Dict[str, str] = None):
         try:
             for attempt in range(self.retry):
                 try:
                     response = session.get(
-                        url, 
+                        url,
                         headers=headers or HEADERS,
                         cookies=cookies,
-                        timeout=15,
-                        allow_redirects=True
+                        timeout=20,
+                        allow_redirects=True,
                     )
-                    
                     if response.status_code == 200:
-                        return response.text
+                        return response
                     elif response.status_code == 403:
-                        # 尝试添加随机头部绕过403
-                        import random, string
+                        import random
+                        import string
                         rand_str = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
-                        
                         if headers:
                             headers["X-Requested-With"] = f"XMLHttpRequest-{rand_str}"
                         else:
                             headers = dict(HEADERS)
                             headers["X-Requested-With"] = f"XMLHttpRequest-{rand_str}"
-                            
                         if cookies:
                             cookies["missav_session"] = rand_str
                         else:
                             cookies = {"missav_session": rand_str, "age_verify": "true"}
-                            
-                        # 在cookie中设置domain
                         domain = url.replace("https://", "").replace("http://", "").split('/')[0]
                         session.cookies.set("missav_session", rand_str, domain=domain)
-                        
                         logging.warning(f"Received 403, retrying with modified headers (attempt {attempt+1})")
                         time.sleep(self.delay)
                     else:
-                        # 其他错误，等待后重试
                         logging.error(f"HTTP error {response.status_code}, retrying... (attempt {attempt+1})")
                         time.sleep(self.delay)
                 except Exception as e:
@@ -140,270 +159,384 @@ class VideoAPIAdapter:
                     time.sleep(self.delay)
         except Exception as e:
             logging.error(f"Get with requests failed: {str(e)}")
-            
         return None
 
-    def _fetch_metadata(self, movie_url: str, session) -> Optional[str]:
-        """获取视频元数据(UUID或直接的m3u8 URL)
-        
-        Args:
-            movie_url: 视频页面URL
-            session: 请求会话
-        
-        Returns:
-            UUID字符串、"direct_url"标记或None(如果失败)
-        """
+    async def _fetch_with_playwright(self, movie_url: str) -> Dict[str, Any]:
+        if not PLAYWRIGHT_AVAILABLE:
+            return {"ok": False, "error": "playwright_not_installed"}
+
+        browser = None
+        pw = None
+        try:
+            pw = await async_playwright().start()
+            browser = await pw.chromium.launch(
+                headless=True,
+                args=['--disable-blink-features=AutomationControlled']
+            )
+            context = await browser.new_context(
+                user_agent=HEADERS['User-Agent'],
+                locale='zh-CN'
+            )
+            page = await context.new_page()
+            await page.goto(movie_url, wait_until='domcontentloaded', timeout=self.browser_timeout_ms)
+            await page.wait_for_timeout(8000)
+            html = await page.content()
+            return {
+                "ok": True,
+                "html": html,
+                "url": page.url,
+                "title": await page.title(),
+            }
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+        finally:
+            try:
+                if browser:
+                    await browser.close()
+            finally:
+                if pw:
+                    await pw.stop()
+
+    def _fetch_page_html(self, movie_url: str, session) -> Dict[str, Any]:
         logging.info(f"获取视频元数据: {movie_url}")
-        
-        # 准备cookie
         domain = movie_url.replace("https://", "").replace("http://", "").split('/')[0]
         cookies = {"age_verify": "true"}
         session.cookies.set("age_verify", "true", domain=domain)
-        
-        # 首先尝试使用curl_cffi，它更好地处理Cloudflare保护
-        html = self._get_with_curl_cffi(movie_url, cookies=cookies)
-        
-        # 如果失败，回退到标准requests
-        if not html:
-            html = self._get_with_requests(movie_url, session, cookies=cookies)
-            
-        if not html:
-            logging.error(f"无法获取网页内容: {movie_url}")
-            return None
-            
-        # 尝试多种正则表达式匹配模式
+
+        response = self._get_with_curl_cffi(movie_url, cookies=cookies)
+        if response is not None:
+            html = getattr(response, 'text', None)
+            status_code = getattr(response, 'status_code', None)
+            title = self._extract_title(html)
+            challenge = self._is_cf_challenge(html)
+            if status_code == 200 and html and not challenge:
+                return {
+                    "ok": True,
+                    "html": html,
+                    "status_code": status_code,
+                    "source": "curl_cffi",
+                    "challenge_detected": False,
+                    "title": title,
+                }
+            if challenge:
+                return {
+                    "ok": False,
+                    "html": html,
+                    "status_code": status_code,
+                    "source": "curl_cffi",
+                    "challenge_detected": True,
+                    "title": title,
+                    "error_code": "cf_challenge",
+                    "error_message": "源站返回 Cloudflare 安全验证页",
+                }
+
+        response = self._get_with_requests(movie_url, session, cookies=cookies)
+        if response is not None:
+            html = getattr(response, 'text', None)
+            status_code = getattr(response, 'status_code', None)
+            title = self._extract_title(html)
+            challenge = self._is_cf_challenge(html)
+            if status_code == 200 and html and not challenge:
+                return {
+                    "ok": True,
+                    "html": html,
+                    "status_code": status_code,
+                    "source": "requests",
+                    "challenge_detected": False,
+                    "title": title,
+                }
+            if challenge or status_code == 403:
+                return {
+                    "ok": False,
+                    "html": html,
+                    "status_code": status_code,
+                    "source": "requests",
+                    "challenge_detected": challenge or status_code == 403,
+                    "title": title,
+                    "error_code": "cf_challenge",
+                    "error_message": "源站返回 Cloudflare 安全验证页",
+                }
+
+        return {
+            "ok": False,
+            "html": None,
+            "status_code": None,
+            "source": "requests",
+            "challenge_detected": False,
+            "title": None,
+            "error_code": "fetch_failed",
+            "error_message": f"无法获取网页内容: {movie_url}",
+        }
+
+    def _extract_stream_metadata(self, html: str) -> Dict[str, Any]:
         patterns = [
-            # 标准的UUID匹配模式
-            r'm3u8\|([a-f0-9\|]+)\|com\|surrit\|https\|video',
-            # 备用模式 1: 直接找surrit.com相关URL
-            r'https://surrit\.com/([a-f0-9-]+)/playlist\.m3u8',
-            # 备用模式 2: 查找video标签的src
-            r'video[^>]*src=["\'](https://surrit\.com/[^"\']+)["\']',
-            # 备用模式 3: 查找所有UUID格式 (通用的UUID格式)
-            r'[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}',
-            # 备用模式 4: 查找任何.m3u8链接
-            r'https?://[^"\'<>\s]+\.m3u8',
-            # 备用模式 5: 查找使用JS设置的视频源
-            r'source\s*=\s*["\']+(https?://[^"\'<>\s]+\.m3u8)["\']+'
+            ("uuid_pipe", r'm3u8\|([a-f0-9\|]+)\|com\|surrit\|https\|video'),
+            ("playlist_uuid", r'https://surrit\.com/([a-f0-9-]+)/playlist\.m3u8'),
+            ("video_src", r'video[^>]*src=["\'](https://surrit\.com/[^"\']+)["\']'),
+            ("plain_uuid", r'[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}'),
+            ("direct_m3u8", r'https?://[^"\'<>\s]+\.m3u8'),
+            ("js_source", r'source\s*=\s*["\']+(https?://[^"\'<>\s]+\.m3u8)["\']+'),
         ]
-        
-        # 直接返回的m3u8链接
+
         direct_m3u8_url = None
-        
-        logging.info("开始尝试匹配视频源...")
-        for i, pattern in enumerate(patterns):
+        for name, pattern in patterns:
             match = re.search(pattern, html)
-            if match:
-                logging.info(f"成功通过模式 {i+1} 匹配到结果")
-                
-                # 根据不同模式处理匹配结果
-                if i == 0:  # 原始模式：特殊格式的UUID
-                    result = match.group(1)
-                    uuid = "-".join(result.split("|")[::-1])
-                    if re.match(r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$', uuid):
-                        logging.info(f"UUID格式验证通过: {uuid}")
-                        return uuid
-                elif i == 1:  # 模式1：直接找到的playlist链接中的UUID
-                    uuid = match.group(1)
-                    if re.match(r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$', uuid):
-                        logging.info(f"UUID格式验证通过: {uuid}")
-                        return uuid
-                elif i == 2:  # 模式2：video标签src中的URL
-                    url_part = match.group(1)
-                    # 检查是否是完整的m3u8链接
-                    if url_part.endswith('.m3u8'):
-                        logging.info(f"直接找到m3u8链接: {url_part}")
-                        direct_m3u8_url = url_part
-                    else:
-                        # 尝试从URL中提取UUID
-                        uuid_match = re.search(r'/([a-f0-9-]+)/', url_part)
-                        if uuid_match:
-                            uuid = uuid_match.group(1)
-                            if re.match(r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$', uuid):
-                                logging.info(f"UUID格式验证通过: {uuid}")
-                                return uuid
-                elif i == 3:  # 模式3：直接匹配UUID格式
-                    uuid = match.group(0)
-                    logging.info(f"成功获取视频UUID: {uuid}")
-                    if re.match(r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$', uuid):
-                        logging.info(f"UUID格式验证通过: {uuid}")
-                        return uuid
-                elif i in (4, 5):  # 模式4和5：直接的m3u8链接
-                    direct_m3u8_url = match.group(1) if i == 5 else match.group(0)
-                    logging.info(f"直接找到m3u8链接: {direct_m3u8_url}")
-                    # 不立即返回，继续尝试其他模式，优先使用UUID方式
-        
-        # 如果找到了直接的m3u8链接但没找到UUID，使用直接链接
+            if not match:
+                continue
+            if name == "uuid_pipe":
+                result = match.group(1)
+                uuid = "-".join(result.split("|")[::-1])
+                if re.match(r'^[a-f0-9-]{36}$', uuid):
+                    return {"kind": "uuid", "value": uuid, "pattern": name}
+            elif name == "playlist_uuid":
+                uuid = match.group(1)
+                if re.match(r'^[a-f0-9-]{36}$', uuid):
+                    return {"kind": "uuid", "value": uuid, "pattern": name}
+            elif name == "video_src":
+                url_part = match.group(1)
+                if url_part.endswith('.m3u8'):
+                    direct_m3u8_url = url_part
+                else:
+                    uuid_match = re.search(r'/([a-f0-9-]+)/', url_part)
+                    if uuid_match:
+                        uuid = uuid_match.group(1)
+                        if re.match(r'^[a-f0-9-]{36}$', uuid):
+                            return {"kind": "uuid", "value": uuid, "pattern": name}
+            elif name == "plain_uuid":
+                return {"kind": "uuid", "value": match.group(0), "pattern": name}
+            elif name == "direct_m3u8":
+                direct_m3u8_url = match.group(0)
+            elif name == "js_source":
+                direct_m3u8_url = match.group(1)
+
         if direct_m3u8_url:
-            logging.info(f"未找到UUID，使用直接的m3u8链接: {direct_m3u8_url}")
-            self.direct_url = direct_m3u8_url  # 保存直接URL
-            return "direct_url"  # 返回特殊标记
-        
-        logging.error(f"无法匹配视频源: {movie_url}")
-        return None
+            self.direct_url = direct_m3u8_url
+            return {"kind": "direct_url", "value": direct_m3u8_url, "pattern": "direct_m3u8"}
+
+        return {"kind": "none", "value": None, "pattern": None}
 
     def _get_playlist_url(self, uuid: str) -> str:
-        """获取播放列表URL
-        
-        Args:
-            uuid: 视频UUID
-            
-        Returns:
-            播放列表URL
-        """
         playlist_url = f"{VIDEO_M3U8_PREFIX}{uuid}{VIDEO_PLAYLIST_SUFFIX}"
         logging.info(f"播放列表URL: {playlist_url}")
         return playlist_url
 
     def _parse_playlist(self, playlist_url: str, playlist_content: str, quality: Optional[str] = None) -> Optional[str]:
-        """解析播放列表，获取指定质量的流URL
-        
-        Args:
-            playlist_url: 播放列表URL
-            playlist_content: 播放列表内容
-            quality: 指定的视频质量(例如"720p")
-            
-        Returns:
-            视频流URL或None(如果解析失败)
-        """
         try:
-            # 检查是否包含分辨率信息
             matches = re.findall(RESOLUTION_PATTERN, playlist_content)
             if not matches:
                 logging.info("播放列表中未找到分辨率信息，直接使用主播放列表")
                 return playlist_url
-                
-            # 处理有多种分辨率的情况
+
             quality_map = {height: width for width, height in matches}
             quality_list = sorted([int(h) for h in quality_map.keys()])
-            
+
             if not quality:
-                # 获取最高分辨率
                 highest_height = str(quality_list[-1])
-                quality_str = f"{highest_height}p"
-                logging.info(f"选择最高质量: {quality_str}")
-                
-                # 尝试查找对应分辨率的URL
                 url_patterns = [
                     f"{quality_map[highest_height]}x{highest_height}/video.m3u8",
                     f"{highest_height}p/video.m3u8"
                 ]
             else:
-                # 清理质量字符串，确保格式为"数字p"
                 quality_cleaned = quality.strip().lower()
                 if not quality_cleaned.endswith('p'):
                     quality_cleaned += 'p'
-                    
-                # 获取数字部分
                 quality_num = int(quality_cleaned.replace('p', ''))
-                
-                # 获取最接近指定分辨率的选项
                 closest_height = min(quality_list, key=lambda x: abs(x - quality_num))
-                quality_str = f"{closest_height}p"
-                logging.info(f"选择质量: {quality_str} (接近请求的 {quality})")
-                
-                # 尝试查找对应分辨率的URL
                 url_patterns = [
                     f"{quality_map[str(closest_height)]}x{closest_height}/video.m3u8",
                     f"{closest_height}p/video.m3u8"
                 ]
-            
-            # 查找匹配的分辨率URL
+
             resolution_url = None
             for pattern in url_patterns:
                 if pattern in playlist_content:
-                    lines = playlist_content.splitlines()
-                    for line in lines:
+                    for line in playlist_content.splitlines():
                         if pattern in line:
                             resolution_url = line
                             break
                     if resolution_url:
                         break
-            
-            # 如果没找到指定分辨率，使用最后一个非注释行
+
             if not resolution_url:
-                non_comment_lines = [l for l in playlist_content.splitlines() if not l.startswith('#')]
-                resolution_url = non_comment_lines[-1] if non_comment_lines else playlist_content.splitlines()[-1]
-                logging.info(f"未找到指定分辨率URL，使用默认: {resolution_url}")
-            else:
-                logging.info(f"找到分辨率URL: {resolution_url}")
-            
-            # 检查resolution_url是否是完整URL
+                non_comment_lines = [l for l in playlist_content.splitlines() if l and not l.startswith('#')]
+                resolution_url = non_comment_lines[-1] if non_comment_lines else None
+
+            if not resolution_url:
+                return playlist_url
             if resolution_url.startswith('http'):
                 return resolution_url
-            else:
-                # 拼接相对路径
-                base_url = '/'.join(playlist_url.split('/')[:-1])
-                return f"{base_url}/{resolution_url}"
-                
+            base_url = '/'.join(playlist_url.split('/')[:-1])
+            return f"{base_url}/{resolution_url}"
         except Exception as e:
             logging.error(f"解析播放列表时出错: {str(e)}")
-            return playlist_url  # 出错时返回原始播放列表URL
-    
-    def get_stream_url(self, movie_url: str, session, quality: Optional[str] = None) -> Optional[str]:
-        """获取视频流URL
-        
-        Args:
-            movie_url: 视频页面URL
-            session: 请求会话
-            quality: 视频质量(如"720p")
-            
-        Returns:
-            视频流URL或None(如果失败)
-        """
-        # 获取视频元数据
-        uuid_or_marker = self._fetch_metadata(movie_url, session)
-        if not uuid_or_marker:
-            return None
-            
-        # 检查是否是直接URL标记
-        if uuid_or_marker == "direct_url" and self.direct_url:
-            logging.info(f"使用直接的播放列表URL: {self.direct_url}")
-            return self.direct_url
-            
-        # 标准UUID处理
-        playlist_url = self._get_playlist_url(uuid_or_marker)
-        
-        # 获取播放列表内容
+            return playlist_url
+
+    def _resolve_from_playlist(self, playlist_url: str, session, quality: Optional[str] = None) -> StreamResolveResult:
         playlist_content = None
-        # 优先使用curl_cffi
-        if requests:
-            try:
-                response = requests.get(playlist_url, impersonate="chrome110", timeout=15)
+        try:
+            if curl_requests:
+                response = curl_requests.get(playlist_url, impersonate="chrome136", timeout=20)
                 if response.status_code == 200:
                     playlist_content = response.text
-            except Exception as e:
-                logging.error(f"获取播放列表失败(curl_cffi): {str(e)}")
-        
-        # 回退到标准requests
+        except Exception as e:
+            logging.error(f"获取播放列表失败(curl_cffi): {str(e)}")
+
         if not playlist_content:
             try:
-                response = session.get(playlist_url, timeout=15)
+                response = session.get(playlist_url, timeout=20)
                 if response.status_code == 200:
                     playlist_content = response.text
             except Exception as e:
                 logging.error(f"获取播放列表失败(requests): {str(e)}")
-        
-        # 如果无法获取播放列表内容，直接返回播放列表URL
+
         if not playlist_content:
-            logging.warning("无法获取播放列表内容，直接使用播放列表URL")
-            return playlist_url
-            
-        # 解析播放列表，获取指定质量的流URL
-        return self._parse_playlist(playlist_url, playlist_content, quality)
+            return StreamResolveResult(
+                success=True,
+                stream_url=playlist_url,
+                source="playlist_url",
+                stage="playlist_fetch",
+                target_url=playlist_url,
+                details={"reason": "playlist_content_unavailable"},
+            )
+
+        stream_url = self._parse_playlist(playlist_url, playlist_content, quality)
+        if stream_url:
+            return StreamResolveResult(
+                success=True,
+                stream_url=stream_url,
+                source="playlist_parsed",
+                stage="playlist_parse",
+                target_url=playlist_url,
+            )
+
+        return StreamResolveResult(
+            success=False,
+            stage="playlist_parse",
+            source="playlist_parsed",
+            target_url=playlist_url,
+            error_code="playlist_parse_failed",
+            error_message="无法从播放列表解析流地址",
+        )
+
+    def resolve_stream(self, movie_url: str, session, quality: Optional[str] = None) -> StreamResolveResult:
+        page_result = self._fetch_page_html(movie_url, session)
+        if page_result.get("ok"):
+            metadata = self._extract_stream_metadata(page_result["html"])
+            if metadata["kind"] == "direct_url":
+                return StreamResolveResult(
+                    success=True,
+                    stream_url=metadata["value"],
+                    source="direct_url",
+                    stage="html_parse",
+                    target_url=movie_url,
+                    status_code=page_result.get("status_code"),
+                    html_title=page_result.get("title"),
+                    details={"pattern": metadata.get("pattern"), "fetch_source": page_result.get("source")},
+                )
+            if metadata["kind"] == "uuid":
+                playlist_url = self._get_playlist_url(metadata["value"])
+                playlist_result = self._resolve_from_playlist(playlist_url, session, quality)
+                playlist_result.status_code = page_result.get("status_code")
+                playlist_result.html_title = page_result.get("title")
+                details = playlist_result.details or {}
+                details.update({"pattern": metadata.get("pattern"), "fetch_source": page_result.get("source")})
+                playlist_result.details = details
+                return playlist_result
+            return StreamResolveResult(
+                success=False,
+                stage="html_parse",
+                source=page_result.get("source", "html"),
+                target_url=movie_url,
+                status_code=page_result.get("status_code"),
+                html_title=page_result.get("title"),
+                error_code="stream_not_found_in_html",
+                error_message="已获取页面，但未找到可用的 m3u8 或 UUID",
+                details={"fetch_source": page_result.get("source")},
+            )
+
+        # 可选浏览器 fallback
+        if page_result.get("error_code") == "cf_challenge" and self.enable_browser_fallback:
+            try:
+                browser_result = asyncio.run(self._fetch_with_playwright(movie_url))
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                try:
+                    browser_result = loop.run_until_complete(self._fetch_with_playwright(movie_url))
+                finally:
+                    loop.close()
+
+            if browser_result.get("ok"):
+                html = browser_result.get("html") or ""
+                if not self._is_cf_challenge(html):
+                    metadata = self._extract_stream_metadata(html)
+                    if metadata["kind"] == "direct_url":
+                        return StreamResolveResult(
+                            success=True,
+                            stream_url=metadata["value"],
+                            source="playwright_direct_url",
+                            stage="browser_html_parse",
+                            target_url=movie_url,
+                            html_title=browser_result.get("title"),
+                            used_browser_fallback=True,
+                            details={"pattern": metadata.get("pattern")},
+                        )
+                    if metadata["kind"] == "uuid":
+                        playlist_url = self._get_playlist_url(metadata["value"])
+                        playlist_result = self._resolve_from_playlist(playlist_url, session, quality)
+                        playlist_result.used_browser_fallback = True
+                        playlist_result.source = f"playwright_{playlist_result.source}"
+                        playlist_result.stage = "browser_playlist_parse"
+                        playlist_result.html_title = browser_result.get("title")
+                        details = playlist_result.details or {}
+                        details.update({"pattern": metadata.get("pattern")})
+                        playlist_result.details = details
+                        return playlist_result
+                return StreamResolveResult(
+                    success=False,
+                    stage="browser_fetch",
+                    source="playwright",
+                    target_url=movie_url,
+                    html_title=browser_result.get("title"),
+                    challenge_detected=self._is_cf_challenge(browser_result.get("html") or ""),
+                    used_browser_fallback=True,
+                    error_code="cf_challenge_browser",
+                    error_message="浏览器态仍被 Cloudflare 安全验证拦截",
+                )
+
+            return StreamResolveResult(
+                success=False,
+                stage="browser_fetch",
+                source="playwright",
+                target_url=movie_url,
+                used_browser_fallback=True,
+                error_code="browser_fetch_failed",
+                error_message=f"浏览器 fallback 失败: {browser_result.get('error')}",
+            )
+
+        return StreamResolveResult(
+            success=False,
+            stage="page_fetch",
+            source=page_result.get("source", "requests"),
+            target_url=movie_url,
+            status_code=page_result.get("status_code"),
+            html_title=page_result.get("title"),
+            challenge_detected=page_result.get("challenge_detected", False),
+            error_code=page_result.get("error_code", "fetch_failed"),
+            error_message=page_result.get("error_message", "无法获取视频流URL"),
+        )
+
+    def get_stream_url(self, movie_url: str, session, quality: Optional[str] = None) -> Optional[str]:
+        result = self.resolve_stream(movie_url, session, quality)
+        return result.stream_url if result.success else None
 
 
-# 导出的主要API函数
+# 导出的主要 API 函数
+
+def resolve_video_stream(movie_url: str, session, quality: Optional[str] = None, enable_browser_fallback: bool = False) -> Dict[str, Any]:
+    adapter = VideoAPIAdapter(enable_browser_fallback=enable_browser_fallback)
+    return adapter.resolve_stream(movie_url, session, quality).to_dict()
+
+
 def get_video_stream_url(movie_url: str, session, quality: Optional[str] = None) -> Optional[str]:
-    """获取视频流URL (主要API函数)
-    
-    Args:
-        movie_url: 视频页面URL
-        session: 请求会话对象
-        quality: 视频质量(如"720p")
-        
-    Returns:
-        视频流URL或None(如果失败)
-    """
     adapter = VideoAPIAdapter()
-    return adapter.get_stream_url(movie_url, session, quality) 
+    return adapter.get_stream_url(movie_url, session, quality)
