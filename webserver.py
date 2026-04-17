@@ -1348,11 +1348,13 @@ def video_player(movie_id):
         magnet_link = ""
         stream_resolve = {}
         stream_error_message = ""
+        upstream_referer = ""
         
         # Try to fetch HLS stream URL from external source - using the similar method as the Windows app
         if CURRENT_WATCH_URL_PREFIX and video_player_adapter:
             try:
                 target_url = f"{CURRENT_WATCH_URL_PREFIX}/{movie_id}"
+                upstream_referer = target_url
                 logging.info(f"Fetching video page for {movie_id}: {target_url}")
 
                 session = requests.Session()
@@ -1403,6 +1405,7 @@ def video_player(movie_id):
                               movie_id=movie_id,
                               stream_resolve=stream_resolve,
                               stream_error_message=stream_error_message,
+                              upstream_referer=upstream_referer,
                               fwh_ws_host=transcription_ws_host,
                               fwh_ws_port=transcription_ws_port,
                               fwh_model=tconf.get("model"),
@@ -2545,121 +2548,120 @@ def api_resolve_movie(movie_id):
 
 @app.route('/api/proxy/stream')
 def proxy_stream():
-    """代理HLS视频流内容，解决CORS问题"""
+    """代理HLS视频流内容，解决CORS与上游防盗链问题"""
     stream_url = request.args.get('url')
-    logging.info(f"视频流代理请求: {stream_url}")
-    
+    upstream_referer = (request.args.get('referer') or '').strip()
+    movie_id = (request.args.get('movie_id') or '').strip()
+    logging.info(f"视频流代理请求: {stream_url}, upstream_referer={upstream_referer}")
+
     if not stream_url:
         return jsonify({"error": "Missing URL parameter"}), 400
-        
+
     try:
-        # 解码URL
         decoded_url = urllib.parse.unquote(stream_url)
         logging.info(f"代理解码后的URL: {decoded_url}")
-        
-        # 获取URL的基本路径（用于解析相对路径）
+
         url_parts = urllib.parse.urlparse(decoded_url)
         base_url = f"{url_parts.scheme}://{url_parts.netloc}{os.path.dirname(url_parts.path)}/"
         base_domain = f"{url_parts.scheme}://{url_parts.netloc}"
-        
-        # 设置请求头
+
+        effective_referer = upstream_referer
+        if not effective_referer and url_parts.netloc.endswith('surrit.com'):
+            watch_prefix = (CURRENT_WATCH_URL_PREFIX or '').rstrip('/')
+            if watch_prefix and movie_id:
+                effective_referer = f"{watch_prefix}/{movie_id}"
+            elif watch_prefix:
+                effective_referer = watch_prefix
+
+        referer_origin = ''
+        if effective_referer:
+            referer_parts = urllib.parse.urlparse(effective_referer)
+            if referer_parts.scheme and referer_parts.netloc:
+                referer_origin = f"{referer_parts.scheme}://{referer_parts.netloc}"
+
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Accept": "*/*",
             "Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Origin": request.headers.get("Origin", request.host_url.rstrip("/")),
-            "Referer": request.headers.get("Referer", request.host_url)
         }
-        
-        # 传递一些重要的请求头
+        if effective_referer:
+            headers['Referer'] = effective_referer
+        if referer_origin:
+            headers['Origin'] = referer_origin
+
         for header in ["Range", "If-Modified-Since", "If-None-Match"]:
             if header in request.headers:
                 headers[header] = request.headers[header]
-        
-        # 发送请求
+
         response = requests.get(
             decoded_url,
             headers=headers,
             stream=True,
-            timeout=10,
+            timeout=15,
             verify=False
         )
-        
-        # 检查响应状态
+
         if response.status_code != 200:
-            logging.error(f"代理请求失败: HTTP {response.status_code}")
+            snippet = ''
+            try:
+                snippet = response.text[:200].replace('\n', ' ')
+            except Exception:
+                pass
+            logging.error(f"代理请求失败: HTTP {response.status_code}, body={snippet}")
             return jsonify({"error": f"Remote server returned HTTP {response.status_code}"}), response.status_code
-            
-        # 获取内容类型
+
         content_type = response.headers.get("Content-Type", "application/octet-stream")
-        
-        # 特殊处理M3U8文件，修改其中的相对URL为代理URL
+
         if "application/vnd.apple.mpegurl" in content_type or decoded_url.endswith(".m3u8"):
             logging.info("检测到M3U8文件，进行处理")
             content = response.text
             processed_content = ""
-            
-            # 处理每一行
+
             for line in content.splitlines():
-                # 跳过注释和空行
                 if line.strip() == "" or line.startswith("#"):
                     processed_content += line + "\n"
                     continue
-                    
-                # 处理URL
+
                 if line.startswith("http"):
-                    # 绝对URL
                     absolute_url = line
                 elif line.startswith("/"):
-                    # 以斜杠开头的相对URL（相对于域名根目录）
                     absolute_url = base_domain + line
                 else:
-                    # 常规相对URL，转换为绝对URL
                     absolute_url = urllib.parse.urljoin(base_url, line)
-                
-                # 将URL转换为代理URL
-                encoded_url = urllib.parse.quote(absolute_url)
-                proxy_url = f"/api/proxy/stream?url={encoded_url}"
+
+                proxy_params = {"url": absolute_url}
+                if effective_referer:
+                    proxy_params['referer'] = effective_referer
+                if movie_id:
+                    proxy_params['movie_id'] = movie_id
+                proxy_url = f"/api/proxy/stream?{urllib.parse.urlencode(proxy_params)}"
                 processed_content += proxy_url + "\n"
                 logging.info(f"M3U8处理: {line} -> {proxy_url}")
-            
-            # 创建响应
-            proxy_response = Response(
-                processed_content,
-                status=response.status_code
-            )
-            
-            # 设置内容类型
+
+            proxy_response = Response(processed_content, status=response.status_code)
             proxy_response.headers["Content-Type"] = "application/vnd.apple.mpegurl"
-            
         else:
-            # 创建响应
             proxy_response = Response(
                 stream_with_context(response.iter_content(chunk_size=1024)),
                 status=response.status_code
             )
-            
-            # 设置内容类型
             proxy_response.headers["Content-Type"] = content_type
-        
-        # 设置CORS头
+
         proxy_response.headers["Access-Control-Allow-Origin"] = "*"
         proxy_response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
         proxy_response.headers["Access-Control-Allow-Headers"] = "Origin, X-Requested-With, Content-Type, Accept, Range"
-        
-        # 复制其他重要的响应头（只对非M3U8内容）
+
         if "application/vnd.apple.mpegurl" not in content_type and not decoded_url.endswith(".m3u8"):
             for header in ["Content-Length", "Content-Range", "Accept-Ranges", "Cache-Control", "Etag"]:
                 if header in response.headers:
                     proxy_response.headers[header] = response.headers[header]
-                    
+
         logging.info(f"代理流成功: {content_type}")
         return proxy_response
-        
+
     except Exception as e:
         logging.error(f"代理流失败: {str(e)}")
         return jsonify({"error": str(e)}), 500
-
 def get_movie_image_url(movie_id):
     """仅获取电影的封面图片URL，避免获取完整详情"""
     # 辅助函数：判断是否是无码影片

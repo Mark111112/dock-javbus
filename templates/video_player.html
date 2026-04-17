@@ -1120,6 +1120,7 @@
 
         const originalHlsUrl = "{{ hls_url }}";
         const originalVideoUrl = "{{ video_url }}";
+        const upstreamReferer = {{ (upstream_referer or "")|tojson }};
         const streamResolve = {{ (stream_resolve or {})|tojson }};
         const streamErrorMessage = {{ (stream_error_message or '')|tojson }};
         const displayUrl = originalHlsUrl || originalVideoUrl || '';
@@ -1154,8 +1155,11 @@
         let hlsUrl = originalHlsUrl;
 
         if (useProxy && hlsUrl) {
-            const encodedUrl = encodeURIComponent(hlsUrl);
-            hlsUrl = `/api/proxy/stream?url=${encodedUrl}`;
+            const params = new URLSearchParams({ url: hlsUrl, movie_id: movieId });
+            if (upstreamReferer) {
+                params.set("referer", upstreamReferer);
+            }
+            hlsUrl = `/api/proxy/stream?${params.toString()}`;
             addDebugLog(`使用代理: ${hlsUrl}`);
         }
 
@@ -1220,7 +1224,7 @@
                                 updateVideoStatus(`<i class="bi bi-info-circle"></i> 尝试直接打开流URL...
                                     <div class="mt-2">
                                         <a href="${originalHlsUrl}" target="_blank" class="btn btn-sm btn-outline-primary">原始链接</a>
-                                        <a href="/api/proxy/stream?url=${encodeURIComponent(originalHlsUrl)}" target="_blank" class="btn btn-sm btn-outline-primary">代理链接</a>
+                                        <a href="${(() => { const p = new URLSearchParams({ url: originalHlsUrl, movie_id: movieId }); if (upstreamReferer) p.set('referer', upstreamReferer); return `/api/proxy/stream?${p.toString()}`; })()}" target="_blank" class="btn btn-sm btn-outline-primary">代理链接</a>
                                     </div>
                                 `, 'info');
                                 break;
