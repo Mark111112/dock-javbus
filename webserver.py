@@ -2491,9 +2491,11 @@ def api_video_player(movie_id):
         target_url = f"{CURRENT_WATCH_URL_PREFIX}/{movie_id}"
         logging.info(f"Fetching from: {target_url}")
 
+        user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
         session = requests.Session()
         session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "User-Agent": user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
             "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
             "Referer": CURRENT_WATCH_URL_PREFIX,
@@ -2509,11 +2511,34 @@ def api_video_player(movie_id):
         hls_url = stream_resolve.get("stream_url")
 
         if hls_url:
+            watch_parts = urllib.parse.urlparse(target_url)
+            watch_origin = f"{watch_parts.scheme}://{watch_parts.netloc}" if watch_parts.scheme and watch_parts.netloc else CURRENT_WATCH_URL_PREFIX.rstrip('/')
+            headers_payload = {
+                "Referer": target_url,
+                "Origin": watch_origin,
+                "User-Agent": user_agent,
+            }
+            proxy_params = {
+                "url": hls_url,
+                "referer": target_url,
+                "movie_id": movie_id,
+            }
+            proxy_path = f"/api/proxy/stream?{urllib.parse.urlencode(proxy_params)}"
+            playback = {
+                "mode": "proxy",
+                "stream_url": proxy_path,
+                "direct_url": hls_url,
+                "proxy_url": proxy_path,
+                "proxy_path": proxy_path,
+                "headers": headers_payload,
+            }
+
             logging.info(f"Success: Got stream URL for {movie_id}")
             return jsonify({
                 "success": True,
                 "movie_id": movie_id,
-                "stream_url": hls_url,
+                "stream_url": proxy_path,
+                "playback": playback,
                 "resolver": stream_resolve,
             })
 
@@ -2522,6 +2547,7 @@ def api_video_player(movie_id):
             "success": False,
             "movie_id": movie_id,
             "stream_url": None,
+            "playback": None,
             "error": stream_resolve.get("error_message") or "No stream URL found",
             "resolver": stream_resolve,
         }), 404
@@ -2534,6 +2560,7 @@ def api_video_player(movie_id):
             "success": False,
             "movie_id": movie_id,
             "stream_url": None,
+            "playback": None,
             "error": str(e)
         }), 500
 
@@ -4482,7 +4509,7 @@ def delete_cloud115_category(category):
 
 # 115云盘登录与授权相关API
 # 预设的115 APP ID
-CLOUD115_CLIENT_ID = "100196935"  # 请替换为实际的115 APP ID
+CLOUD115_CLIENT_ID = "100197767"  # 115play App ID
 
 # 存储用户token信息的文件
 CLOUD115_TOKEN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'cloud115_token.json')
@@ -7169,7 +7196,7 @@ def explorer_api_folder_info():
 
 @app.route('/api/cloud115/import_directory', methods=['POST'])
 def cloud115_import_directory_api():
-    """导入115云盘目录中的视频文件"""
+    """导入115云盘目录中的视频文件（支持 OpenAPI 和 Driver 两种认证方式）"""
     try:
         data = request.get_json()
         if not data or 'folder_id' not in data:
@@ -7187,25 +7214,24 @@ def cloud115_import_directory_api():
 
         app.logger.debug(f"导入115目录，文件夹ID：{folder_id}，最小文件大小：{min_size_mb}MB, 导入类别：{category_type}")
         
-        # 获取token
-        access_token = get_cloud115_valid_token()
-        if not access_token:
+        # 使用统一的 Cloud115Client（支持 OpenAPI Token 和 Driver Cookie 自动回退）
+        if not CLOUD115_CLIENT:
             return jsonify({
                 'success': False,
                 'message': '未授权，请先登录115云盘'
             })
         
         # 获取文件夹信息
-        folder_info_response = requests.get(
-            'https://proapi.115.com/open/folder/get_info',
-            params={'file_id': folder_id},
-            headers={
-                'Authorization': f'Bearer {access_token}'
-            }
-        )
-        
-        folder_info = folder_info_response.json().get('data', {})
-        folder_name = folder_info.get('file_name', '未命名文件夹')
+        try:
+            folder_info_response = CLOUD115_CLIENT.get_folder_info(folder_id)
+            folder_info = folder_info_response.get('data', {})
+            folder_name = folder_info.get('file_name', '未命名文件夹')
+        except Exception as e:
+            app.logger.error(f"获取文件夹信息失败: {e}")
+            return jsonify({
+                'success': False,
+                'message': f'获取文件夹信息失败，请检查115登录状态: {str(e)}'
+            })
 
         # 获取数据库中已有的115云盘文件ID列表，用于去重
         db.ensure_connection()
@@ -7217,29 +7243,19 @@ def cloud115_import_directory_api():
         skipped_files = 0
         skipped_existing_files = 0
 
-        def get_videos_in_folder(folder_id, path=""):
+        def get_videos_in_folder(cid, path=""):
             """递归获取文件夹中的视频文件"""
             nonlocal skipped_files, skipped_existing_files
             offset = 0
-            limit = 100
+            limit = 1150  # 使用 Cloud115Client 的最大限制
             while True:
-                # 获取文件列表
-                files_response = requests.get(
-                    'https://proapi.115.com/open/ufile/files',
-                    params={
-                        'cid': folder_id,
-                        'limit': limit,
-                        'offset': offset,
-                        'show_dir': 1,
-                        'aid': 1
-                    },
-                    headers={
-                        'Authorization': f'Bearer {access_token}'
-                    }
-                )
+                try:
+                    files_response = CLOUD115_CLIENT.list_files(cid=cid, limit=limit, offset=offset)
+                except Exception as e:
+                    app.logger.error(f"获取文件列表失败 (cid={cid}): {e}")
+                    break
 
-                files_data = files_response.json()
-                files = files_data.get('data', [])
+                files = files_response.get('data', [])
                 
                 if not files:
                     break
@@ -7247,60 +7263,58 @@ def cloud115_import_directory_api():
                 for file in files:
                     current_path = f"{path}/{file['fn']}" if path else file['fn']
                     
-                    if file['fc'] == '0':  # 文件夹
+                    if file.get('fc') == '0':  # 文件夹
                         # 递归处理子文件夹
-                        get_videos_in_folder(file['fid'], current_path)
-                    elif file['fc'] == '1':  # 文件
+                        get_videos_in_folder(file.get('cid') or file.get('fid'), current_path)
+                    elif file.get('fc') == '1':  # 文件
                         # 检查是否为视频文件
-                        if file.get('isv') == 1 or file['ico'].lower() in ['mp4', 'mkv', 'avi', 'wmv', 'mov', 'flv', 'm4v', 'rmvb', 'rm']:
+                        ico = file.get('ico', '').lower()
+                        if file.get('isv') == 1 or ico in ['mp4', 'mkv', 'avi', 'wmv', 'mov', 'flv', 'm4v', 'rmvb', 'rm']:
+                            file_id = file.get('fid', '')
                             # 检查文件是否已存在于数据库中
-                            if file['fid'] in existing_file_ids:
+                            if file_id in existing_file_ids:
                                 skipped_existing_files += 1
-                                app.logger.debug(f"跳过已存在文件：{file['fn']}，ID：{file['fid']}")
+                                app.logger.debug(f"跳过已存在文件：{file['fn']}，ID：{file_id}")
                                 continue
 
-                            # 获取文件详情，获取正确的pickcode和文件大小
-                            file_details_response = requests.get(
-                                'https://proapi.115.com/open/folder/get_info',
-                                params={'file_id': file['fid']},
-                                headers={
-                                    'Authorization': f'Bearer {access_token}'
-                                }
-                            )
-                            
-                            file_details = file_details_response.json().get('data', {})
-                            pick_code = file_details.get('pick_code', '')
-                            file_size_str = file_details.get('size', '')  # 获取字符串格式的文件大小
-                            
+                            # 优先使用列表中已返回的大小信息
+                            pick_code = file.get('pick_code') or file.get('pc', '')
+                            file_size_bytes = file.get('fs') or file.get('size', 0)
+                            try:
+                                file_size_bytes = int(file_size_bytes)
+                            except (TypeError, ValueError):
+                                file_size_bytes = 0
+
                             # 需要检查文件大小是否大于最小值
-                            if min_size_mb > 0:
+                            if min_size_mb > 0 and file_size_bytes > 0:
+                                if file_size_bytes < min_size_bytes:
+                                    skipped_files += 1
+                                    app.logger.debug(f"跳过小文件：{file['fn']}，大小：{file_size_bytes/1024/1024:.2f}MB")
+                                    continue
+
+                            # 如果列表中没有 pick_code，尝试获取文件详情
+                            if not pick_code:
                                 try:
-                                    # 将字符串格式的文件大小转换为字节数
-                                    file_size_bytes = convert_human_size_to_bytes(file_size_str)
-                                    
-                                    # 检查文件大小
-                                    if file_size_bytes < min_size_bytes:
-                                        skipped_files += 1
-                                        app.logger.debug(f"跳过小文件：{file['fn']}，大小：{file_size_str}")
-                                        continue
+                                    file_details = CLOUD115_CLIENT.get_file_info(file_id)
+                                    detail_data = file_details.get('data', {})
+                                    pick_code = detail_data.get('pick_code', '')
+                                    if not file_size_bytes:
+                                        size_val = detail_data.get('size', 0)
+                                        try:
+                                            file_size_bytes = int(size_val)
+                                        except (TypeError, ValueError):
+                                            file_size_bytes = 0
                                 except Exception as e:
-                                    app.logger.error(f"转换文件大小失败 '{file_size_str}': {str(e)}")
-                                    # 如果转换失败，尝试使用fs字段
-                                    if 'fs' in file:
-                                        file_size_bytes = int(file['fs'])
-                                        if file_size_bytes < min_size_bytes:
-                                            skipped_files += 1
-                                            app.logger.debug(f"跳过小文件：{file['fn']}，大小：{file_size_bytes/1024/1024:.2f}MB")
-                                            continue
+                                    app.logger.warning(f"获取文件详情失败 {file['fn']}: {e}")
 
                             video_files.append({
-                                'file_id': file['fid'],
+                                'file_id': file_id,
                                 'title': file['fn'],
                                 'path': current_path,
-                                'size': file_size_str,  # 使用字符串格式的文件大小
-                                'category': category_type, # 使用导入类别
+                                'size': file_size_bytes,
+                                'category': category_type,
                                 'thumbnail': file.get('thumb', ''),
-                                'pick_code': pick_code  # 添加pick_code字段
+                                'pick_code': pick_code
                             })
 
                 # 更新偏移量
@@ -7338,8 +7352,8 @@ def cloud115_import_directory_api():
         })
 
 
-def _run_import_115_directory_task(task_id, folder_id, min_size_mb, category_type, access_token):
-    """后台执行115目录导入任务"""
+def _run_import_115_directory_task(task_id, folder_id, min_size_mb, category_type):
+    """后台执行115目录导入任务（支持 OpenAPI 和 Driver 两种认证方式）"""
     try:
         task = IMPORT_115_TASKS.get(task_id)
         if not task:
@@ -7373,13 +7387,10 @@ def _run_import_115_directory_task(task_id, folder_id, min_size_mb, category_typ
 
         # 获取文件夹信息
         try:
-            folder_info_response = requests.get(
-                'https://proapi.115.com/open/folder/get_info',
-                params={'file_id': folder_id},
-                headers={'Authorization': f'Bearer {access_token}'},
-                timeout=30
-            )
-            folder_info = folder_info_response.json().get('data', {})
+            if not CLOUD115_CLIENT:
+                raise RuntimeError('115 云盘客户端未初始化，请先登录')
+            folder_info_response = CLOUD115_CLIENT.get_folder_info(folder_id)
+            folder_info = folder_info_response.get('data', {})
             folder_name = folder_info.get('file_name', '未命名文件夹')
             task['folder_name'] = folder_name
             update_progress('正在获取文件列表...', 10, folder_name, f'目标文件夹: {folder_name}')
@@ -7431,19 +7442,8 @@ def _run_import_115_directory_task(task_id, folder_id, min_size_mb, category_typ
 
             while True:
                 try:
-                    files_response = requests.get(
-                        'https://proapi.115.com/open/ufile/files',
-                        params={
-                            'cid': fid,
-                            'limit': limit,
-                            'offset': offset,
-                            'show_dir': 1,
-                            'aid': 1
-                        },
-                        headers={'Authorization': f'Bearer {access_token}'},
-                        timeout=60  # 增加超时到60秒
-                    )
-                    files_data = files_response.json()
+                    files_response = CLOUD115_CLIENT.list_files(cid=fid, limit=limit, offset=offset)
+                    files_data = files_response
 
                     # 检查响应状态
                     if files_data.get('state') != 1:
@@ -7489,16 +7489,14 @@ def _run_import_115_directory_task(task_id, folder_id, min_size_mb, category_typ
                                             task['skipped_size'] = skipped_files
                                             continue
                                     else:
-                                        # 只有在没有大小信息时才调用get_info API
-                                        file_details_response = requests.get(
-                                            'https://proapi.115.com/open/folder/get_info',
-                                            params={'file_id': file['fid']},
-                                            headers={'Authorization': f'Bearer {access_token}'},
-                                            timeout=15  # 单个文件详情请求超时设为15秒
-                                        )
-                                        file_details = file_details_response.json().get('data', {})
-                                        pick_code = pick_code or file_details.get('pick_code', '')
-                                        file_size_str = file_details.get('size', '')
+                                        # 只有在没有大小信息时才调用 get_file_info
+                                        try:
+                                            file_details_response = CLOUD115_CLIENT.get_file_info(file['fid'])
+                                            file_details = file_details_response.get('data', {})
+                                            pick_code = pick_code or file_details.get('pick_code', '')
+                                            file_size_str = file_details.get('size', '')
+                                        except Exception:
+                                            file_size_str = ''
 
                                         # 检查文件大小
                                         min_size_bytes = min_size_mb * 1024 * 1024
@@ -7521,11 +7519,6 @@ def _run_import_115_directory_task(task_id, folder_id, min_size_mb, category_typ
                                         'thumbnail': file.get('thumb', ''),
                                         'pick_code': pick_code
                                     })
-                                except requests.Timeout:
-                                    task['error_files'].append({
-                                        'title': file['fn'],
-                                        'error': '获取文件详情超时，已跳过'
-                                    })
                                 except Exception as e:
                                     task['error_files'].append({
                                         'title': file['fn'],
@@ -7535,13 +7528,6 @@ def _run_import_115_directory_task(task_id, folder_id, min_size_mb, category_typ
                     offset += len(files)
                     if len(files) < limit:
                         break
-                except requests.Timeout:
-                    IMPORT_115_LOGGER.error(f"获取目录列表超时: {folder_name or path}")
-                    task['error_files'].append({
-                        'title': folder_name or path,
-                        'error': '获取目录列表超时，已跳过'
-                    })
-                    break
                 except Exception as e:
                     IMPORT_115_LOGGER.error(f"获取文件列表失败 {folder_name or path}: {e}")
                     task['error_files'].append({
@@ -7612,7 +7598,7 @@ def _run_import_115_directory_task(task_id, folder_id, min_size_mb, category_typ
 
 @app.route('/api/cloud115/import_directory_async', methods=['POST'])
 def cloud115_import_directory_async():
-    """异步导入115云盘目录中的视频文件（支持进度跟踪）"""
+    """异步导入115云盘目录中的视频文件（支持进度跟踪，支持 OpenAPI 和 Driver 两种认证方式）"""
     try:
         data = request.get_json()
         if not data or 'folder_id' not in data:
@@ -7625,9 +7611,8 @@ def cloud115_import_directory_async():
         min_size_mb = data.get('min_size_mb', 50)
         category_type = data.get('category_type', 'movies')
 
-        # 获取token
-        access_token = get_cloud115_valid_token()
-        if not access_token:
+        # 使用统一的 Cloud115Client 检查认证状态
+        if not CLOUD115_CLIENT:
             return jsonify({
                 'success': False,
                 'message': '未授权，请先登录115云盘'
@@ -7661,7 +7646,7 @@ def cloud115_import_directory_async():
         # 启动后台线程
         thread = threading.Thread(
             target=_run_import_115_directory_task,
-            args=(task_id, folder_id, min_size_mb, category_type, access_token),
+            args=(task_id, folder_id, min_size_mb, category_type),
             daemon=True
         )
         thread.start()
