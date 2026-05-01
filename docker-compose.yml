@@ -6,16 +6,19 @@ services:
     container_name: javbus-web
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "9090:8080"
     volumes:
-      - ./data:/app/data
-      - ./buspic:/app/buspic
-      - ./config:/app/config
-      - ./logs:/app/logs
+      - /vol2/1000/docker2/bus/data:/app/data
+      - /vol2/1000/docker2/bus/buspic:/app/buspic
+      - /vol2/1000/docker2/bus/config:/app/config
+      - /vol2/1000/docker2/bus/logs:/app/logs
+    devices:
+      - /dev/dri:/dev/dri
     environment:
       - PYTHONUNBUFFERED=1
       - LANG=C.UTF-8
       - LC_ALL=C.UTF-8
+      - LIBVA_DRIVER_NAME=iHD
     extra_hosts:
       - "host.docker.internal:host-gateway"
     tty: true
