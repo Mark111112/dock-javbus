@@ -1,5 +1,20 @@
 # BUS115 影片库管理系统使用说明 / BUS115 Usage Guide
 
+UPDATE 20260501
+
+  Bug 修复
+
+  - 修复 115 二维码登录失败（"访问权限已过期"）—— 更新 OpenAPI client_id
+  - 修复 Cookie (Driver) 登录后导入 115 目录报"未授权" —— import_directory 接口改为使用统一的 Cloud115Client，支持 OpenAPI Token 和 Driver Cookie 自动回退
+  - 修复 MissAV 播放器代理 HLS 时 Referer 丢失导致无法播放的问题
+  - 修复 MissAV 解析器在部分场景下静默失败的问题，增加回退诊断
+
+  Docker
+
+  - docker-compose.yml 添加核显设备映射（`/dev/dri`）和 `LIBVA_DRIVER_NAME=iHD` 环境变量，支持 Intel QSV 硬件转码
+
+---
+
 UPDATE 20251228
 
   播放器
