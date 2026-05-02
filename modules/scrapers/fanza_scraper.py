@@ -1232,11 +1232,11 @@ class FanzaScraper(BaseScraper):
             return None
 
     def _fetch_video_dmm_content_by_content_id(self, content_id, movie_id=None):
-        """使用已知 content_id（例如 1stcv00580、h_1732orecs00387）调用 GraphQL
+        """使用已知 content_id（例如 1stcv00580、h_1732orecs00387）调用 GraphQL。
 
-        更新说明 (2026-01-27):
-        FANZA 更新了 GraphQL API，旧的复杂查询已失效。
-        现在使用简化的查询结构，直接查询所需字段。
+        兼容策略：
+        - 先尝试 rich query（字段更全）
+        - 若 GraphQL schema 再次漂移导致 validation failed，则自动回退到 safe query
         """
         try:
             if not content_id:
@@ -1244,8 +1244,7 @@ class FanzaScraper(BaseScraper):
 
             graphql_url = "https://api.video.dmm.co.jp/graphql"
 
-            # 简化的 GraphQL 查询 - 2026-01-27 更新
-            query = """
+            rich_query = """
 query GetContent($id: ID!) {
   ppvContent(id: $id) {
     id
@@ -1303,15 +1302,49 @@ query GetContent($id: ID!) {
 }
 """
 
-            payload = {
-                "operationName": "GetContent",
-                "query": query,
-                "variables": {"id": content_id}
-            }
+            safe_query = """
+query GetContentSafe($id: ID!) {
+  ppvContent(id: $id) {
+    id
+    title
+    description
+    makerReleasedAt
+    deliveryStartDate
+    duration
+    makerContentId
+    packageImage {
+      largeUrl
+      mediumUrl
+    }
+    sampleImages {
+      number
+      imageUrl
+      largeImageUrl
+    }
+    actresses {
+      id
+      name
+      imageUrl
+    }
+    maker {
+      id
+      name
+    }
+    label {
+      id
+      name
+    }
+    genres {
+      id
+      name
+    }
+  }
+}
+"""
 
             session = self.create_session()
             session.headers.update({
-                'Accept': 'application/graphql-response+json, application/json',
+                'Accept': 'application/graphql-response+json, application/graphql+json, application/json, text/event-stream, multipart/mixed',
                 'Content-Type': 'application/json',
                 'Origin': 'https://video.dmm.co.jp',
                 'Referer': self._video_dmm_url(content_id),
@@ -1323,15 +1356,30 @@ query GetContent($id: ID!) {
                 'Accept-Encoding': 'gzip, deflate, br, zstd'
             })
 
-            resp = session.post(graphql_url, data=json.dumps(payload), timeout=20)
+            def run_query(operation_name, query):
+                payload = {
+                    "operationName": operation_name,
+                    "query": query,
+                    "variables": {"id": content_id}
+                }
+                return session.post(graphql_url, data=json.dumps(payload), timeout=20)
+
+            resp = run_query("GetContent", rich_query)
             if resp.status_code != 200:
                 self.logger.warning(f"GraphQL 请求失败，状态码: {resp.status_code}")
                 return None
 
             data = resp.json()
             if isinstance(data, dict) and data.get('errors'):
-                self.logger.warning(f"GraphQL返回错误: {data.get('errors')}")
-                return None
+                self.logger.warning(f"GraphQL rich query 返回错误，回退 safe query: {data.get('errors')}")
+                resp = run_query("GetContentSafe", safe_query)
+                if resp.status_code != 200:
+                    self.logger.warning(f"GraphQL safe query 请求失败，状态码: {resp.status_code}")
+                    return None
+                data = resp.json()
+                if isinstance(data, dict) and data.get('errors'):
+                    self.logger.warning(f"GraphQL safe query 返回错误: {data.get('errors')}")
+                    return None
 
             content = (data or {}).get('data', {}).get('ppvContent')
             if not content:
