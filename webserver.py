@@ -1996,18 +1996,11 @@ def get_fc2_movie_data(movie_id: str):
         return None
 
     movie_data = db.get_movie(canonical_id, max_age=7300)
-    caller_function = sys._getframe().f_back.f_code.co_name
-    should_fetch = ('movie_detail' in caller_function or
-                    'update_cloud115_video_id' in caller_function or
-                    'refresh_movie' in caller_function or
-                    'sync_cloud115_movie_info' in caller_function or
-                    'sync_strm_movie_info' in caller_function or
-                    'api_video_player' in caller_function or
-                    'video_player' in caller_function or
-                    'search' in caller_function)
 
-    is_data_incomplete = not movie_data or not (movie_data.get('title') and (movie_data.get('img') or movie_data.get('samples')) )
-    if is_data_incomplete and should_fetch:
+    # FC2 抓取成本不高，且 /search_keyword 与 /movie 会走不同代码路径。
+    # 不再依赖 caller_function 判断，避免“搜索有结果、详情拿不到”的分叉问题。
+    is_data_incomplete = not movie_data or not (movie_data.get('title') and (movie_data.get('img') or movie_data.get('samples')))
+    if is_data_incomplete:
         try:
             fetched = fc2_scraper.get_movie_info(canonical_id)
             if fetched:
