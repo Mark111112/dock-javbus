@@ -777,9 +777,11 @@ def search_keyword():
         effective_filter_value = filter_value if not keyword else ""
 
         if keyword and fc2_scraper.is_fc2_query(keyword):
-            fc2_movie = fc2_scraper.get_movie_info(keyword)
-            movies_list = [fc2_movie] if fc2_movie else []
-            pagination = {"currentPage": 1, "pages": [1] if movies_list else [], "hasNextPage": False, "nextPage": 1}
+            # Phase 2: Use unified FC2 search (exact-ID + list provider)
+            # Returns standard pagination/list format compatible with JavBus UX
+            fc2_result = fc2_scraper.search_keyword(keyword, page=page)
+            movies_list = fc2_result.get("movies", [])
+            pagination = fc2_result.get("pagination", {})
         else:
             search_result = javbus_client.search_movies(
                 keyword=keyword,
@@ -797,9 +799,9 @@ def search_keyword():
 
             # fallback: JavBus no result but query looks like FC2-ish after normalization attempt
             if not movies_list and keyword and fc2_scraper.is_fc2_query(keyword):
-                fc2_movie = fc2_scraper.get_movie_info(keyword)
-                movies_list = [fc2_movie] if fc2_movie else []
-                pagination = {"currentPage": 1, "pages": [1] if movies_list else [], "hasNextPage": False, "nextPage": 1}
+                fc2_result = fc2_scraper.search_keyword(keyword, page=page)
+                movies_list = fc2_result.get("movies", [])
+                pagination = fc2_result.get("pagination", {})
             
         if not movies_list and keyword:
             logging.warning("搜索结果为空: keyword=%s, page=%s", keyword, page)

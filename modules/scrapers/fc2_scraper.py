@@ -14,11 +14,12 @@ logger = logging.getLogger(__name__)
 class FC2Scraper:
     """FC2 metadata scraper.
 
-    目标：
-    - 支持 FC2-PPV / PPV / 纯数字 / article URL 规范化
-    - 优先抓官方页 `adult.contents.fc2.com/article/{id}/`
-    - 失败时回退到 `fc2club.net/html/FC2-{id}.html`
-    - 返回尽量贴合现有 bus movie_data 结构
+    Goals:
+    - Support FC2-PPV / PPV / pure number / article URL normalization
+    - Primary: scrape official page adult.contents.fc2.com/article/{id}/
+    - Fallback: fc2club.net/html/FC2-{id}.html
+    - Return structure compatible with bus movie_data
+    - Support list search (via FC2ListProvider) returning standard keyword results UX
     """
 
     ID_PATTERNS = [
@@ -37,6 +38,16 @@ class FC2Scraper:
         })
         self.official_base = "https://adult.contents.fc2.com"
         self.fallback_bases = ["https://fc2club.net", "https://fc2club.com"]
+        # Lazy-initialized list provider (avoids import at module level)
+        self._list_provider = None
+
+    @property
+    def list_provider(self):
+        """Lazy-init the FC2 list provider to avoid circular imports."""
+        if self._list_provider is None:
+            from .fc2_list_provider import FC2ListProvider
+            self._list_provider = FC2ListProvider()
+        return self._list_provider
 
     def is_fc2_query(self, query: str) -> bool:
         return self.normalize_id(query) is not None
@@ -298,3 +309,127 @@ class FC2Scraper:
     def search_movies(self, keyword: str) -> List[Dict]:
         movie = self.get_movie_info(keyword)
         return [movie] if movie else []
+
+    # ------------------------------------------------------------------
+    # Phase 2: Standard keyword results list UX
+    # ------------------------------------------------------------------
+
+    def search_keyword(self, keyword: str, *, page: int = 1) -> Dict:
+        """Unified FC2 search with standard keyword results list UX.
+
+        Strategy:
+        1. If keyword is an exact FC2 ID -> detail lookup wrapped in
+           standard list/pagination format (single-item list).
+        2. If keyword is broader (or exact ID failed), delegate to
+           FC2ListProvider for aggregator-based multi-result search.
+        3. Graceful degradation: if list provider fails, fall back to
+           exact-ID attempt.
+
+        Returns a dict matching the JavBus search result structure:
+            {
+                "movies": [...],
+                "pagination": {...},
+            }
+        """
+        keyword = (keyword or "").strip()
+        if not keyword:
+            return {"movies": [], "pagination": _empty_pagination()}
+
+        # Try exact-ID match first (highest confidence, page 1 only)
+        canonical = self.normalize_id(keyword)
+        if canonical and page == 1:
+            exact = self._exact_id_as_list(canonical)
+            if exact["movies"]:
+                return exact
+
+        # Try list search via aggregator (works for any keyword)
+        try:
+            list_result = self.list_provider.search(keyword, page=page)
+            if list_result.get("movies"):
+                return {
+                    "movies": list_result["movies"],
+                    "pagination": list_result.get("pagination", {}),
+                }
+        except Exception as exc:
+            logger.warning("[FC2] List provider failed for %r: %s", keyword, exc)
+
+        # Fallback: if we had a canonical ID but exact detail failed, try list by numeric ID
+        if canonical and page == 1:
+            numeric = self._extract_numeric_id(canonical)
+            if numeric:
+                try:
+                    list_result = self.list_provider.search(numeric, page=1)
+                    if list_result.get("movies"):
+                        return {
+                            "movies": list_result["movies"],
+                            "pagination": list_result.get("pagination", {}),
+                        }
+                except Exception:
+                    pass
+
+        # Last resort: empty results
+        return {"movies": [], "pagination": _empty_pagination()}
+
+    def _exact_id_as_list(self, canonical_id: str) -> Dict:
+        """Wrap exact-ID detail lookup in standard list/pagination format.
+
+        This makes the exact-ID path return the same structure as JavBus
+        keyword search, so the frontend can render it uniformly.
+        """
+        movie = self.get_movie_info(canonical_id)
+        if not movie:
+            return {"movies": [], "pagination": _empty_pagination()}
+
+        # Normalize movie to standard list-item format (same as JavBus)
+        list_item = _movie_to_list_item(movie)
+        return {
+            "movies": [list_item],
+            "pagination": {
+                "currentPage": 1,
+                "pages": [1],
+                "hasNextPage": False,
+                "nextPage": 1,
+            },
+        }
+
+
+# ------------------------------------------------------------------
+# Module-level helpers
+# ------------------------------------------------------------------
+
+def _empty_pagination() -> Dict:
+    return {
+        "currentPage": 1,
+        "pages": [],
+        "hasNextPage": False,
+        "nextPage": 1,
+    }
+
+
+def _movie_to_list_item(movie: Dict) -> Dict:
+    """Convert a full FC2 movie dict to the standard keyword results list-item format.
+
+    This mirrors what webserver.py does for JavBus results in search_keyword:
+        {id, title, img, date, tags, translated_title, data_source}
+    plus we preserve extra detail fields for downstream consumption.
+    """
+    return {
+        "id": movie.get("id", ""),
+        "title": movie.get("title", ""),
+        "img": movie.get("img", ""),
+        "date": movie.get("date", ""),
+        "tags": movie.get("tags", []),
+        "translated_title": movie.get("translated_title", ""),
+        "data_source": movie.get("data_source", "fc2"),
+        # Preserve full detail for detail pages
+        "original_title": movie.get("original_title", ""),
+        "description": movie.get("description", ""),
+        "genres": movie.get("genres", []),
+        "stars": movie.get("stars", []),
+        "samples": movie.get("samples", []),
+        "magnets": movie.get("magnets", []),
+        "series": movie.get("series", {"id": "fc2", "name": "FC2"}),
+        "publisher": movie.get("publisher", {}),
+        "producer": movie.get("producer", {}),
+        "product_code": movie.get("product_code", movie.get("id", "")),
+    }
