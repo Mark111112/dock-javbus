@@ -32,6 +32,13 @@
                  title="Click to enlarge">
             <div class="card-body">
                 <h5 class="card-title">{{ movie.id }}</h5>
+                <div class="mb-2">
+                    {% if movie.is_fc2 %}
+                    <span class="badge bg-danger">FC2</span>
+                    {% elif movie.data_source %}
+                    <span class="badge bg-secondary">{{ movie.data_source }}</span>
+                    {% endif %}
+                </div>
                 <p class="card-text">
                     <strong>Release Date:</strong> {{ movie.date }}
                 </p>

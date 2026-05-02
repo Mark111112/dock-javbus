@@ -60,6 +60,7 @@ from modules.transcode import (
 )
 # Import AV-League scraper
 from modules.scrapers.av_league_scraper_fast import AVLeagueScraperFast
+from modules.scrapers.fc2_scraper import FC2Scraper
 from modules.transcode.api import init_transcode_manager, register_routes, get_transcode_manager as get_v2_transcode_manager
 
 # 创建视频相关日志过滤器
@@ -236,6 +237,7 @@ logging.info(f"Using database file: {DB_FILE}")
 # Initialize translator
 translator = get_translator()
 translation_helper = Translator()
+fc2_scraper = FC2Scraper()
 
 # Load configuration
 def load_config():
@@ -774,19 +776,30 @@ def search_keyword():
         effective_filter_type = filter_type if not keyword else ""
         effective_filter_value = filter_value if not keyword else ""
 
-        search_result = javbus_client.search_movies(
-            keyword=keyword,
-            page=page,
-            magnet=magnet,
-            movie_type=movie_type,
-            filter_type=effective_filter_type,
-            filter_value=effective_filter_value,
-        )
-        if not isinstance(search_result, dict):
-            search_result = {}
+        if keyword and fc2_scraper.is_fc2_query(keyword):
+            fc2_movie = fc2_scraper.get_movie_info(keyword)
+            movies_list = [fc2_movie] if fc2_movie else []
+            pagination = {"currentPage": 1, "pages": [1] if movies_list else [], "hasNextPage": False, "nextPage": 1}
+        else:
+            search_result = javbus_client.search_movies(
+                keyword=keyword,
+                page=page,
+                magnet=magnet,
+                movie_type=movie_type,
+                filter_type=effective_filter_type,
+                filter_value=effective_filter_value,
+            )
+            if not isinstance(search_result, dict):
+                search_result = {}
 
-        movies_list = search_result.get("movies", [])
-        pagination = search_result.get("pagination", {})
+            movies_list = search_result.get("movies", [])
+            pagination = search_result.get("pagination", {})
+
+            # fallback: JavBus no result but query looks like FC2-ish after normalization attempt
+            if not movies_list and keyword and fc2_scraper.is_fc2_query(keyword):
+                fc2_movie = fc2_scraper.get_movie_info(keyword)
+                movies_list = [fc2_movie] if fc2_movie else []
+                pagination = {"currentPage": 1, "pages": [1] if movies_list else [], "hasNextPage": False, "nextPage": 1}
             
         if not movies_list and keyword:
             logging.warning("搜索结果为空: keyword=%s, page=%s", keyword, page)
@@ -794,13 +807,15 @@ def search_keyword():
         # 格式化电影列表数据
         formatted_movies = []
         for movie in movies_list:
+            data_source = movie.get("data_source", "") or ("fc2" if fc2_scraper.is_fc2_query(movie.get("id", "")) else "javbus")
             formatted_movies.append({
                 "id": movie.get("id", ""),
                 "title": movie.get("title", ""),
                 "image_url": movie.get("img", ""),
                 "date": movie.get("date", ""),
                 "tags": movie.get("tags", []),
-                "translated_title": movie.get("translated_title", "")
+                "translated_title": movie.get("translated_title", ""),
+                "data_source": data_source
             })
 
         # 构建分页数据
@@ -1125,7 +1140,8 @@ def movie_detail(movie_id):
         has_summary = bool(formatted_movie.get("summary") or movie_data.get("description"))
         
         # Get magnet links for this movie if they're not already fetched
-        if CURRENT_API_URL and not formatted_movie.get("magnet_links"):
+        # FC2 第一版先不强求磁力链，避免误打 JavBus magnets 接口
+        if CURRENT_API_URL and not formatted_movie.get("magnet_links") and not formatted_movie.get("is_fc2"):
             try:
                 # Extract gid and uc from movie data if available
                 gid = movie_data.get("gid", "")
@@ -1968,8 +1984,45 @@ def serve_image(filename):
     return send_from_directory(os.path.dirname(fallback_image), os.path.basename(fallback_image))
 
 # Helper functions
+
+
+def is_fc2_movie_id(movie_id: str) -> bool:
+    return fc2_scraper.is_fc2_query(movie_id)
+
+
+def get_fc2_movie_data(movie_id: str):
+    canonical_id = fc2_scraper.normalize_id(movie_id)
+    if not canonical_id:
+        return None
+
+    movie_data = db.get_movie(canonical_id, max_age=7300)
+    caller_function = sys._getframe().f_back.f_code.co_name
+    should_fetch = ('movie_detail' in caller_function or
+                    'update_cloud115_video_id' in caller_function or
+                    'refresh_movie' in caller_function or
+                    'sync_cloud115_movie_info' in caller_function or
+                    'sync_strm_movie_info' in caller_function or
+                    'api_video_player' in caller_function or
+                    'video_player' in caller_function or
+                    'search' in caller_function)
+
+    is_data_incomplete = not movie_data or not (movie_data.get('title') and (movie_data.get('img') or movie_data.get('samples')) )
+    if is_data_incomplete and should_fetch:
+        try:
+            fetched = fc2_scraper.get_movie_info(canonical_id)
+            if fetched:
+                movie_data = fetched
+                db.save_movie(movie_data)
+                logging.info(f"Fetched FC2 metadata for {canonical_id}")
+        except Exception as e:
+            logging.error(f"Failed to fetch FC2 metadata for {canonical_id}: {e}")
+    return movie_data
+
 def get_movie_data(movie_id):
     """Get movie data from database or API"""
+    if is_fc2_movie_id(movie_id):
+        return get_fc2_movie_data(movie_id)
+
     # Get the caller function name
     caller_function = sys._getframe().f_back.f_code.co_name
     
@@ -2171,7 +2224,9 @@ def format_movie_data(movie_data):
         "samples": movie_data.get("samples", []),  # Add samples
         "actors": [],
         "magnet_links": [],
-        "sample_images": []
+        "sample_images": [],
+        "data_source": movie_data.get("data_source", ""),
+        "is_fc2": is_fc2_movie_id(movie_data.get("id", ""))
     }
     
     # Format actors
@@ -2185,6 +2240,15 @@ def format_movie_data(movie_data):
                 "image_url": actor.get("avatar", "")
             })
     
+    if not formatted_movie["actors"] and movie_data.get("actors"):
+        for actor in movie_data.get("actors", []):
+            if isinstance(actor, dict):
+                formatted_movie["actors"].append({
+                    "id": actor.get("id", ""),
+                    "name": actor.get("name", ""),
+                    "image_url": actor.get("avatar", "") or actor.get("image_url", "")
+                })
+
     # Format magnet links
     for magnet in movie_data.get("magnets", []):
         formatted_movie["magnet_links"].append({

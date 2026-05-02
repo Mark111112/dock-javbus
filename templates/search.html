@@ -422,6 +422,13 @@
                     </div>
                     <div class="card-body">
                         <h5 class="card-title">{{ movie.id }}</h5>
+                        <div class="mb-1">
+                            {% if 'fc2' in (movie.data_source or '')|lower %}
+                            <span class="badge bg-danger">FC2</span>
+                            {% elif movie.data_source %}
+                            <span class="badge bg-secondary">{{ movie.data_source }}</span>
+                            {% endif %}
+                        </div>
                         <p class="card-text text-truncate">{{ movie.title }}</p>
                         {% if movie.translated_title %}
                         <p class="card-text text-truncate text-info"><small>{{ movie.translated_title }}</small></p>
