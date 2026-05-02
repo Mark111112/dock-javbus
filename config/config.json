@@ -103,7 +103,7 @@
     "device_id": "buspre-web-player-01",
     "device_name": "Web Browser",
     "password": "",
-    "server_url": ",
+    "server_url": "",
     "transcoding": {
       "container": "ts",
       "enable_auto_transcoding": true,
@@ -135,8 +135,8 @@
   },
   "translation": {
     "api_token": "",
-    "api_url": "http://192.168.1.133:11434/api/generate",
-    "model": "crosery/sakura-14b-qwen2.5-v1.0-q6k:latest",
+    "api_url": "http://192.168.1.133:8015/v1/chat/completions",
+    "model": "sakura-14b-qwen3-v1.5-q6k.gguf",
     "source_lang": "日语",
     "target_lang": "中文"
   },

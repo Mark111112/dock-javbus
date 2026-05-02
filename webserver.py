@@ -22,7 +22,7 @@ from flask_cors import CORS, cross_origin
 from flask_sock import Sock
 from werkzeug.utils import secure_filename, safe_join
 from javbus_db import JavbusDatabase
-from modules.translation.translator import get_translator
+from modules.translation.translator import get_translator, Translator
 from transcription_service import configure_transcription_from_dict
 from modules.javbus_service import get_javbus_client
 import logging
@@ -235,6 +235,7 @@ logging.info(f"Using database file: {DB_FILE}")
 
 # Initialize translator
 translator = get_translator()
+translation_helper = Translator()
 
 # Load configuration
 def load_config():
@@ -262,11 +263,11 @@ def load_config():
             }
         },
         "translation": {
-            "api_url": "https://api.siliconflow.cn/v1/chat/completions",
+            "api_url": "http://192.168.1.133:8015/v1/chat/completions",
             "source_lang": "日语",
             "target_lang": "中文",
             "api_token": "",
-            "model": "THUDM/glm-4-9b-chat"
+            "model": "sakura-14b-qwen3-v1.5-q6k.gguf"
         },
         "cloud115": {
             "default_folder_id": "",
@@ -1690,23 +1691,7 @@ def translate_text():
             result = response.json()
             
             # Extract translated text from different response formats
-            translated_text = ""
-            
-            # Ollama API format
-            if is_ollama:
-                if "response" in result:
-                    translated_text = result["response"].strip()
-                elif "message" in result and isinstance(result["message"], dict):
-                    if "content" in result["message"] and result["message"]["content"]:
-                        translated_text = result["message"]["content"].strip()
-            
-            # Standard OpenAI format
-            elif "choices" in result and len(result["choices"]) > 0:
-                choice = result["choices"][0]
-                if "message" in choice and "content" in choice["message"]:
-                    translated_text = choice["message"]["content"].strip()
-                elif "text" in choice:  # Some APIs may use text field directly
-                    translated_text = choice["text"].strip()
+            translated_text = translation_helper._extract_translated_text(result, is_ollama)
             
             logging.info(f"Extracted translated text: {translated_text}")
             

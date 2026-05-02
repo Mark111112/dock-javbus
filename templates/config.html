@@ -262,10 +262,10 @@
                                 <div class="p-3 rounded-3 section-card h-100">
                                     <h6 class="fw-bold mb-3">翻译服务</h6>
                                     <div class="mb-3">
-                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="OpenAI 兼容的翻译接口地址，例如官方 OpenAI、SiliconFlow 或自建 Ollama。">
+                                        <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="翻译接口地址。OpenAI 兼容服务建议填写完整 endpoint，例如 llama.cpp: http://192.168.1.133:8015/v1/chat/completions；Ollama: http://192.168.1.133:11434/api/generate。">
                                             翻译 API 地址
                                         </label>
-                                        <input type="text" class="form-control config-input" data-config-path="translation.api_url" placeholder="https://api.openai.com/v1/chat/completions">
+                                        <input type="text" class="form-control config-input" data-config-path="translation.api_url" placeholder="http://192.168.1.133:8015/v1/chat/completions">
                                     </div>
                                     <div class="mb-3">
                                         <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="用于鉴权的 API Token，可留空以禁用翻译或由后端提供。">
@@ -277,7 +277,7 @@
                                         <label class="form-label fw-semibold" data-bs-toggle="tooltip" data-bs-placement="top" title="翻译所使用的模型名称，需与所选 API 服务支持的模型一致。">
                                             模型名称
                                         </label>
-                                        <input type="text" class="form-control config-input" data-config-path="translation.model" placeholder="gpt-4o-mini">
+                                        <input type="text" class="form-control config-input" data-config-path="translation.model" placeholder="sakura-14b-qwen3-v1.5-q6k.gguf">
                                     </div>
                                     <div class="row g-3">
                                         <div class="col-md-6">
