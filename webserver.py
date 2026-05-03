@@ -1612,135 +1612,53 @@ def translate_text():
     data = request.get_json()
     if not data or 'text' not in data:
         return jsonify({"status": "error", "message": "Missing text to translate"}), 400
-    
+
     text = data.get('text')
     translate_summary = data.get('translate_summary', False)
     movie_id = data.get('movie_id', '')
-    
+
     try:
-        # Use the translator to translate the text
-        # Since the translator uses signals, we need to implement a synchronous version
-        api_url = CURRENT_CONFIG.get("translation", {}).get("api_url", "")
-        api_token = CURRENT_CONFIG.get("translation", {}).get("api_token", "")
-        model = CURRENT_CONFIG.get("translation", {}).get("model", "gpt-3.5-turbo")
-        source_lang = CURRENT_CONFIG.get("translation", {}).get("source_lang", "日语")
-        target_lang = CURRENT_CONFIG.get("translation", {}).get("target_lang", "中文")
-        
-        # Check if API URL and token are set
+        translation_cfg = CURRENT_CONFIG.get("translation", {}) or {}
+        api_url = (translation_cfg.get("api_url") or "").strip()
         if not api_url:
             return jsonify({"status": "error", "message": "Translation API URL is not set"}), 400
-        
-        # Check if API token is set (not needed for local Ollama)
-        is_ollama = "localhost:11434" in api_url or "192.168.1.133:11434" in api_url
-        if not api_token and not is_ollama:
+
+        # Reuse the unified translator pipeline so movie detail translation
+        # and player live-caption translation always share the same handling.
+        translation_helper._maybe_reload_config()
+        translated_text = translation_helper.translate_sync(text)
+
+        if translated_text:
+            if movie_id:
+                try:
+                    from javbus_db import update_movie_translation
+
+                    if translate_summary:
+                        update_movie_translation(movie_id, translated_summary=translated_text)
+                    else:
+                        update_movie_translation(movie_id, translated_title=translated_text)
+
+                    logging.info(f"Translation saved to database for movie {movie_id}")
+                except Exception as e:
+                    logging.warning(f"Failed to save translation to database: {str(e)}")
+
+            return jsonify({"status": "success", "translated_text": translated_text})
+
+        normalized_url = translation_helper._normalize_api_url(api_url)
+        needs_token = not translation_helper._allows_empty_token(normalized_url)
+        api_token = (translation_cfg.get("api_token") or "").strip()
+        if needs_token and not api_token:
             return jsonify({"status": "error", "message": "Translation API token is not set"}), 400
-        
-        # Prepare request headers
-        headers = {
-            "Content-Type": "application/json"
-        }
-        
-        if api_token:
-            headers["Authorization"] = f"Bearer {api_token}"
-        
-        # Prepare request data
-        prompt = f"Translate the following {source_lang} text to {target_lang}. Only return the translated text, no explanations:\n\n{text}"
-        
-        # Add debugging
-        logging.info(f"Translation request: API URL = {api_url}, Model = {model}")
-        logging.info(f"Text to translate: {text}")
-        
-        # Build request payload based on API type
-        if is_ollama:
-            if "/api/chat" in api_url:
-                # 使用chat接口的格式
-                payload = {
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": f"你是一个专业的{source_lang}到{target_lang}翻译器。"},
-                        {"role": "user", "content": prompt}
-                    ],
-                    "stream": False,  # 关键：禁用流式输出
-                    "options": {
-                        "temperature": 0.3,
-                        "top_p": 0.9
-                    }
-                }
-            else:
-                # generate接口的格式
-                payload = {
-                    "model": model,
-                    "prompt": f"你是一个专业的{source_lang}到{target_lang}翻译器。\n{prompt}",
-                    "stream": False,
-                    "options": {
-                            "temperature": 0.3,
-                        "top_p": 0.9
-                    }
-                }
-        else:
-            # Standard OpenAI-compatible format
-            payload = {
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": f"You are a professional {source_lang} to {target_lang} translator."},
-                    {"role": "user", "content": prompt}
-                ],
-                "temperature": 0.3
-            }
-        
-        # Send request
-        response = requests.post(
-            api_url,
-            headers=headers,
-            json=payload,
-            timeout=60
-        )
-        
-        # Log the response for debugging
-        logging.info(f"Translation API response status: {response.status_code}")
-        try:
-            response_text = response.text[:500]  # Limit log size
-            logging.info(f"Translation API response: {response_text}")
-        except:
-            logging.info("Could not log response text")
-        
-        # Parse response
-        if response.status_code == 200:
-            result = response.json()
-            
-            # Extract translated text from different response formats
-            translated_text = translation_helper._extract_translated_text(result, is_ollama)
-            
-            logging.info(f"Extracted translated text: {translated_text}")
-            
-            if translated_text:
-                # If movie_id is provided, save the translation to database
-                if movie_id:
-                    try:
-                        # Import database functions
-                        from javbus_db import update_movie_translation
-                        
-                        if translate_summary:
-                            # Update translated summary
-                            update_movie_translation(movie_id, translated_summary=translated_text)
-                        else:
-                            # Update translated title
-                            update_movie_translation(movie_id, translated_title=translated_text)
-                        
-                        logging.info(f"Translation saved to database for movie {movie_id}")
-                    except Exception as e:
-                        logging.warning(f"Failed to save translation to database: {str(e)}")
-                        # Continue even if database save fails
-                
-                return jsonify({"status": "success", "translated_text": translated_text})
-            else:
-                return jsonify({"status": "error", "message": "Could not extract translated text from API response"}), 500
-        else:
-            return jsonify({"status": "error", "message": f"Translation request failed: HTTP {response.status_code}"}), 500
-    
+
+        return jsonify({
+            "status": "error",
+            "message": "Translation failed or returned empty text",
+            "details": f"endpoint={normalized_url}"
+        }), 502
+
     except Exception as e:
-        logging.error(f"Translation process error: {str(e)}")
-        return jsonify({"status": "error", "message": f"Translation process error: {str(e)}"}), 500
+        logging.exception("Translation request failed")
+        return jsonify({"status": "error", "message": f"Translation failed: {str(e)}"}), 500
 
 @app.route('/api/save_translation/<movie_id>', methods=['POST'])
 def save_translation(movie_id):
