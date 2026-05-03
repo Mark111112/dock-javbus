@@ -2001,7 +2001,25 @@ def get_fc2_movie_data(movie_id: str):
 
     # FC2 抓取成本不高，且 /search_keyword 与 /movie 会走不同代码路径。
     # 不再依赖 caller_function 判断，避免“搜索有结果、详情拿不到”的分叉问题。
-    is_data_incomplete = not movie_data or not (movie_data.get('title') and (movie_data.get('img') or movie_data.get('samples')))
+    samples = movie_data.get('samples', []) if movie_data else []
+    bad_sample_url = False
+    if samples:
+        first = samples[0]
+        if isinstance(first, dict):
+            sample_url = (first.get('src') or first.get('thumbnail') or '')
+        else:
+            sample_url = str(first)
+        # Old broken cache stored URLs like https://adult.contents.fc2.com/article/<id>/contents-thumbnail2.fc2.com/...
+        if 'adult.contents.fc2.com/article/' in sample_url and 'contents-thumbnail' in sample_url:
+            bad_sample_url = True
+    is_data_incomplete = (
+        not movie_data
+        or not movie_data.get('title')
+        or not (movie_data.get('img') or samples)
+        or not movie_data.get('date')
+        or movie_data.get('description') in ('', movie_data.get('id', ''))
+        or bad_sample_url
+    )
     if is_data_incomplete:
         try:
             fetched = fc2_scraper.get_movie_info(canonical_id)

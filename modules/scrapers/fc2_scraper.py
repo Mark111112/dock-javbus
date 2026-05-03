@@ -132,6 +132,16 @@ class FC2Scraper:
             out.append({"id": n, "name": n})
         return out
 
+    def _normalize_media_url(self, base_url: str, url: str) -> str:
+        url = (url or '').strip()
+        if not url:
+            return ''
+        if url.startswith('//'):
+            return 'https:' + url
+        if url.startswith('http://') or url.startswith('https://'):
+            return url
+        return urljoin(base_url, url)
+
     def _make_samples(self, urls: List[str]) -> List[Dict]:
         out = []
         seen = set()
@@ -187,14 +197,11 @@ class FC2Scraper:
         for a in soup.select(".items_article_SampleImagesArea a[href]"):
             href = (a.get("href") or "").strip()
             if href:
-                screenshots.append(urljoin(url, href if not href.startswith("//") else "https:" + href[2:]))
+                screenshots.append(self._normalize_media_url(url, href))
         if not screenshots:
             for img in soup.select(".items_article_SampleImagesArea img[src]"):
                 src = (img.get("src") or "").strip()
-                if src.startswith("//"):
-                    src = "https:" + src
-                elif src:
-                    src = urljoin(url, src)
+                src = self._normalize_media_url(url, src)
                 if src:
                     screenshots.append(src)
 
@@ -273,10 +280,7 @@ class FC2Scraper:
         screenshots = []
         for img in soup.select("ul.slides img[src]"):
             src = (img.get("src") or "").strip()
-            if src.startswith("//"):
-                src = "https:" + src
-            elif src:
-                src = urljoin(url, src)
+            src = self._normalize_media_url(url, src)
             if src:
                 screenshots.append(src)
 
