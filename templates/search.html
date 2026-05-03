@@ -97,7 +97,7 @@
             <div class="col-md-4 mb-4">
                 <div class="card movie-card">
                     <div class="movie-poster-container">
-                        <img src="/images/covers/{{ movie.id }}.jpg" class="card-img-top movie-poster" alt="{{ movie.id }}">
+                        <img src="{{ movie.image_url or ('/images/covers/' ~ movie.id ~ '.jpg') }}" class="card-img-top movie-poster" alt="{{ movie.id }}" onerror="this.onerror=null;this.src='/images/covers/{{ movie.id }}.jpg';">
                     </div>
                     <div class="card-body">
                         <h5 class="card-title">{{ movie.id }}</h5>
@@ -418,7 +418,7 @@
             <div class="col-md-4 mb-4">
                 <div class="card movie-card">
                     <div class="movie-poster-container">
-                        <img src="/images/covers/{{ movie.id }}.jpg" class="card-img-top movie-poster" alt="{{ movie.id }}">
+                        <img src="{{ movie.image_url or ('/images/covers/' ~ movie.id ~ '.jpg') }}" class="card-img-top movie-poster" alt="{{ movie.id }}" onerror="this.onerror=null;this.src='/images/covers/{{ movie.id }}.jpg';">
                     </div>
                     <div class="card-body">
                         <h5 class="card-title">{{ movie.id }}</h5>
@@ -489,7 +489,7 @@
             {% for movie in movies %}
             <div class="col-md-3 mb-4">
                 <div class="card movie-card">
-                    <img src="/images/covers/{{ movie.id }}.jpg" class="card-img-top movie-poster" alt="{{ movie.id }}">
+                    <img src="{{ movie.image_url or ('/images/covers/' ~ movie.id ~ '.jpg') }}" class="card-img-top movie-poster" alt="{{ movie.id }}" onerror="this.onerror=null;this.src='/images/covers/{{ movie.id }}.jpg';">
                     <div class="card-body">
                         <h5 class="card-title">{{ movie.id }}</h5>
                         <p class="card-text text-truncate">{{ movie.title }}</p>
@@ -512,7 +512,7 @@
             {% for movie in actor_movies %}
             <div class="col-md-3 mb-4">
                 <div class="card movie-card">
-                    <img src="/images/covers/{{ movie.id }}.jpg" class="card-img-top movie-poster" alt="{{ movie.id }}">
+                    <img src="{{ movie.image_url or ('/images/covers/' ~ movie.id ~ '.jpg') }}" class="card-img-top movie-poster" alt="{{ movie.id }}" onerror="this.onerror=null;this.src='/images/covers/{{ movie.id }}.jpg';">
                     <div class="card-body">
                         <h5 class="card-title">{{ movie.id }}</h5>
                         <p class="card-text text-truncate">{{ movie.title }}</p>
