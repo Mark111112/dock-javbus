@@ -155,7 +155,14 @@ class FC2Scraper:
 
         raw_title = meta("og:title")
         title = self._clean_title(raw_title, canonical_id)
-        description = meta("og:description")
+
+        # Prefer meta name=description over og:description.
+        # FC2 official pages often put a longer teaser in name=description while
+        # og:description may be truncated or title-like.
+        description = meta("description") or meta("og:description")
+        description = re.sub(rf'^{re.escape(canonical_id)}\s*', '', description, flags=re.I).strip(' -:')
+        if not description:
+            description = title
         cover = meta("og:image")
         if cover.startswith("//"):
             cover = "https:" + cover
@@ -168,9 +175,10 @@ class FC2Scraper:
 
         tags = [x.get_text(strip=True) for x in soup.select(".items_article_TagArea a.tag, .tag.tagTag")]
         date_text = ""
-        for el in soup.select(".items_article_softDevice p"):
+        # FC2 页面这里没有稳定 class，直接按文本内容兜底。
+        for el in soup.find_all(['p', 'li', 'div', 'span']):
             txt = el.get_text(" ", strip=True)
-            if "販売日" in txt or "配信" in txt or "Releasedate" in txt:
+            if txt and ("販売日" in txt or "配信日" in txt or "Releasedate" in txt or "上架时间" in txt or "上架時間" in txt or "发布时间" in txt or "發布時間" in txt):
                 date_text = txt
                 break
         date = self._parse_date(date_text)
