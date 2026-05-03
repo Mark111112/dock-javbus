@@ -776,7 +776,7 @@ def search_keyword():
         effective_filter_type = filter_type if not keyword else ""
         effective_filter_value = filter_value if not keyword else ""
 
-        if keyword and fc2_scraper.is_fc2_query(keyword):
+        if keyword and fc2_scraper.is_fc2_search_keyword(keyword):
             # Phase 2: Use unified FC2 search (exact-ID + list provider)
             # Returns standard pagination/list format compatible with JavBus UX
             fc2_result = fc2_scraper.search_keyword(keyword, page=page)
@@ -798,7 +798,7 @@ def search_keyword():
             pagination = search_result.get("pagination", {})
 
             # fallback: JavBus no result but query looks like FC2-ish after normalization attempt
-            if not movies_list and keyword and fc2_scraper.is_fc2_query(keyword):
+            if not movies_list and keyword and fc2_scraper.is_fc2_search_keyword(keyword):
                 fc2_result = fc2_scraper.search_keyword(keyword, page=page)
                 movies_list = fc2_result.get("movies", [])
                 pagination = fc2_result.get("pagination", {})

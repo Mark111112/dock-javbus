@@ -50,7 +50,29 @@ class FC2Scraper:
         return self._list_provider
 
     def is_fc2_query(self, query: str) -> bool:
+        """Exact FC2 id recognition only (used by detail/id paths)."""
         return self.normalize_id(query) is not None
+
+    def is_fc2_search_keyword(self, query: str) -> bool:
+        """Broader FC2 search keyword recognition (used by /search_keyword).
+
+        Matches:
+        - exact IDs (FC2-PPV-123456, PPV-123456, etc.)
+        - generic prefixes like FC2, FC2-PPV, FC2PPV
+        - mixed text containing FC2/PPV intent
+        """
+        q = (query or '').strip().lower()
+        if not q:
+            return False
+        if self.is_fc2_query(q):
+            return True
+        if q in {'fc2', 'fc2-ppv', 'fc2ppv', 'ppv'}:
+            return True
+        if 'fc2' in q and 'ppv' in q:
+            return True
+        if q.startswith('fc2') or q.startswith('ppv'):
+            return True
+        return False
 
     def normalize_id(self, query: str) -> Optional[str]:
         if not query:
