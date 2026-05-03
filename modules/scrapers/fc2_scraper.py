@@ -38,6 +38,7 @@ class FC2Scraper:
         })
         self.official_base = "https://adult.contents.fc2.com"
         self.fallback_bases = ["https://fc2club.net", "https://fc2club.com"]
+        self.javten_search_base = "https://javten.com/search?kw="
         # Lazy-initialized list provider (avoids import at module level)
         self._list_provider = None
 
@@ -242,6 +243,95 @@ class FC2Scraper:
             movie["community_rating"] = rating
         return movie
 
+    def _fetch_javten_detail_url(self, canonical_id: str) -> Optional[str]:
+        search_url = f"{self.javten_search_base}{canonical_id}"
+        resp = self._get(search_url)
+        if not resp:
+            return None
+        final_url = resp.url or search_url
+        if '/video/' in final_url:
+            return final_url
+        return None
+
+    def _parse_javten_detail(self, canonical_id: str) -> Optional[Dict]:
+        url = self._fetch_javten_detail_url(canonical_id)
+        if not url:
+            return None
+        resp = self._get(url)
+        if not resp:
+            return None
+        soup = BeautifulSoup(resp.text, 'html.parser')
+
+        def meta(prop: str, attr: str = 'property') -> str:
+            tag = soup.find('meta', attrs={attr: prop})
+            return (tag.get('content') or '').strip() if tag else ''
+
+        raw_title = meta('og:title') or (soup.title.get_text(' ', strip=True) if soup.title else canonical_id)
+        title = raw_title.replace(' - JAVten.com', '').strip()
+        title = self._clean_title(title, canonical_id)
+
+        description = meta('description', 'name') or meta('og:description')
+        description = description.replace(f'[{canonical_id}]', '').replace('| Free Sample Video', '').strip(' |-:')
+
+        # Try to extract a fuller body teaser from the page text.
+        page_text = soup.get_text(' ', strip=True)
+        body_match = re.search(r'タグ\s*[:：].{0,300}?(?P<body>.+?)カスタマーレビュー', page_text)
+        if body_match:
+            body = body_match.group('body').strip()
+            body = re.sub(r'^(フルレングスバージョンを入手.*?購入)', '', body)
+            body = re.sub(r'\s+', ' ', body).strip()
+            if body and len(body) > len(description):
+                description = body[:4000]
+        if not description:
+            description = title
+
+        cover = meta('og:image')
+        seller = ''
+        m = re.search(r'\|\s*By\s+([^|]+?)\s*\|', meta('description', 'name') or meta('og:description'))
+        if m:
+            seller = m.group(1).strip()
+        if not seller:
+            seller_match = re.search(r'売り手情報\s+([^\s].+?)\s+(?:\d+\s+この売り手からのすべてのビデオ|\(ads\)|ギャラリー)', page_text)
+            if seller_match:
+                seller = seller_match.group(1).strip()
+
+        duration = ''
+        dur = re.search(r'\|\s*(\d{2}:\d{2}:\d{2})\s*\|', meta('description', 'name') or meta('og:description'))
+        if dur:
+            duration = dur.group(1)
+
+        tags = []
+        tag_match = re.search(r'タグ\s*[:：]\s*(.+?)\s+フルレングスバージョン', page_text)
+        if tag_match:
+            tags = [x.strip() for x in re.split(r'\s+', tag_match.group(1)) if x.strip()]
+
+        # JAVten usually has at least a cover/preview image; use it as a single sample if no gallery extracted.
+        samples = []
+        if cover:
+            samples = self._make_samples([cover])
+
+        movie = {
+            'id': canonical_id,
+            'title': title,
+            'original_title': raw_title or canonical_id,
+            'date': '',
+            'img': cover,
+            'description': description,
+            'videoLength': duration,
+            'director': {'id': '', 'name': ''},
+            'publisher': {'id': seller, 'name': seller},
+            'producer': {'id': seller, 'name': seller},
+            'series': {'id': 'fc2', 'name': 'FC2'},
+            'genres': self._make_genres(tags),
+            'stars': [],
+            'data_source': 'fc2:javten-detail',
+            'samples': samples,
+            'product_code': canonical_id,
+            'magnets': [],
+            'source_url': url,
+        }
+        return movie
+
     def _parse_fc2club(self, numeric_id: str, canonical_id: str) -> Optional[Dict]:
         resp = None
         url = ""
@@ -256,6 +346,9 @@ class FC2Scraper:
         soup = BeautifulSoup(resp.text, "html.parser")
 
         title = canonical_id
+        page_title = soup.title.get_text(' ', strip=True) if soup.title else ''
+        if 'ww1.' in (resp.url or '') or 'parking' in page_title.lower() or 'just a moment' in page_title.lower():
+            return None
         title_el = soup.select_one(".show-top-grids h3") or soup.find("h3")
         if title_el:
             title = self._clean_title(title_el.get_text(" ", strip=True), canonical_id)
@@ -311,8 +404,11 @@ class FC2Scraper:
             return primary
         merged = dict(primary)
         for key in ["description", "date", "img", "videoLength"]:
-            if not merged.get(key) and fallback.get(key):
+            if (not merged.get(key) or merged.get(key) == merged.get('id')) and fallback.get(key):
                 merged[key] = fallback[key]
+        if (not merged.get("title") or merged.get("title") == merged.get('id')) and fallback.get("title"):
+            merged["title"] = fallback["title"]
+            merged["original_title"] = fallback.get('original_title') or fallback.get('title')
         if (not merged.get("publisher") or not merged.get("publisher", {}).get("name")) and fallback.get("publisher"):
             merged["publisher"] = fallback["publisher"]
         if (not merged.get("producer") or not merged.get("producer", {}).get("name")) and fallback.get("producer"):
@@ -323,6 +419,12 @@ class FC2Scraper:
             merged["samples"] = fallback["samples"]
         if not merged.get("img") and fallback.get("img"):
             merged["img"] = fallback["img"]
+        if fallback.get('data_source') and (
+            merged.get('data_source','').startswith('fc2:official') or merged.get('data_source','').startswith('fc2:fc2club')
+        ) and (
+            not merged.get('img') or not merged.get('samples') or merged.get('description') in ('', merged.get('id','')) or merged.get('title') == merged.get('id')
+        ):
+            merged['data_source'] = fallback['data_source']
         return merged
 
     def get_movie_info(self, movie_id: str) -> Optional[Dict]:
@@ -335,10 +437,16 @@ class FC2Scraper:
 
         official = self._parse_official(numeric_id, canonical_id)
         fallback = self._parse_fc2club(numeric_id, canonical_id)
+        javten = self._parse_javten_detail(canonical_id)
 
-        if official and fallback:
-            return self._merge_movie(official, fallback)
-        return official or fallback
+        movie = official or fallback or javten
+        if not movie:
+            return None
+        if fallback:
+            movie = self._merge_movie(movie, fallback)
+        if javten:
+            movie = self._merge_movie(movie, javten)
+        return movie
 
     def search_movies(self, keyword: str) -> List[Dict]:
         movie = self.get_movie_info(keyword)
