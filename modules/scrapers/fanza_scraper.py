@@ -152,7 +152,8 @@ class FanzaScraper(BaseScraper):
         return all_urls[0]  # 返回第一个URL供直接访问尝试
     
     def get_movie_info(self, movie_id):
-        """获取影片信息的主函数 - 覆盖基类方法，先搜索，再尝试直接URL
+        """获取影片信息的主函数 - 覆盖基类方法，先走 video.dmm.co.jp GraphQL fallback，
+        再尝试旧搜索页和直连详情页。
         
         Args:
             movie_id: 影片ID
@@ -161,31 +162,34 @@ class FanzaScraper(BaseScraper):
             dict: 影片信息字典 或 None（如果找不到影片）
         """
         self.logger.info(f"获取影片信息: {movie_id}")
+
+        # 0. 优先尝试 video.dmm.co.jp GraphQL 接口。
+        # 2026-05：旧的 www.dmm.co.jp/search/... 经常直接落到 not-available-in-your-region，
+        # 但大量常规番号仍可由 content_id（如 ssis00001 / atfb00259）直接命中 GraphQL 详情。
+        self.logger.info("优先尝试通过 video.dmm.co.jp GraphQL 接口获取详情")
+        graph_info = self._fetch_video_dmm_content(movie_id)
+        if graph_info:
+            return graph_info
         
-        # 1. 首先尝试搜索
+        # 1. GraphQL 未命中时，再尝试旧搜索链路
         self.logger.info(f"尝试搜索: {movie_id}")
         url_list = self.search_movie(movie_id)
         
         if url_list:
-            # 获取第一个URL（通常是最匹配的结果）
             url = url_list[0]
             self.logger.info(f"搜索找到详情页URL: {url}")
             
-            # 如果是 video.dmm.co.jp 的客户端渲染页面，直接走 GraphQL
             if "video.dmm.co.jp" in url:
                 content_id = self._extract_content_id_from_video_url(url)
                 if content_id:
                     graph_info = self._fetch_video_dmm_content_by_content_id(content_id, movie_id)
                     if graph_info:
                         return graph_info
-                # 无法解析或GraphQL失败则继续常规流程
 
-            # 🎯 优化：检查是否已经在搜索过程中验证过此页面
             if hasattr(self, '_verified_page_cache') and url in self._verified_page_cache:
                 self.logger.info(f"使用已验证的页面缓存")
                 soup = self._verified_page_cache[url]
             else:
-                # 获取详情页内容
                 soup = self.get_page(url)
             
             if soup:
@@ -194,7 +198,7 @@ class FanzaScraper(BaseScraper):
                 if info:
                     return info
         
-        # 2. 搜索失败，尝试直接构建URL
+        # 2. 搜索失败，尝试直接构建旧详情页 URL
         self.logger.info(f"搜索未找到结果，尝试直接访问URL")
         url = self.get_movie_url(movie_id)
         
@@ -207,12 +211,6 @@ class FanzaScraper(BaseScraper):
                 info = self.extract_info_from_page(soup, movie_id, url)
                 if info:
                     return info
-        
-        # 3. 回退：尝试 video.dmm.co.jp 的 GraphQL 接口（客户端渲染）
-        self.logger.info("尝试通过 video.dmm.co.jp GraphQL 接口获取详情")
-        graph_info = self._fetch_video_dmm_content(movie_id)
-        if graph_info:
-            return graph_info
 
         self.logger.warning(f"未找到影片: {movie_id}")
         return None
