@@ -96,14 +96,32 @@ class FC2ListProvider:
                 seen_ids.add(movie_id)
                 all_movies.append(movie)
 
-        result["movies"] = all_movies
+        # Keep frontend UX consistent with JavBus: even if upstream fan-out gathers
+        # many candidates, one rendered page should still return the standard count.
+        page_movies = all_movies[: self.DEFAULT_PER_PAGE]
+
+        # Pagination semantics: one merged logical page maps to the same page index across
+        # all upstream queries. Use the widest upstream page set as the merged page range.
+        merged_pages_sorted = sorted(merged_pages) if merged_pages else [page]
+        max_page = max(merged_pages_sorted) if merged_pages_sorted else page
+        if max_page <= 10:
+            page_list = list(range(1, max_page + 1))
+        else:
+            head = list(range(1, min(10, max_page) + 1))
+            tail = [max_page - 1, max_page] if max_page > 11 else []
+            page_list = sorted(set(head + tail))
+
+        result["movies"] = page_movies
         result["pagination"] = {
             "currentPage": page,
-            "pages": sorted(merged_pages) if merged_pages else [page],
+            "pages": page_list,
             "hasNextPage": has_next,
             "nextPage": page + 1 if has_next else page,
         }
-        logger.info("[FC2-List] Found %d merged results for keyword=%r page=%s (plans=%s)", len(all_movies), kw, page, plans)
+        logger.info(
+            "[FC2-List] Found %d merged results for keyword=%r page=%s (plans=%s), returning %d for current page",
+            len(all_movies), kw, page, plans, len(page_movies)
+        )
         return result
 
 
