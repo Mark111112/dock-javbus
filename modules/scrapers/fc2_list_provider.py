@@ -58,34 +58,86 @@ class FC2ListProvider:
     ) -> Dict:
         """Search FC2 content by keyword, returning a standard result dict.
 
-        Returns:
-            {
-                "movies": [list of movie dicts],
-                "pagination": {pagination dict},
-                "source": "fc2:javten",
-            }
-            Returns {"movies": [], "pagination": {}, "source": ...} on failure.
+        Query widening strategy:
+        - `FC2-PPV` is surprisingly narrow on JAVten and returns very few rows
+        - `FC2` or `PPV` return significantly more rows
+        So for broad FC2 intents we fan out several upstream queries and merge results.
         """
         result: Dict = {"movies": [], "pagination": {}, "source": "fc2:javten"}
         if not keyword or not keyword.strip():
             return result
 
         kw = keyword.strip()
-        url = self._build_search_url(kw, page)
-        logger.info("[FC2-List] Searching keyword=%r page=%s url=%s", kw, page, url)
+        plans = self._build_search_plans(kw)
 
-        resp = self._fetch(url)
-        if resp is None:
-            logger.warning("[FC2-List] Failed to fetch search page")
-            return result
+        all_movies: List[Dict] = []
+        merged_pages = set()
+        has_next = False
+        seen_ids = set()
 
-        movies = self._parse_movie_cards(resp.text)
-        pagination = self._parse_pagination(resp.text, page)
+        for query_kw in plans:
+            url = self._build_search_url(query_kw, page)
+            logger.info("[FC2-List] Searching keyword=%r page=%s url=%s", query_kw, page, url)
 
-        result["movies"] = movies
-        result["pagination"] = pagination
-        logger.info("[FC2-List] Found %d results for keyword=%r page=%s", len(movies), kw, page)
+            resp = self._fetch(url)
+            if resp is None:
+                logger.warning("[FC2-List] Failed to fetch search page for %r", query_kw)
+                continue
+
+            movies = self._parse_movie_cards(resp.text)
+            pagination = self._parse_pagination(resp.text, page)
+            has_next = has_next or pagination.get("hasNextPage", False)
+            merged_pages.update(pagination.get("pages", []) or [])
+
+            for movie in movies:
+                movie_id = movie.get("id")
+                if not movie_id or movie_id in seen_ids:
+                    continue
+                seen_ids.add(movie_id)
+                all_movies.append(movie)
+
+        result["movies"] = all_movies
+        result["pagination"] = {
+            "currentPage": page,
+            "pages": sorted(merged_pages) if merged_pages else [page],
+            "hasNextPage": has_next,
+            "nextPage": page + 1 if has_next else page,
+        }
+        logger.info("[FC2-List] Found %d merged results for keyword=%r page=%s (plans=%s)", len(all_movies), kw, page, plans)
         return result
+
+
+    def _build_search_plans(self, keyword: str) -> List[str]:
+        """Expand broad FC2 intents to wider upstream queries."""
+        q = (keyword or '').strip()
+        ql = q.lower().replace(' ', '').replace('_', '-')
+
+        # Exact IDs should stay exact; no expansion.
+        if self._FC2_ID_RE.search(q):
+            return [q]
+
+        plans: List[str] = []
+
+        # Broad FC2 intent queries: widen aggressively.
+        if ql in {'fc2-ppv', 'fc2ppv', 'fc2', 'ppv'} or ('fc2' in ql and 'ppv' in ql):
+            plans.extend(['FC2', 'PPV', 'FC2-PPV'])
+        elif ql.startswith('fc2'):
+            plans.extend([q, 'FC2'])
+        elif ql.startswith('ppv'):
+            plans.extend([q, 'PPV', 'FC2'])
+        else:
+            plans.append(q)
+
+        # Deduplicate while preserving order.
+        deduped: List[str] = []
+        seen = set()
+        for item in plans:
+            key = item.strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            deduped.append(item)
+        return deduped
 
     # ------------------------------------------------------------------
     # URL builders
