@@ -273,15 +273,32 @@ class FC2Scraper:
         description = meta('description', 'name') or meta('og:description')
         description = description.replace(f'[{canonical_id}]', '').replace('| Free Sample Video', '').strip(' |-:')
 
-        # Try to extract a fuller body teaser from the page text.
+        # Prefer structured description block from JAVten detail body.
         page_text = soup.get_text(' ', strip=True)
-        body_match = re.search(r'タグ\s*[:：].{0,300}?(?P<body>.+?)カスタマーレビュー', page_text)
-        if body_match:
-            body = body_match.group('body').strip()
-            body = re.sub(r'^(フルレングスバージョンを入手.*?購入)', '', body)
-            body = re.sub(r'\s+', ' ', body).strip()
-            if body and len(body) > len(description):
-                description = body[:4000]
+        body_div = soup.select_one('div.col.des')
+        if body_div:
+            body_soup = BeautifulSoup(str(body_div), 'html.parser')
+            # Remove hidden / tracking / marker nodes
+            for node in body_soup.select('[style*="display: none"], [style*="opacity: 0"], div[data-id], script, style'):
+                node.decompose()
+            body_text = body_soup.get_text('\n', strip=True)
+            body_text = re.sub(r'フルレングスバージョンを入手-フル購入.*', '', body_text)
+            lines = []
+            for line in body_text.split('\n'):
+                l = line.strip()
+                if not l:
+                    continue
+                if l == title or l == canonical_id:
+                    continue
+                if re.fullmatch(r'MC[0-9A-Za-z._+=-]{12,}', l):
+                    continue
+                if l in {'▶', '⇒'}:
+                    continue
+                lines.append(l)
+            body_text = '\n'.join(lines)
+            body_text = re.sub(r'\n{2,}', '\n\n', body_text).strip()
+            if body_text:
+                description = body_text[:4000]
         if not description:
             description = title
 
@@ -301,9 +318,10 @@ class FC2Scraper:
             duration = dur.group(1)
 
         tags = []
-        tag_match = re.search(r'タグ\s*[:：]\s*(.+?)\s+フルレングスバージョン', page_text)
-        if tag_match:
-            tags = [x.strip() for x in re.split(r'\s+', tag_match.group(1)) if x.strip()]
+        for a in soup.select('a.badge.badge-primary, a.badge'):
+            txt = a.get_text(' ', strip=True)
+            if txt and txt not in tags:
+                tags.append(txt)
 
         # JAVten usually has at least a cover/preview image; use it as a single sample if no gallery extracted.
         samples = []
