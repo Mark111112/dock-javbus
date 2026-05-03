@@ -24,15 +24,26 @@ class FanzaScraper(BaseScraper):
         
         # 基础URL设置
         self.base_url = "https://www.dmm.co.jp"
-        # 添加analyze参数，提高搜索精确度
+        # 旧总搜索入口（已不稳定，但仍作为最后一层回退保留）
         self.search_url_template = "https://www.dmm.co.jp/search/=/searchstr={}/analyze=V1EBAwoQAQcGXQ0OXw4C/"
+        # 2026-05：FANZA/DMM 搜索已明显分流，需分别尝试多条可服务端抓取的搜索入口。
+        self.search_url_templates = [
+            "https://www.dmm.co.jp/mono/-/search/=/searchstr={}/",
+            "https://www.dmm.co.jp/rental/-/search/=/searchstr={}/",
+            "https://www.dmm.co.jp/monthly/-/list/search/=/?searchstr={}",
+            "https://video.dmm.co.jp/list/?key={}",
+            "https://www.dmm.co.jp/search/=/searchstr={}/analyze=V1EBAwoQAQcGXQ0OXw4C/",
+        ]
         
         # 详情页URL模板 - 不同类型的商品有不同的URL路径
         self.detail_url_templates = [
-            "https://www.dmm.co.jp/digital/videoa/-/detail/=/cid={}/",  # 数字版
-            "https://www.dmm.co.jp/mono/dvd/-/detail/=/cid={}/",        # DVD版
-            "https://www.dmm.co.jp/digital/videoc/-/detail/=/cid={}/",  # 成人动画
-            "https://www.dmm.co.jp/rental/ppr/-/detail/=/cid={}/"       # 租赁版
+            "https://www.dmm.co.jp/digital/videoa/-/detail/=/cid={}/",      # 数字版
+            "https://www.dmm.co.jp/mono/dvd/-/detail/=/cid={}/",            # 通贩 DVD
+            "https://www.dmm.co.jp/digital/videoc/-/detail/=/cid={}/",      # 成人动画
+            "https://www.dmm.co.jp/rental/ppr/-/detail/=/cid={}/",          # 旧租赁详情格式
+            "https://www.dmm.co.jp/rental/-/detail/=/cid={}/",              # 当前 rental 搜索命中的详情格式
+            "https://www.dmm.co.jp/monthly/premium/-/detail/=/cid={}/",     # 月额 premium
+            "https://www.dmm.co.jp/monthly/standard/-/detail/=/cid={}/",    # 月额 standard
         ]
         
         # FANZA特有设置
@@ -241,63 +252,62 @@ class FanzaScraper(BaseScraper):
         all_urls = []
         for term in search_terms:
             encoded_term = quote(term)
-            search_url = self.search_url_template.format(encoded_term)
-            
-            self.logger.info(f"搜索URL: {search_url}")
-            
-            try:
-                session = self.create_session()
-                response = session.get(search_url, timeout=15)
+            search_urls = [tpl.format(encoded_term) for tpl in getattr(self, 'search_url_templates', [self.search_url_template])]
+
+            for search_url in search_urls:
+                self.logger.info(f"搜索URL: {search_url}")
                 
-                if response.status_code != 200:
-                    self.logger.warning(f"搜索请求失败，状态码: {response.status_code}")
-                    continue
-                    
-                # 获取页面内容
-                soup = BeautifulSoup(response.text, 'html.parser')
+                try:
+                    session = self.create_session()
+                    response = session.get(search_url, timeout=15)
                 
-                # 调试信息
-                page_title = soup.title.text if soup.title else "无标题"
-                self.logger.info(f"页面标题: {page_title}")
-                
-                # 提取搜索结果中的详情页链接
-                urls = self._extract_links_from_search_page(soup, clean_id)
-                
-                if urls:
-                    self.logger.info(f"搜索 '{term}' 找到 {len(urls)} 个结果")
-                    all_urls.extend(urls)
-                    
-                    # 🎯 优化：找到结果后立即尝试获取详情页信息
-                    self.logger.info(f"找到搜索结果，尝试验证最佳匹配的详情页...")
-                    best_urls = self._find_best_match(urls, movie_id)
-                    
-                    if best_urls:
-                        # 如果是 video.dmm.co.jp 链接，直接认为有效（后续用GraphQL获取）
-                        test_url = best_urls[0]
-                        if "video.dmm.co.jp" in test_url:
-                            self.logger.info("检测到 video.dmm.co.jp 链接，跳过HTML验证，稍后用GraphQL获取详情")
-                            return best_urls
+                    if response.status_code != 200:
+                        self.logger.warning(f"搜索请求失败，状态码: {response.status_code}")
+                        continue
                         
-                        # 否则按原有方式验证HTML详情页
-                        self.logger.info(f"验证详情页: {test_url}")
-                        test_soup = self.get_page(test_url)
-                        if test_soup and self._is_valid_detail_page(test_soup):
-                            self.logger.info(f"验证成功，使用此搜索结果，跳过后续搜索")
-                            if not hasattr(self, '_verified_page_cache'):
-                                self._verified_page_cache = {}
-                            self._verified_page_cache[test_url] = test_soup
-                            return best_urls
-                        else:
-                            self.logger.warning(f"详情页验证失败，继续尝试其他搜索项")
-                else:
-                    self.logger.info(f"搜索 '{term}' 未找到结果")
+                    # 获取页面内容
+                    soup = BeautifulSoup(response.text, 'html.parser')
                     
-            except requests.exceptions.RequestException as e:
-                self.logger.error(f"搜索请求异常: {str(e)}")
-                continue
-            except Exception as e:
-                self.logger.error(f"搜索过程中出现未知错误: {str(e)}")
-                continue
+                    # 调试信息
+                    page_title = soup.title.text if soup.title else "无标题"
+                    self.logger.info(f"页面标题: {page_title}")
+                    
+                    # 提取搜索结果中的详情页链接
+                    urls = self._extract_links_from_search_page(soup, clean_id)
+                    
+                    if urls:
+                        self.logger.info(f"搜索 '{term}' 在 {search_url} 找到 {len(urls)} 个结果")
+                        all_urls.extend(urls)
+                        
+                        # 🎯 优化：找到结果后立即尝试获取详情页信息
+                        self.logger.info(f"找到搜索结果，尝试验证最佳匹配的详情页...")
+                        best_urls = self._find_best_match(urls, movie_id)
+                        
+                        if best_urls:
+                            test_url = best_urls[0]
+                            if "video.dmm.co.jp" in test_url:
+                                self.logger.info("检测到 video.dmm.co.jp 链接，跳过HTML验证，稍后用GraphQL获取详情")
+                                return best_urls
+                            
+                            self.logger.info(f"验证详情页: {test_url}")
+                            test_soup = self.get_page(test_url)
+                            if test_soup and self._is_valid_detail_page(test_soup):
+                                self.logger.info(f"验证成功，使用此搜索结果，跳过后续搜索")
+                                if not hasattr(self, '_verified_page_cache'):
+                                    self._verified_page_cache = {}
+                                self._verified_page_cache[test_url] = test_soup
+                                return best_urls
+                            else:
+                                self.logger.warning(f"详情页验证失败，继续尝试其他搜索项")
+                    else:
+                        self.logger.info(f"搜索 '{term}' 在 {search_url} 未找到结果")
+                        
+                except requests.exceptions.RequestException as e:
+                    self.logger.error(f"搜索请求异常: {str(e)}")
+                    continue
+                except Exception as e:
+                    self.logger.error(f"搜索过程中出现未知错误: {str(e)}")
+                    continue
                 
         # 如果有搜索结果但前面的验证都失败了，返回所有找到的URL
         if all_urls:
