@@ -1,5 +1,19 @@
 # BUS115 影片库管理系统使用说明 / BUS115 Usage Guide
 
+UPDATE 20260504
+
+  FC2 / FANZA / 搜索分页
+
+  - 新增 FC2 专用 metadata provider，支持 FC2-PPV / PPV / 纯数字 / 官方 article URL 等输入规范化
+  - 新增 FC2 列表搜索 provider，使用聚合站路线补齐 FC2 关键词搜索和标准列表体验
+  - FC2 详情支持官方 FC2、fc2club、JAVten 多层 fallback，改善官方下架或字段缺失时的标题、封面、简介、标签获取
+  - 修复 FC2 详情页坏缓存刷新、sample 图片 URL 规范化、列表封面优先使用远程 image_url 等问题
+  - 搜索页分页增强：支持首页/上一页/下一页/尾页/Go 跳页；FC2 分页改为与影片库/JavBus 一致的滑动窗口
+  - FANZA/DMM 简介抓取增加 video.dmm.co.jp GraphQL fallback，并支持多个 content_id 候选（如 label000nn 与 1label000nn）
+  - 新增 DEVLOG.md，记录 FANZA 影片简介当前链路、Playwright 搜索原型结论和已知限制
+
+---
+
 UPDATE 20260501
 
   Bug 修复
