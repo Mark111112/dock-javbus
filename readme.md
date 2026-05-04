@@ -2,16 +2,24 @@
 
 UPDATE 20260504
 
-  FC2 / FANZA / 搜索分页
+  改进
 
-  - 新增 FC2 专用 metadata provider，支持 FC2-PPV / PPV / 纯数字 / 官方 article URL 等输入规范化
-  - 新增 FC2 列表搜索 provider，使用聚合站路线补齐 FC2 关键词搜索和标准列表体验
-  - FC2 详情支持官方 FC2、fc2club、JAVten 多层 fallback，改善官方下架或字段缺失时的标题、封面、简介、标签获取
-  - 修复 FC2 详情页坏缓存刷新、sample 图片 URL 规范化、列表封面优先使用远程 image_url 等问题
-  - 搜索页分页增强：支持首页/上一页/下一页/尾页/Go 跳页；FC2 分页改为与影片库/JavBus 一致的滑动窗口
-  - FANZA/DMM 简介抓取增加 video.dmm.co.jp GraphQL fallback，并支持多个 content_id 候选（如 label000nn 与 1label000nn）
-  - FANZA 搜索新增 video.dmm.co.jp TopSearch/legacySearchPPV 轻量链路，可从视频搜索结果直接获取真实 content_id（如 HAME-076 -> 1hame00076、SAN-453 -> h_796san00453z）
-  - 新增 DEVLOG.md，记录 FANZA 影片简介当前链路、Playwright 搜索原型结论和已知限制
+  - 优化搜索分页体验，支持首页、尾页和 Go 跳页，翻页更方便
+  - 优化 FC2 搜索结果的分页显示逻辑，与影片库和其他搜索结果的体验更一致
+  - 优化部分影片简介与详情获取流程，提高命中率和稳定性
+
+  功能增强
+
+  - 增强 FC2 影片信息获取能力，支持更多 FC2 编号和链接形式
+  - 增强 FC2 搜索与详情补全能力，部分资料不完整的影片现在可以获取到更多标题、封面、简介和标签信息
+  - 增强 FANZA / DMM 影片搜索与简介获取能力，部分此前无法稳定命中的影片现在可以正常获取详情
+
+  Bug 修复
+
+  - 修复 FC2 部分影片详情缓存异常导致信息不更新的问题
+  - 修复 FC2 样图地址和搜索结果封面在部分场景下显示不正确的问题
+  - 修复搜索分页在部分情况下页码显示不合理的问题
+  - 修复 FANZA / DMM 部分影片简介和详情获取失败的问题
 
 ---
 
