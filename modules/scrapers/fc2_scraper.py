@@ -546,6 +546,7 @@ class FC2Scraper:
             "movies": [list_item],
             "pagination": {
                 "currentPage": 1,
+                "totalPages": 1,
                 "pages": [1],
                 "hasNextPage": False,
                 "nextPage": 1,
@@ -560,6 +561,7 @@ class FC2Scraper:
 def _empty_pagination() -> Dict:
     return {
         "currentPage": 1,
+        "totalPages": 1,
         "pages": [],
         "hasNextPage": False,
         "nextPage": 1,

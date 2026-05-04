@@ -448,17 +448,19 @@
             {% endfor %}
         </div>
 
-        {% if pagination and pagination.pages|length > 1 %}
+        {% if pagination and (pagination.pages|length > 1 or pagination.current_page > 1 or pagination.has_next) %}
         <nav aria-label="Page navigation">
-            <ul class="pagination justify-content-center mt-4">
-                {% if pagination.current_page > 1 %}
+            <ul class="pagination justify-content-center align-items-center flex-wrap gap-1 mt-4">
+                {% if pagination.has_prev %}
                 <li class="page-item">
-                    <a class="page-link" href="/search_keyword?page={{ pagination.current_page - 1 }}{% if keyword_query %}&keyword={{ keyword_query }}{% endif %}{% if request.args.get('magnet') %}&magnet={{ request.args.get('magnet') }}{% endif %}{% if request.args.get('type') %}&type={{ request.args.get('type') }}{% endif %}{% if filter_type and filter_value %}&filterType={{ filter_type }}&filterValue={{ filter_value }}{% endif %}">Previous</a>
+                    <a class="page-link" href="/search_keyword?page=1{% if keyword_query %}&keyword={{ keyword_query }}{% endif %}{% if request.args.get('magnet') %}&magnet={{ request.args.get('magnet') }}{% endif %}{% if request.args.get('type') %}&type={{ request.args.get('type') }}{% endif %}{% if filter_type and filter_value %}&filterType={{ filter_type }}&filterValue={{ filter_value }}{% endif %}" aria-label="First Page">&laquo;&laquo;</a>
+                </li>
+                <li class="page-item">
+                    <a class="page-link" href="/search_keyword?page={{ pagination.prev_page }}{% if keyword_query %}&keyword={{ keyword_query }}{% endif %}{% if request.args.get('magnet') %}&magnet={{ request.args.get('magnet') }}{% endif %}{% if request.args.get('type') %}&type={{ request.args.get('type') }}{% endif %}{% if filter_type and filter_value %}&filterType={{ filter_type }}&filterValue={{ filter_value }}{% endif %}">Previous</a>
                 </li>
                 {% else %}
-                <li class="page-item disabled">
-                    <span class="page-link">Previous</span>
-                </li>
+                <li class="page-item disabled"><span class="page-link">&laquo;&laquo;</span></li>
+                <li class="page-item disabled"><span class="page-link">Previous</span></li>
                 {% endif %}
 
                 {% for page in pagination.pages %}
@@ -472,11 +474,38 @@
                     <a class="page-link" href="/search_keyword?page={{ pagination.next_page }}{% if keyword_query %}&keyword={{ keyword_query }}{% endif %}{% if request.args.get('magnet') %}&magnet={{ request.args.get('magnet') }}{% endif %}{% if request.args.get('type') %}&type={{ request.args.get('type') }}{% endif %}{% if filter_type and filter_value %}&filterType={{ filter_type }}&filterValue={{ filter_value }}{% endif %}">Next</a>
                 </li>
                 {% else %}
-                <li class="page-item disabled">
-                    <span class="page-link">Next</span>
-                </li>
+                <li class="page-item disabled"><span class="page-link">Next</span></li>
                 {% endif %}
+
+                {% if pagination.total_pages_known %}
+                    {% if pagination.current_page < pagination.last_page %}
+                    <li class="page-item">
+                        <a class="page-link" href="/search_keyword?page={{ pagination.last_page }}{% if keyword_query %}&keyword={{ keyword_query }}{% endif %}{% if request.args.get('magnet') %}&magnet={{ request.args.get('magnet') }}{% endif %}{% if request.args.get('type') %}&type={{ request.args.get('type') }}{% endif %}{% if filter_type and filter_value %}&filterType={{ filter_type }}&filterValue={{ filter_value }}{% endif %}" aria-label="Last Page">&raquo;&raquo;</a>
+                    </li>
+                    {% else %}
+                    <li class="page-item disabled"><span class="page-link">&raquo;&raquo;</span></li>
+                    {% endif %}
+                {% endif %}
+
+                <li class="page-item ms-2">
+                    <div class="input-group input-group-sm">
+                        <input type="number" class="form-control" id="jumpToPage" min="1" {% if pagination.total_pages_known %}max="{{ pagination.total_pages }}"{% endif %} placeholder="页码" style="width: 78px;">
+                        <button class="btn btn-outline-secondary" type="button" id="jumpToPageBtn">Go</button>
+                    </div>
+                </li>
             </ul>
+            <div class="text-center text-muted small mt-2">
+                {% if pagination.total_pages_known %}
+                当前第 {{ pagination.current_page }} / {{ pagination.total_pages }} 页
+                {% else %}
+                当前第 {{ pagination.current_page }} 页 · 总页数未知
+                {% endif %}
+            </div>
+            {% if pagination.page_out_of_range %}
+            <div class="alert alert-warning mt-3 mb-0">
+                该页没有结果，可能已超出可用页码范围。你可以返回上一页，或直接用 Go 跳到别的页码试试。
+            </div>
+            {% endif %}
         </nav>
         {% endif %}
     </div>
@@ -564,6 +593,30 @@
 
 {% block scripts %}
 <script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const jumpInput = document.getElementById('jumpToPage');
+        const jumpBtn = document.getElementById('jumpToPageBtn');
+        if (!jumpInput || !jumpBtn) return;
+
+        const goToPage = () => {
+            const raw = parseInt(jumpInput.value, 10);
+            if (!raw || raw < 1) {
+                jumpInput.focus();
+                return;
+            }
+            const params = new URLSearchParams(window.location.search);
+            params.set('page', String(raw));
+            window.location.href = '/search_keyword?' + params.toString();
+        };
+
+        jumpBtn.addEventListener('click', goToPage);
+        jumpInput.addEventListener('keydown', function (event) {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                goToPage();
+            }
+        });
+    });
     async function refreshActorAvLeagueFromSearch(actorId, actorName) {
         // Find all buttons that call this function
         const buttons = document.querySelectorAll(`[onclick*="refreshActorAvLeagueFromSearch('${actorId}'"]`);

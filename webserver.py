@@ -821,12 +821,28 @@ def search_keyword():
             })
 
         # 构建分页数据
+        raw_pages = pagination.get("pages", []) or []
+        current_page = pagination.get("currentPage", page)
+        total_pages = pagination.get("totalPages")
+        total_pages_known = total_pages is not None
+        if total_pages is None and raw_pages and not pagination.get("hasNextPage", False):
+            # 当不存在下一页时，当前可见页码最大值可视作最后页
+            total_pages = max(raw_pages)
+            total_pages_known = True
+
         page_info = {
-            "current_page": pagination.get("currentPage", 1),
-            "total_pages": len(pagination.get("pages", [])),
+            "current_page": current_page,
+            "has_prev": current_page > 1,
+            "prev_page": max(1, current_page - 1),
             "has_next": pagination.get("hasNextPage", False),
-            "next_page": pagination.get("nextPage", 1),
-            "pages": pagination.get("pages", [])
+            "next_page": pagination.get("nextPage", current_page),
+            "pages": raw_pages,
+            "total_pages": total_pages,
+            "total_pages_known": total_pages_known,
+            "first_page": 1,
+            "last_page": total_pages if total_pages_known else None,
+            "requested_page": page,
+            "page_out_of_range": page > 1 and not movies_list,
         }
 
         # 如果是按演员搜索，触发 av-league 数据刷新（后台异步）

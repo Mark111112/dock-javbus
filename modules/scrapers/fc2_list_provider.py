@@ -114,6 +114,7 @@ class FC2ListProvider:
         result["movies"] = page_movies
         result["pagination"] = {
             "currentPage": page,
+            "totalPages": max_page,
             "pages": page_list,
             "hasNextPage": has_next,
             "nextPage": page + 1 if has_next else page,
