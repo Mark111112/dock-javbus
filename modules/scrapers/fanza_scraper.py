@@ -352,7 +352,10 @@ class FanzaScraper(BaseScraper):
         urls = []
         
         # 检查是否直接跳转到详情页
-        if "detail" in soup.title.text.lower():
+        title_text = ""
+        if soup and getattr(soup, "title", None) and getattr(soup.title, "text", None):
+            title_text = soup.title.text.lower()
+        if "detail" in title_text:
             self.logger.info("搜索已直接跳转到详情页")
             current_url = soup.find("link", rel="canonical")
             if current_url and current_url.get("href"):
@@ -1218,12 +1221,32 @@ class FanzaScraper(BaseScraper):
             self.logger.error(f"获取用户评价失败: {str(e)}")
             return []
 
-    def _build_video_dmm_id(self, movie_id):
-        """构造 video.dmm.co.jp 使用的ID（如 cosx00087）"""
+    def _build_video_dmm_ids(self, movie_id):
+        """构造 video.dmm.co.jp 可能使用的 content id 候选。
+
+        常见形态：
+        - ssis00001
+        - atfb00259
+        - 1hame00076  （部分作品搜索结果会带前导 1）
+        """
         label, number, _ = self.clean_movie_id(movie_id)
         if not label:
-            return None
-        return f"{label.lower()}{number.zfill(5)}"
+            return []
+
+        base = f"{label.lower()}{number.zfill(5)}"
+        candidates = [base, f"1{base}"]
+
+        # 去重保序
+        unique = []
+        for cid in candidates:
+            if cid and cid not in unique:
+                unique.append(cid)
+        return unique
+
+    def _build_video_dmm_id(self, movie_id):
+        """保留旧接口，返回首选 content id。"""
+        ids = self._build_video_dmm_ids(movie_id)
+        return ids[0] if ids else None
 
     def _video_dmm_url(self, content_id):
         """构造 video.dmm.co.jp 详情页 URL"""
@@ -1651,6 +1674,15 @@ query GetContentSafe($id: ID!) {
             return []
 
     def _fetch_video_dmm_content(self, movie_id):
-        """基于 movie_id 推导 content_id 后调用 GraphQL"""
-        content_id = self._build_video_dmm_id(movie_id)
-        return self._fetch_video_dmm_content_by_content_id(content_id, movie_id)
+        """基于 movie_id 推导一个或多个 content_id 候选后调用 GraphQL。"""
+        content_ids = self._build_video_dmm_ids(movie_id)
+        for content_id in content_ids:
+            try:
+                self.logger.info(f"尝试 video.dmm.co.jp content_id 候选: {content_id}")
+                result = self._fetch_video_dmm_content_by_content_id(content_id, movie_id)
+                if result:
+                    return result
+            except Exception as e:
+                self.logger.warning(f"content_id 候选 {content_id} 获取失败: {str(e)}")
+                continue
+        return None
