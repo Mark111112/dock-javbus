@@ -241,13 +241,15 @@ class FanzaScraper(BaseScraper):
             return []
         
         # 尝试多种搜索格式
-        search_terms = [
-            clean_id,                          # 标准格式：ABC-123
-            f"{label}-{number.zfill(5)}",      # 5位数字格式：ABC-00123
-            f"{label}{number}",                # 无连字符格式：ABC123
-            f"{label}{number.zfill(5)}",       # 无连字符且零填充：ABC000123
-            label + number                     # 无任何分隔：ABC123
-        ]
+        search_terms = self._build_search_terms(label, number, clean_id)
+
+        # 优先走 video.dmm.co.jp 的轻量 GraphQL 搜索。
+        # 2026-05：FANZA “全部”搜索入口经常进入地区不可用页，
+        # 但 video.dmm.co.jp/list/?key=... 实际由 legacySearchPPV GraphQL 提供结果。
+        topsearch_urls = self._search_video_dmm_topsearch(movie_id, search_terms)
+        if topsearch_urls:
+            self.logger.info(f"video.dmm.co.jp TopSearch 找到 {len(topsearch_urls)} 个候选")
+            return self._find_best_match(topsearch_urls, movie_id)
         
         all_urls = []
         for term in search_terms:
@@ -314,6 +316,107 @@ class FanzaScraper(BaseScraper):
             return self._find_best_match(all_urls, movie_id)
         
         return []
+
+    def _build_search_terms(self, label, number, clean_id):
+        """Build FANZA search term variants."""
+        terms = [
+            clean_id,
+            f"{label}-{number.zfill(5)}",
+            f"{label}{number}",
+            f"{label}{number.zfill(5)}",
+            label + number,
+        ]
+        if '-' in clean_id:
+            terms.append(clean_id.replace('-', '00', 1) + '#')
+            terms.append(clean_id.replace('-', '', 1))
+        out = []
+        for term in terms:
+            t = (term or '').strip()
+            if t and t not in out:
+                out.append(t)
+        return out
+
+    def _search_video_dmm_topsearch(self, movie_id, search_terms):
+        """Search video.dmm.co.jp via GraphQL legacySearchPPV."""
+        urls = []
+        for term in search_terms:
+            try:
+                found = self._fetch_video_dmm_topsearch(term)
+                if found:
+                    self.logger.info(f"video.dmm.co.jp TopSearch '{term}' 命中 {len(found)} 条")
+                    urls.extend(found)
+                    break
+                self.logger.info(f"video.dmm.co.jp TopSearch '{term}' 未找到结果")
+            except Exception as e:
+                self.logger.warning(f"video.dmm.co.jp TopSearch '{term}' 失败: {str(e)}")
+                continue
+        out = []
+        for url in urls:
+            if url and url not in out:
+                out.append(url)
+        return out
+
+    def _fetch_video_dmm_topsearch(self, term):
+        """Call video.dmm.co.jp TopSearch GraphQL endpoint."""
+        graphql_url = "https://api.video.dmm.co.jp/graphql"
+        query = """
+query TopSearch($limit: Int!, $offset: Int, $sort: ContentSearchPPVSort!, $queryWord: String, $facetLimit: Int!, $excludeUndelivered: Boolean!) {
+  legacySearchPPV(limit:$limit, offset:$offset, sort:$sort, queryWord:$queryWord, facetLimit:$facetLimit, includeExplicit:true, excludeUndelivered:$excludeUndelivered) {
+    result {
+      contents {
+        id
+        title
+        floor
+        contentType
+        packageImage { mediumUrl largeUrl }
+        actresses { id name }
+        maker { id name }
+        review { average count }
+        deliveryStartAt
+      }
+      pageInfo { offset limit hasNext totalCount }
+    }
+  }
+}
+"""
+        payload = {
+            "operationName": "TopSearch",
+            "query": query,
+            "variables": {
+                "excludeUndelivered": False,
+                "facetLimit": 4,
+                "limit": 20,
+                "offset": 0,
+                "queryWord": term,
+                "sort": "RECOMMENDED",
+            },
+        }
+        session = self.create_session()
+        session.headers.update({
+            'Accept': 'application/graphql-response+json, application/graphql+json, application/json, text/event-stream, multipart/mixed',
+            'Content-Type': 'application/json',
+            'Origin': 'https://video.dmm.co.jp',
+            'Referer': f'https://video.dmm.co.jp/list/?key={quote(term)}',
+            'Fanza-Device': 'BROWSER',
+        })
+        resp = session.post(graphql_url, data=json.dumps(payload), timeout=25)
+        if resp.status_code != 200:
+            self.logger.warning(f"TopSearch GraphQL 请求失败，状态码: {resp.status_code}")
+            return []
+        data = resp.json()
+        if data.get('errors'):
+            self.logger.warning(f"TopSearch GraphQL 返回错误: {data.get('errors')[:1]}")
+            return []
+        contents = (((data.get('data') or {}).get('legacySearchPPV') or {}).get('result') or {}).get('contents') or []
+        urls = []
+        for item in contents:
+            content_id = item.get('id')
+            if not content_id:
+                continue
+            floor = (item.get('floor') or 'AV').lower()
+            path = {'av': 'av', 'anime': 'anime', 'amateur': 'amateur', 'cinema': 'cinema'}.get(floor, 'av')
+            urls.append(f"https://video.dmm.co.jp/{path}/content/?id={content_id}")
+        return urls
     
     def _is_valid_detail_page(self, soup):
         """检查是否为有效的详情页

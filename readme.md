@@ -10,6 +10,7 @@ UPDATE 20260504
   - 修复 FC2 详情页坏缓存刷新、sample 图片 URL 规范化、列表封面优先使用远程 image_url 等问题
   - 搜索页分页增强：支持首页/上一页/下一页/尾页/Go 跳页；FC2 分页改为与影片库/JavBus 一致的滑动窗口
   - FANZA/DMM 简介抓取增加 video.dmm.co.jp GraphQL fallback，并支持多个 content_id 候选（如 label000nn 与 1label000nn）
+  - FANZA 搜索新增 video.dmm.co.jp TopSearch/legacySearchPPV 轻量链路，可从视频搜索结果直接获取真实 content_id（如 HAME-076 -> 1hame00076、SAN-453 -> h_796san00453z）
   - 新增 DEVLOG.md，记录 FANZA 影片简介当前链路、Playwright 搜索原型结论和已知限制
 
 ---

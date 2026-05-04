@@ -43,6 +43,11 @@
 - 原型已验证可返回正确 content_id
 - 暂未集成：为部分影片开常驻 Playwright 服务性价比不高
 
+#### 2026-05-04 追加：video.dmm.co.jp TopSearch 已打通
+- 直接调用 api.video.dmm.co.jp/graphql 的 legacySearchPPV（operationName=TopSearch）搜索 video 分类，绕开“全部”搜索地区不可用页。
+- HAME-076 可搜索到 1hame00076；SAN-453 可搜索到 h_796san00453z。
+- search_movie() 已优先使用该轻量搜索路径，再 fallback 到旧网页搜索/直连 URL。
+
 #### 改进方向（优先级低）
 1. 扩展 _build_video_dmm_ids() 候选格式（h_ 前缀等）
 2. 等 FANZA 开放搜索 API 或网络环境变化后再优化搜索链路
