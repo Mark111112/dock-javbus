@@ -104,12 +104,16 @@ class FC2ListProvider:
         # all upstream queries. Use the widest upstream page set as the merged page range.
         merged_pages_sorted = sorted(merged_pages) if merged_pages else [page]
         max_page = max(merged_pages_sorted) if merged_pages_sorted else page
-        if max_page <= 10:
+        # Sliding window: show ~10 pages centered around current page,
+        # same logic as cloud115/strm library pagination.
+        max_visible = 10
+        if max_page <= max_visible:
             page_list = list(range(1, max_page + 1))
         else:
-            head = list(range(1, min(10, max_page) + 1))
-            tail = [max_page - 1, max_page] if max_page > 11 else []
-            page_list = sorted(set(head + tail))
+            page_list = list(range(
+                max(1, min(page - max_visible // 2, max_page - max_visible + 1)),
+                min(max_page + 1, max(page + max_visible // 2 + 1, max_visible + 1))
+            ))
 
         result["movies"] = page_movies
         result["pagination"] = {
